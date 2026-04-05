@@ -4,7 +4,9 @@ import argparse
 from cosolvkit.simulation import run_simulation
 from cosolvkit.utils import setup_logging
 
-
+#TODO When Autopath is published, this class should be a wrapper around Autopath classses API.
+# It should coordinate the dispatch of multiple simulation replicas and optionally monitor convergence
+# using the analysis class.
 def cmd_lineparser():
     parser = argparse.ArgumentParser(description="Runs an OpenMM MD simulation from a cosolvkit-prepared system.",
                                      epilog="""

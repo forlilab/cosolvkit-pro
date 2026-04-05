@@ -286,7 +286,7 @@ class CosolventSystem(object):
         if solvent_smiles == "H2O":
             if n_solvent_molecules is None: self.modeller.addSolvent(self.forcefield, neutralize=neutralize, positiveIon=positive_ion, negativeIon=negative_ion)
             else: self.modeller.addSolvent(self.forcefield, numAdded=n_solvent_molecules, neutralize=neutralize, positiveIon=positive_ion, negativeIon=negative_ion)
-            self.logger.info(f"Waters added: {self._get_n_waters()}")
+            self.logger.info(f"Added {self._get_n_waters()} water molecules.")
         elif solvent_smiles is not None:
             c = {"name": "solvent",
                  "smiles": solvent_smiles}
@@ -300,7 +300,8 @@ class CosolventSystem(object):
             d_mol = {solvent_mol: cosolv_xyz.value_in_unit(openmmunit.nanometer)}
             # need to register the custom solvent if not present already
             self.forcefield.registerTemplateGenerator(self._parametrize_cosolvents(d_mol).generator)
-            self.logger.info(f"Placing {solvent_mol.copies}")
+            
+            self.logger.info(f"Placing {solvent_mol.copies} molecules of {solvent_mol.name}")
             if iteratively_adjust_copies: 
                 solv_xyz = self.add_cosolvents_adaptive(d_mol, self.vectors, self.lowerBound, self.upperBound, self.modeller.positions)
             else:
