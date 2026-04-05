@@ -1,13 +1,13 @@
 {
   "cosolvents": "cosolvkit/data/cosolvents.json",
-  "forcefields": "cosolvkit/data/forcefields.json",
-  "md_format": "openmm",
+  "md_engine": {"openmm": ["amber14-all.xml", "amber14/tip3pfb.xml"]},
+  "small_molecule_ff": "espaloma",
   "protein_path": "example/protein.pdb",
   "clean_protein": true,
   "keep_heterogens": false,
   "variants": {},
   "repulsive_forces": {
-    "MEH_MEH": {"residueA": "MEH", "residueB": "MEH", "epsilon": 0.01, "sigma": 4.0}
+    "BEN_BEN": {"residueA": "BEN", "residueB": "BEN", "epsilon": 0.01, "sigma": 4.0}
   },
   "solvent_smiles": "H2O",
   "solvent_copies": null,

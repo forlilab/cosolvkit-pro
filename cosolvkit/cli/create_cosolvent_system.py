@@ -103,24 +103,23 @@ def main():
 
     protein_modeller = Modeller(protein_topology, protein_positions)
 
-    # Check repulsive forces and md engine consistency
-    if (config.md_format.upper() != "OPENMM") and len(config.repulsive_forces) > 0:
-        logger.warning("Custom repulsive forces will only work if the MD engine is OpenMM!")
-        raise Warning("Custom repulsive forces will only work if the MD engine is OpenMM!")
+    engine = list(config.md_engine.keys())[0]
 
-    # Load cosolvents and forcefields dictionaries
+    # Check repulsive forces and md engine consistency
+    if (engine.upper() != "OPENMM") and len(config.repulsive_forces) > 0:
+        logger.warning("Custom repulsive forces will only work if the MD engine is OpenMM!")
+
+    # Load cosolvents dictionary
     with open(config.cosolvents) as fi:
         cosolvents = json.load(fi)
-
-    with open(config.forcefields) as fi:
-        forcefields = json.load(fi)
 
     if config.membrane:
         logger.info("Building a membrane-cosolvent system")
         cosolv_system = CosolventMembraneSystem(cosolvents=cosolvents,
-                                                forcefields=forcefields,
+                                                forcefields=config.md_engine,
+                                                small_molecule_ff=config.small_molecule_ff,
                                                 ligands=config.ligands,
-                                                simulation_format=config.md_format,
+                                                simulation_format=engine,
                                                 modeller=protein_modeller,
                                                 padding=config.padding,
                                                 box_size=config.box_size,
@@ -132,11 +131,12 @@ def main():
                                 waters_to_keep=config.waters_to_keep)
         cosolv_system.build(positive_ion=config.positive_ion, negative_ion=config.negative_ion, iteratively_adjust_copies=args.iteratively_adjust_copies)
     else:
-        logger.info("Building cosolvent system")
+        logger.info("Building cosolvent system..")
         cosolv_system = CosolventSystem(cosolvents=cosolvents,
-                                        forcefields=forcefields,
+                                        forcefields=config.md_engine,
+                                        small_molecule_ff=config.small_molecule_ff,
                                         ligands=config.ligands,
-                                        simulation_format=config.md_format,
+                                        simulation_format=engine,
                                         modeller=protein_modeller,
                                         padding=config.padding,
                                         box_size=config.box_size)
@@ -146,15 +146,15 @@ def main():
                             negative_ion=config.negative_ion,
                             iteratively_adjust_copies=args.iteratively_adjust_copies)
 
+    # add the repulsive forces if specified in the config file
     if len(config.repulsive_forces) > 0:
-        logger.info("Adding custom repulsive forces to the system")
         cosolv_system.add_repulsive_forces(config.repulsive_forces)
 
     logger.info("Saving topology file")
     cosolv_system.save_topology(topology=cosolv_system.modeller.topology,
                                 positions=cosolv_system.modeller.positions,
                                 system=cosolv_system.system,
-                                simulation_format=config.md_format,
+                                simulation_format=engine,
                                 forcefield=cosolv_system.forcefield,
                                 out_path=config.output_dir)
     logger.info(f"All done! System building took {(time.time() - start)/60:.2f} min.")

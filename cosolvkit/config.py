@@ -8,10 +8,10 @@ class Config(object):
     :param object: inherits from the base class
     :type object: object
     """
-    def __init__(self, 
+    def __init__(self,
                  cosolvents=None,
-                 forcefields=None,
-                 md_format=None,
+                 md_engine=None,
+                 small_molecule_ff="espaloma",
                  protein_path=None,
                  clean_protein=True,
                  keep_heterogens=False,
@@ -32,8 +32,8 @@ class Config(object):
                  output_dir=None):
         
         self.cosolvents = cosolvents
-        self.forcefields = forcefields
-        self.md_format = md_format.upper()
+        self.md_engine = md_engine
+        self.small_molecule_ff = small_molecule_ff
         self.protein_path = protein_path
         self.clean_protein = clean_protein
         self.keep_heterogens = keep_heterogens
