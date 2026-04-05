@@ -886,7 +886,7 @@ class Report:
                 ax[0][0].set_title(f"RDF-{cosolvent_name} {cosolvent_atom}")
                 # ax[0][0].set_title(f"RDF-{cosolvent_name} {cosolvent_atom} every {step_size} frames")
                 leg = ax[0][0].legend(handlelength=0, handletextpad=0, fancybox=True)
-                for item in leg.legendHandles:
+                for item in leg.legend_handles:
                     item.set_visible(False)
                 
                 ax[1][0] = self._plot_autocorrelation(data=irdf.results.rdf,
@@ -906,7 +906,7 @@ class Report:
                 ax[0][1].set_title(f"RDF {cosolvent_name} {cosolvent_atom}-HOH O")
                 # ax[0][1].set_title(f"RDF {cosolvent_name} {cosolvent_atom}-HOH O every {step_size} frames")
                 leg = ax[0][1].legend(handlelength=0, handletextpad=0, fancybox=True)
-                for item in leg.legendHandles:
+                for item in leg.legend_handles:
                     item.set_visible(False)
 
                 self._plot_autocorrelation(data=irdf.results.rdf, 
@@ -932,7 +932,7 @@ class Report:
         ax.set_ylabel("$g(r)$")
         ax.set_title(f"RDF-HOH O every 50 frames")
         leg = ax.legend(handlelength=0, handletextpad=0, fancybox=True)
-        for item in leg.legendHandles:
+        for item in leg.legend_handles:
             item.set_visible(False)
         if outpath is not None:
             plt.savefig(f"{outpath}/rdf_HOH_O.png")
@@ -983,7 +983,7 @@ class Report:
         ax.set_xlabel('Lag')
         ax.set_ylabel('Autocorrelation')
         leg = ax.legend(handlelength=0, handletextpad=0, fancybox=True)
-        for item in leg.legendHandles:
+        for item in leg.legend_handles:
             item.set_visible(False)
         return ax
     
