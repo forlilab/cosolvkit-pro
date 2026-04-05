@@ -29,9 +29,7 @@ class Config(object):
                  lipid_patch_path=None,
                  memb_cosolv_placement='both',
                  waters_to_keep=list(),
-                 output_dir=None,
-                 run_cosolvent_system=True,
-                 run_md=False):
+                 output_dir=None):
         
         self.cosolvents = cosolvents
         self.forcefields = forcefields
@@ -54,8 +52,6 @@ class Config(object):
         self.memb_cosolv_placement = memb_cosolv_placement
         self.waters_to_keep = waters_to_keep
         self.output_dir = output_dir
-        self.run_cosovlent_system = run_cosolvent_system
-        self.run_md = run_md
         self.check_validity()
     
     @classmethod
@@ -95,7 +91,5 @@ class Config(object):
         return p
     
     def check_validity(self):
-        if self.run_md:
-            assert self.md_format == "OPENMM", f"{self.md_format} is not supported with the parameter run_md set to {self.run_md}. Only OPENMM is available with this option."
         return
     

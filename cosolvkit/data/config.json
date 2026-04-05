@@ -21,7 +21,5 @@
   "lipid_patch_path": null,
   "memb_cosolv_placement": "both",
   "waters_to_keep": [],
-  "output_dir": "results",
-  "run_cosolvent_system": true,
-  "run_md": true
+  "output_dir": "results"
 }
