@@ -9,6 +9,7 @@
 import os
 import sys
 import json
+import glob as glob_module
 import logging
 import numpy as np
 import pandas as pd
@@ -114,29 +115,30 @@ def _grid_free_energy(hist, n_atoms, n_frames, n_accessible_voxels, temperature=
     
     return gfe
 
-def _smooth_grid_free_energy(gfe, 
-                             energy_cutoff: float = 0, 
-                             sigma: float = 1, 
+def _smooth_grid_free_energy(gfe,
+                             energy_cutoff: float = 0,
+                             sigma: float = 1,
                             ):
     """
     Smooths and filters the grid free energy (GFE) map.
 
-    :param gfe: 3D numpy array of grid free energy values.
-    :param energy_cutoff: Cutoff energy (default: .0 kcal/mol). Only values below this are retained.
+    Applies Gaussian smoothing (preserving kcal/mol units) then zeros all
+    voxels with energy >= energy_cutoff.  The zeroing is a display/filtering
+    choice: unfavorable regions are suppressed so that only hot-spots appear
+    in the output map.  No renormalization is applied so that values remain
+    physically comparable across probes, systems, and replicas.
+
+    :param gfe: 3D numpy array of grid free energy values (kcal/mol).
+    :param energy_cutoff: Cutoff energy (default: 0 kcal/mol). Voxels with
+        energy >= cutoff are set to 0 (display filter, not a physical operation).
     :param sigma: Standard deviation for Gaussian smoothing (default: 1).
-    :return: Smoothed and filtered grid free energy map (new array).
+    :return: Smoothed and filtered grid free energy map (new array, kcal/mol).
     """
 
-    gfe_filtered = np.copy(gfe)
- 
-    # Apply Gaussian smoothing BEFORE filtering.
-    gfe_smoothed = gaussian_filter(gfe_filtered, sigma=sigma)
+    gfe_smoothed = gaussian_filter(gfe, sigma=sigma)
 
-    # Keep only favorable energy values after smoothing
+    # Zero non-favorable voxels (display filter only — does not affect kcal/mol scale).
     gfe_smoothed[gfe_smoothed >= energy_cutoff] = 0.0
-
-    # Normalization has not no effect
-    gfe_smoothed = _normalization(gfe_smoothed, np.min(gfe_filtered), 0.0)
 
     return gfe_smoothed
 
@@ -435,17 +437,19 @@ class Analysis(AnalysisBase):
         """
         
         if self.use_atomtypes:
+            self._type_agfe_raw = {}
             for atom_type, grid in self._type_histograms.items():
                 n_atoms_type = self._n_atoms_by_type[atom_type]
                 agfe = _grid_free_energy(grid.grid, n_atoms_type, self._nframes, self._n_accessible_voxels, temperature)
-                # self.logger.debug(f"Free energy for {atom_type}: MIN: {np.min(agfe):.2f} kcal/mol, MAX: {np.max(agfe):.2f} kcal/mol")
+                self._type_agfe_raw[atom_type] = Grid(agfe, edges=grid.edges)
                 if smoothing:
                     agfe = _smooth_grid_free_energy(agfe, sigma=atom_radius / 3.0, energy_cutoff=0)
-                
+
                 self.logger.info(f"Free energy for {atom_type}: MIN: {np.min(agfe):.2f} kcal/mol, MAX: {np.max(agfe):.2f} kcal/mol")
                 self._type_histograms[atom_type] = Grid(agfe, edges=grid.edges)
         else:
             agfe = _grid_free_energy(self._histogram.grid, self._n_atoms, self._nframes, self._n_accessible_voxels, temperature)
+            self._agfe_raw = Grid(agfe, edges=self._histogram.edges)
 
             if smoothing:
                 # We divide by 3 in order to have radius == 3 sigma
@@ -480,7 +484,21 @@ class Analysis(AnalysisBase):
                 _export(gfe_fname, grid, gridsize, center, box_size)
         else:
             _export(fname, self._agfe, gridsize, center, box_size)
-        
+
+    def export_raw_atomic_grid_free_energy(self, fname, gridsize=0.5, center=None, box_size=None):
+        """Export the raw (unsmoothed, physical) AGFE map in kcal/mol.
+
+        Values are the direct Boltzmann inversion of the occupancy histogram
+        with no zeroing or rescaling applied, making them suitable for
+        quantitative comparisons across probes, systems, and replicas.
+        """
+        if self.use_atomtypes:
+            for atom_type, grid in self._type_agfe_raw.items():
+                gfe_fname = fname.replace('map_agfe_raw', f'map_agfe_raw_{atom_type}')
+                _export(gfe_fname, grid, gridsize, center, box_size)
+        else:
+            _export(fname, self._agfe_raw, gridsize, center, box_size)
+
 class Report:
     """Report class. This is the main class that takes care of post MD simulation processing and analysis.
     """
@@ -794,6 +812,7 @@ class Report:
             analysis.export_density(os.path.join(self.out_path, f"map_rawdensity_{cosolvent}.dx"))
             analysis.atomic_grid_free_energy(temperature, smoothing=True)
             analysis.export_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_{cosolvent}.dx"))
+            analysis.export_raw_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_raw_{cosolvent}.dx"))
 
         return
     
@@ -994,7 +1013,7 @@ class Report:
         """Generate a PyMol session from the density maps. The average structure is always used as a reference. 
         You can also include a reference pdb file and specify the residues of interest. 
 
-        :param density_files: list of density files to include in the PyMol session, or a directory with the density files, or a single density file.
+        :param density_files: list of density files to include in the PyMol session, or a directory with the density files, or a single density file. If None, uses the final agfe maps (``map_agfe_{cosolvent}.dx``) from ``out_path``.
         :type density_files: Union[str, list]
         :param reference_pdb: reference pdb file to load in PyMol.
         :type reference_pdb: str
@@ -1002,7 +1021,20 @@ class Report:
         :type selection_string: str
         """
 
-        if os.path.isfile(density_files):
+        if density_files is None:
+            density_files = []
+            for cosolvent in self.cosolvent_names:
+                agfe_file = os.path.join(self.out_path, f"map_agfe_{cosolvent}.dx")
+                if os.path.isfile(agfe_file):
+                    density_files.append(agfe_file)
+                else:
+                    # atomtypes mode: collect per-atom-type agfe maps, exclude raw
+                    per_type = sorted(
+                        f for f in glob_module.glob(os.path.join(self.out_path, f"map_agfe_*_{cosolvent}.dx"))
+                        if 'raw' not in os.path.basename(f)
+                    )
+                    density_files.extend(per_type)
+        elif os.path.isfile(density_files):
             density_files = [density_files]
         elif os.path.isdir(density_files):
             density_files = [os.path.join(density_files, f) for f in os.listdir(density_files) if f.endswith('.dx')]
@@ -1022,7 +1054,7 @@ class Report:
         
         if not os.path.exists(self.avg_pdb_path):
             # if the average pdb was not generated in the report, we generate it here
-            self._rmsf_analysis(avg_selection='protein')
+            self._rmsf_analysis(avg_selection='protein', align_selection='protein and name CA')
 
         structures = {'average_structure': self.avg_pdb_path}
         if reference_pdb is not None and reference_pdb.endswith('.pdb'):
@@ -1035,7 +1067,7 @@ class Report:
 
             # Load topology and first frame of the trajectory
             cmd.load(pdb_path, structure_name)
-            cmd_string += f"cmd.load('{pdb_path}', {structure_name})\n"
+            cmd_string += f"cmd.load('{pdb_path}', '{structure_name}')\n"
 
             # Set structure's color
             cmd.color("grey50", f"{structure_name} and name C*")
@@ -1046,9 +1078,11 @@ class Report:
             # self.logger.info(f"Loading density map: {dens_name}")
 
             dx_data = _read_dx(density)
-            # calculate 0.001 quantile. This works for agfe maps
-            dx_01 = np.quantile(dx_data.grid, 0.001)
-            # self.logger.info(f"0.1% of the density map is: {dx_01}")
+            # AGFE maps are capped at 0 from above (unfavorable regions zeroed out),
+            # so we contour at the bottom 1% (most favorable/negative values).
+            # Density maps (z-score) have positive peaks, so we use the top 1%.
+            is_agfe = np.max(dx_data.grid) <= 0.0
+            dx_01 = np.quantile(dx_data.grid, 0.001 if is_agfe else 0.999)
 
             cmd.load(density, f'{dens_name}_map')
             cmd_string += f"cmd.load('{density}', '{dens_name}_map')\n"
@@ -1059,10 +1093,10 @@ class Report:
 
             # Color the hydrogen bond isomesh
             cmd.color(color, f'{dens_name}_mesh')
-            cmd_string += f"cmd.color('{colors}', '{dens_name}_mesh')\n"
+            cmd_string += f"cmd.color('{color}', '{dens_name}_mesh')\n"
             
         # Show sticks for the residues of interest
-        if selection_string != '':
+        if selection_string:
             cmd.show("sticks", selection_string)
             cmd_string += f"cmd.show('sticks', '{selection_string}')\n"
 
@@ -1072,16 +1106,16 @@ class Report:
         cmd.set('specular', 1)
         # Set cartoon_side_chain_helper to 1 - less messy
         cmd.set("cartoon_side_chain_helper", 1)
-        # color protein by b-factor
-        cmd.spectrum("b", "blue_white_red", selection_string)
-        # Set background color
-        cmd.bg_color("white") #grey80
-
         cmd_string += "cmd.hide('spheres')\n"
         # cmd_string += "cmd.set('valence', 0)\n"
         cmd_string += "cmd.set('specular', 1)\n"
         cmd_string += "cmd.set('cartoon_side_chain_helper', 1)\n"
-        cmd_string += f"cmd.spectrum('b', 'blue_white_red', '{selection_string}')\n"
+        # color protein by b-factor
+        if selection_string:
+            cmd.spectrum("b", "blue_white_red", selection_string)
+            cmd_string += f"cmd.spectrum('b', 'blue_white_red', '{selection_string}')\n"
+        # Set background color
+        cmd.bg_color("white") #grey80
         cmd_string += "cmd.bg_color('white')"
         
         with open(os.path.join(self.out_path, "pymol_session_cmd.pml"), "w") as fo:
