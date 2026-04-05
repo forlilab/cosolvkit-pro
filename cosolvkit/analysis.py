@@ -440,7 +440,7 @@ class Analysis(AnalysisBase):
                 agfe = _grid_free_energy(grid.grid, n_atoms_type, self._nframes, self._n_accessible_voxels, temperature)
                 # self.logger.debug(f"Free energy for {atom_type}: MIN: {np.min(agfe):.2f} kcal/mol, MAX: {np.max(agfe):.2f} kcal/mol")
                 if smoothing:
-                    agfe = _smooth_grid_free_energy(agfe, sigma=atom_radius /35., energy_cutoff=0)
+                    agfe = _smooth_grid_free_energy(agfe, sigma=atom_radius / 3.0, energy_cutoff=0)
                 
                 self.logger.info(f"Free energy for {atom_type}: MIN: {np.min(agfe):.2f} kcal/mol, MAX: {np.max(agfe):.2f} kcal/mol")
                 self._type_histograms[atom_type] = Grid(agfe, edges=grid.edges)
@@ -449,7 +449,7 @@ class Analysis(AnalysisBase):
 
             if smoothing:
                 # We divide by 3 in order to have radius == 3 sigma
-                agfe = _smooth_grid_free_energy(agfe, sigma=atom_radius / 3., energy_cutoff=0)
+                agfe = _smooth_grid_free_energy(agfe, sigma=atom_radius / 3.0, energy_cutoff=0)
                 self.logger.info(f"Free energy: MIN: {np.min(agfe):.2f} kcal/mol, MAX: {np.max(agfe):.2f} kcal/mol")
 
             self._agfe = Grid(agfe, edges=self._histogram.edges)
