@@ -71,10 +71,7 @@ The main entry point of the script is the file `config.json` where all the neces
 |clean_protein            | boolean | Flag indicating if cleaning the protein with `PDBFixer` | TRUE | |
 |keep_heterogens          | boolean | Flag indicating if keeping the heterogen atoms while cleaning the protein. Waters will be always kept. | FALSE | |
 |variants                 | dictionary | Dictionary of residues for which a variant is requested (different protonation state) in the form {"chain_id:res_id":"protonation_state"}, `None` for the rest of the residues. | empty dictionary | |
-|add_repulsive            | boolean | Flag indicating if adding repulsive forces between certain residues or not. | FALSE | ✅ | ❌ | ❌ | ❌ |
-|repulsive_residues       | list | List of residues for which applying the repulsive forces. | empty list | ✅ | ❌ | ❌ | ❌ |
-|repulsive_epsilon        | float | Depth of the potential well in kcal/mol | 0.01 kcal/mol | ✅ | ❌ | ❌ | ❌ |
-|repulsive_sigma          | float | Inter-particle distance in Angstrom | 4.0 Angstrom | ✅ | ❌ | ❌ | ❌ |
+|repulsive_forces         | dict | Dict of pairwise repulsive forces: `{"name": {"residueA": "BEN", "residueB": "PRP", "epsilon": 0.01, "sigma": 4.0}}`. epsilon in kcal/mol, sigma in Angstrom. | empty dict | ✅ | ❌ | ❌ | ❌ |
 |solvent_smiles           | string | Smiles string of the solvent to use. | H2O | |
 |solvent_copies           | integer | If specified, the box won't be filled up with solvent, but will have the exact number of solvent molecules specified. | no default | |
 |membrane                 | boolean | Flag indicating if the system has membranes or not. | FALSE | |
@@ -194,7 +191,7 @@ from cosolvkit.cosolvent_system import CosolventSystem
 cosolv = CosolventSystem(cosolvents, forcefields, simulation_format, receptor_path, radius=radius)
 # build the system in water
 cosolv.build(neutralize=True)
-cosolv.add_repulsive_forces(resiude_names=["BEN", "PRP"])
+cosolv.add_repulsive_forces({"BEN_PRP": {"residueA": "BEN", "residueB": "PRP", "epsilon": 0.01, "sigma": 4.0}})
 ```
 
 ## List of cosolvent molecules

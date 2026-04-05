@@ -118,7 +118,7 @@ def main():
         protein_modeller = Modeller(protein_topology, protein_positions)
 
         # Check repulsive forces and md engine consistency        
-        if (config.md_format.upper() != "OPENMM") and len(config.repulsive_residues) > 0:
+        if (config.md_format.upper() != "OPENMM") and len(config.repulsive_forces) > 0:
             logger.warning("Custom repulsive forces will only work if the MD engine is OpenMM!")
             raise Warning("Custom repulsive forces will only work if the MD engine is OpenMM!")
     
@@ -160,9 +160,9 @@ def main():
                                 negative_ion=config.negative_ion,
                                 iteratively_adjust_copies=args.iteratively_adjust_copies)
             
-        if len(config.repulsive_residues) > 0:
+        if len(config.repulsive_forces) > 0:
             logger.info("Adding custom repulsive forces to the system")
-            cosolv_system.add_repulsive_forces(config.repulsive_residues, epsilon=config.repulsive_epsilon, sigma=config.repulsive_sigma)
+            cosolv_system.add_repulsive_forces(config.repulsive_forces)
 
         logger.info("Saving topology file")
         cosolv_system.save_topology(topology=cosolv_system.modeller.topology, 

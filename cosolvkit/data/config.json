@@ -6,9 +6,9 @@
   "clean_protein": true,
   "keep_heterogens": false,
   "variants": {},
-  "repulsive_residues": ["BEN", "PRP"],
-  "repulsive_epsilon": 0.01,
-  "repulsive_sigma": 4.0,
+  "repulsive_forces": {
+    "MEH_MEH": {"residueA": "MEH", "residueB": "MEH", "epsilon": 0.01, "sigma": 4.0}
+  },
   "solvent_smiles": "H2O",
   "solvent_copies": null,
   "positive_ion": "Na+",

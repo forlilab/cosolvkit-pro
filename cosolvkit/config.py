@@ -16,9 +16,7 @@ class Config(object):
                  clean_protein=True,
                  keep_heterogens=False,
                  variants=dict(),
-                 repulsive_residues=list(),
-                 repulsive_epsilon=None,
-                 repulsive_sigma=None,
+                 repulsive_forces=dict(),
                  solvent_smiles=None,
                  solvent_copies=None,
                  positive_ion="Na+",
@@ -42,9 +40,7 @@ class Config(object):
         self.clean_protein = clean_protein
         self.keep_heterogens = keep_heterogens
         self.variants = variants
-        self.repulsive_residues = repulsive_residues
-        self.repulsive_epsilon = repulsive_epsilon
-        self.repulsive_sigma = repulsive_sigma
+        self.repulsive_forces = repulsive_forces
         self.solvent_smiles = solvent_smiles
         self.solvent_copies = solvent_copies
         self.positive_ion = positive_ion

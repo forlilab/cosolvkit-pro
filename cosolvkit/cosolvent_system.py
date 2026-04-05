@@ -306,56 +306,58 @@ class CosolventSystem(object):
         self.system = self._create_system(self.forcefield, self.modeller.topology)
         return
     
-    def add_repulsive_forces(self, residues_names: list, epsilon: float=0.01, sigma: float=4.0):
-        """This function adds a LJ repulsive potential between the specified molecules.
+    def add_repulsive_forces(self, repulsive_forces: dict):
+        """Adds pairwise LJ repulsive potentials between specified residue pairs.
 
-        :param residues_names: list of residue names
-        :type residues_names: list
-        :param epsilon: depth of the potential well in kcal/mol, defaults to 0.01
-        :type epsilon: float, optional
-        :param sigma: inter-particle distance in Angstrom, defaults to 4.0
-        :type sigma: float, optional
-        """            
-        epsilon = np.sqrt(epsilon * epsilon) * openmmunit.kilocalories_per_mole
-        sigma = sigma * openmmunit.angstrom
+        Each entry in the dict creates one CustomNonbondedForce acting between
+        atoms of residueA and atoms of residueB, with its own epsilon and sigma.
 
-        forces = { force.__class__.__name__ : force for force in self.system.getForces()}
+        :param repulsive_forces: dict mapping a force name to its parameters, e.g.
+            {"BEN_PRP": {"residueA": "BEN", "residueB": "PRP", "epsilon": 0.01, "sigma": 4.0}}
+            epsilon is in kcal/mol (default 0.01), sigma is in Angstrom (default 4.0).
+        :type repulsive_forces: dict
+        """
+        forces = {force.__class__.__name__: force for force in self.system.getForces()}
         nb_force = forces['NonbondedForce']
         cutoff_distance = nb_force.getCutoffDistance()
-        energy_expression = "4*epsilon * (sigma / r)^12;" #Only the repulsive term of the LJ potential
-        energy_expression += f"epsilon = {epsilon.value_in_unit_system(openmmunit.md_unit_system)};"
-        energy_expression += f"sigma = {sigma.value_in_unit_system(openmmunit.md_unit_system)};"
-        repulsive_force = CustomNonbondedForce(energy_expression)
-        repulsive_force.addPerParticleParameter("sigma")
-        repulsive_force.addPerParticleParameter("epsilon")
-        repulsive_force.setNonbondedMethod(NonbondedForce.CutoffPeriodic)
-        repulsive_force.setCutoffDistance(cutoff_distance)
-        repulsive_force.setUseLongRangeCorrection(False)
-        repulsive_force.setUseSwitchingFunction(True)
-        repulsive_force.setSwitchingDistance(cutoff_distance - 0.1 * openmmunit.nanometer)
 
-        target_indices = defaultdict(list)
+        nb_params = [nb_force.getParticleParameters(i) for i in range(nb_force.getNumParticles())]
+        exceptions = [(nb_force.getExceptionParameters(i)[0], nb_force.getExceptionParameters(i)[1])
+                      for i in range(nb_force.getNumExceptions())]
+
+        residue_atom_indices = defaultdict(list)
         for i, atom in enumerate(self.modeller.getTopology().atoms()):
-            if not atom.residue.name in residues_names:
-                charge, sigma, epsilon = nb_force.getParticleParameters(i)
-            else:
-                target_indices[atom.residue.id].append(i) 
-            repulsive_force.addParticle([sigma, epsilon])
-        
-        for index in range(nb_force.getNumExceptions()):
-            idx, jdx, c, s, eps = nb_force.getExceptionParameters(index)
-            repulsive_force.addExclusion(idx, jdx)
-        
-        for res in target_indices.keys():
-            indexes = set()
-            for x in target_indices.keys():
-                if x!= res:
-                    for y in target_indices[x]:
-                        indexes.add(y)
-            repulsive_force.addInteractionGroup(set(target_indices[res]), indexes)
-        self.system.addForce(repulsive_force)
+            residue_atom_indices[atom.residue.name].append(i)
 
-        return
+        for force_name, params in repulsive_forces.items():
+            residue_a = params['residueA']
+            residue_b = params['residueB']
+            epsilon = np.sqrt(params.get('epsilon', 0.01) ** 2) * openmmunit.kilocalories_per_mole
+            sigma = params.get('sigma', 4.0) * openmmunit.angstrom
+
+            energy_expression = "4*epsilon * (sigma / r)^12;" #Only the repulsive term of the LJ potential
+            energy_expression += f"epsilon = {epsilon.value_in_unit_system(openmmunit.md_unit_system)};"
+            energy_expression += f"sigma = {sigma.value_in_unit_system(openmmunit.md_unit_system)};"
+
+            repulsive_force = CustomNonbondedForce(energy_expression)
+            repulsive_force.addPerParticleParameter("sigma")
+            repulsive_force.addPerParticleParameter("epsilon")
+            repulsive_force.setNonbondedMethod(NonbondedForce.CutoffPeriodic)
+            repulsive_force.setCutoffDistance(cutoff_distance)
+            repulsive_force.setUseLongRangeCorrection(False)
+            repulsive_force.setUseSwitchingFunction(True)
+            repulsive_force.setSwitchingDistance(cutoff_distance - 0.1 * openmmunit.nanometer)
+
+            for charge, s, e in nb_params:
+                repulsive_force.addParticle([s, e])
+            for idx, jdx in exceptions:
+                repulsive_force.addExclusion(idx, jdx)
+
+            repulsive_force.addInteractionGroup(
+                set(residue_atom_indices[residue_a]),
+                set(residue_atom_indices[residue_b])
+            )
+            self.system.addForce(repulsive_force)
 
     def save_pdb(self, topology: app.Topology, positions: list, out_path: str):
         """Saves the specified topology and position to the out_path file.
