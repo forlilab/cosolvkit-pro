@@ -325,8 +325,9 @@ class Analysis(AnalysisBase):
     def _build_accessible_mask(self, traj_step=5, probe_radius=1.4, export=True):
         """
         Build a boolean grid where True = voxel is solvent-accessible.
-        Use both water-oxygen and one cosolvent heavy atom per mol to capture small cavities and
-        also hydrophobic pockets not accessed by water.
+        Uses the union of water-oxygen and cosolvent heavy-atom positions so that
+        hydrophobic/cryptic regions sampled by the probe but not by water are included
+        in the reference volume used to compute N_o.
         The grid is dilated by `probe_radius` to account for the size of the probe.
 
         Parameters
@@ -338,14 +339,15 @@ class Analysis(AnalysisBase):
         if hasattr(self, "_n_accessible_voxels"):
             return  # already built
 
-        # collect water-oxygen + one cosolvent heavy-atom per mol
-        O_sel  = self._u.select_atoms("resname HOH WAT and name O")
-        # probeH = self._u.select_atoms("not resname HOH WAT and not name H* and prop q<0.1").unique  # e.g. any neutral heavy atom
+        # collect water-oxygen + cosolvent heavy atoms to capture hydrophobic/cryptic
+        # regions that water undersamples, giving an accurate reference volume for N_o
+        O_sel       = self._u.select_atoms("resname HOH WAT and name O")
+        probe_heavy = self._ag.select_atoms("not name H*")
 
         coords = []
         for ts in self._u.trajectory[::traj_step]: # this stride saves time
             coords.append(O_sel.positions.copy())
-            # coords.append(probeH.positions.copy())
+            coords.append(probe_heavy.positions.copy())
         coords = np.vstack(coords)
 
         # histogram into current grid
