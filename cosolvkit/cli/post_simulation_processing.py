@@ -28,9 +28,9 @@ def main():
     # Set up logging
     logger = setup_logging(level="INFO", filepath=f"{out_path}/cosolvkit.log")
 
-    report = Report(statistics_file, traj_file, top_file, cosolvents_names, out_path)
-    report.generate_report(equilibration=True, rmsf=True, rdf=True)
-    report.generate_density_maps(use_atomtypes=True)
+    report = Report(statistics_file, traj_file, top_file, cosolvents_names.split(','), out_path)
+    report.generate_report(equilibration=True, rmsf=True, rdf=False)
+    report.generate_density_maps(use_atomtypes=False, temperature=300)
     report.generate_pymol_session(density_files=out_path) # use all density files in out_path
     
     return
