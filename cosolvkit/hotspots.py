@@ -16,7 +16,6 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from gridData import Grid
 from scipy.ndimage import label, center_of_mass
-from scipy.spatial import cKDTree
 
 try:
     from pymol import cmd as _pymol_cmd
@@ -37,7 +36,7 @@ class BindingSite:
 
     def __init__(self, rank, site_id, cosolvent, n_voxels, centroid,
                  agfe_min, agfe_mean_top_pct, voxel_mask,
-                 favorability_score, burial_score, diversity_score,
+                 favorability_score, diversity_score,
                  volume_score, composite_score,
                  favorable_atomtypes, per_type_agfe):
         self.rank = rank                            # int; 1 = highest composite score
@@ -49,7 +48,6 @@ class BindingSite:
         self.agfe_mean_top_pct = agfe_mean_top_pct  # float, kcal/mol
         self.voxel_mask = voxel_mask                # boolean 3D ndarray, same shape as AGFE grid
         self.favorability_score = favorability_score  # float [0, 1]
-        self.burial_score = burial_score              # float [0, 1]
         self.diversity_score = diversity_score        # float [0, 1]
         self.volume_score = volume_score              # float [0, 1]
         self.composite_score = composite_score        # float, weighted sum
@@ -74,7 +72,6 @@ class BindingSite:
             "agfe_min": round(float(self.agfe_min), 4),
             "agfe_mean_top_pct": round(float(self.agfe_mean_top_pct), 4),
             "favorability_score": round(float(self.favorability_score), 4),
-            "burial_score": round(float(self.burial_score), 4),
             "diversity_score": round(float(self.diversity_score), 4),
             "volume_score": round(float(self.volume_score), 4),
             "composite_score": round(float(self.composite_score), 4),
@@ -99,8 +96,7 @@ class HotspotDetector:
     clusters favorable voxels with connected-components analysis, scores each
     cluster on four independent axes, and exports ranked results.
 
-    **Composite score** = w_fav × favorability + w_bur × burial
-                        + w_div × diversity   + w_vol × volume
+    **Composite score** = w_fav × favorability + w_div × diversity + w_vol × volume
 
     Parameters
     ----------
@@ -109,21 +105,19 @@ class HotspotDetector:
     cosolvent_names : list[str]
         Cosolvent residue names to analyse.
     universe : MDAnalysis.Universe
-        Loaded trajectory universe (used for burial scoring fallback).
+        Loaded trajectory universe.
     agfe_cutoff : float
         AGFE threshold in kcal/mol (default -0.5).  Only voxels strictly below
         this value are considered favorable.
     min_cluster_voxels : int
         Minimum cluster size to retain (default 5).  Scale this with gridsize
         (e.g. use 3 for a 1.0 Å grid).
-    burial_radius : float
-        Radius in Angstroms for the burial-score sphere (default 6.0).
     top_percentile : float
         Top percentage of most-favorable voxels used for favorability scoring
         (default 10.0).
     score_weights : dict, optional
         Weights for composite score components.  Keys: ``favorability``,
-        ``burial``, ``diversity``, ``volume``.  Will be normalised to sum 1.0.
+        ``diversity``, ``volume``.  Will be normalised to sum 1.0.
     gridsize : float
         Voxel size in Angstroms (default 0.5).  Should match the value used
         in :meth:`Report.generate_density_maps`.
@@ -138,7 +132,6 @@ class HotspotDetector:
 
     _DEFAULT_WEIGHTS = {
         "favorability": 0.5,
-        "burial": 0.0,
         "diversity": 0.2,
         "volume": 0.1,
         "sp_mrt": 0.2
@@ -146,7 +139,7 @@ class HotspotDetector:
 
     def __init__(self, out_path, cosolvent_names, universe,
                  agfe_cutoff=-0.5, min_cluster_voxels=5,
-                 burial_radius=6.0, top_percentile=10.0,
+                 top_percentile=10.0,
                  score_weights=None, gridsize=0.5,
                  top_n_survival=10, survival_kwargs=None):
         self.logger = logging.getLogger(__name__)
@@ -155,7 +148,6 @@ class HotspotDetector:
         self.universe = universe
         self.agfe_cutoff = agfe_cutoff
         self.min_cluster_voxels = min_cluster_voxels
-        self.burial_radius = burial_radius
         self.top_percentile = top_percentile
         self.gridsize = gridsize
         self.top_n_survival = top_n_survival
@@ -235,36 +227,6 @@ class HotspotDetector:
             f"Available files: {available}"
         )
 
-    def _load_accessible_mask(self, reference_shape):
-        """Load ``solvent_accessible_map.dx`` (1 = accessible, 0 = buried).
-
-        The file is written to CWD by :meth:`Analysis._build_accessible_mask`
-        (not to out_path — a pre-existing path inconsistency).  Searches both
-        locations.
-        """
-        search_paths = [
-            os.path.join(self.out_path, "solvent_accessible_map.dx"),
-            os.path.join(os.getcwd(), "solvent_accessible_map.dx"),
-        ]
-        for path in search_paths:
-            if os.path.exists(path):
-                grid = self._load_dx(path)
-                mask = grid.grid
-                if mask.shape != reference_shape:
-                    self.logger.warning(
-                        f"solvent_accessible_map.dx shape {mask.shape} differs from "
-                        f"AGFE grid shape {reference_shape}. "
-                        "Falling back to protein-atom distance for burial scoring."
-                    )
-                    return None
-                return mask
-        self.logger.warning(
-            "solvent_accessible_map.dx not found in:\n"
-            + "\n".join(f"  {p}" for p in search_paths)
-            + "\nFalling back to protein-atom distance for burial scoring."
-        )
-        return None
-
     # ------------------------------------------------------------------
     # Coordinate helpers
     # ------------------------------------------------------------------
@@ -278,37 +240,6 @@ class HotspotDetector:
         linear interpolation.
         """
         return np.array(grid.origin) + np.array(vox_idx) * np.array(grid.delta)
-
-    # ------------------------------------------------------------------
-    # Scoring helpers
-    # ------------------------------------------------------------------
-
-    def _burial_from_mask(self, accessible_mask, center_vox, r_vox, shape):
-        """Burial score using the solvent-accessible mask.
-
-        Returns the fraction of voxels inside a sphere of ``r_vox`` voxels
-        around ``center_vox`` that are *not* accessible (buried in protein).
-        """
-        cv = np.array(center_vox)
-        i0 = max(0, int(cv[0] - r_vox))
-        i1 = min(shape[0], int(cv[0] + r_vox) + 1)
-        j0 = max(0, int(cv[1] - r_vox))
-        j1 = min(shape[1], int(cv[1] + r_vox) + 1)
-        k0 = max(0, int(cv[2] - r_vox))
-        k1 = min(shape[2], int(cv[2] + r_vox) + 1)
-
-        ii, jj, kk = np.mgrid[i0:i1, j0:j1, k0:k1]
-        in_sphere = (ii - cv[0])**2 + (jj - cv[1])**2 + (kk - cv[2])**2 <= r_vox**2
-        if not in_sphere.any():
-            return 0.0
-        sub = accessible_mask[i0:i1, j0:j1, k0:k1]
-        return float(1.0 - sub[in_sphere].mean())
-
-    def _burial_from_protein(self, protein_tree, centroid_ang):
-        """Burial score from nearest protein heavy-atom distance (fallback)."""
-        dist, _ = protein_tree.query(centroid_ang.reshape(1, 3), k=1)
-        d = float(dist[0])
-        return float(1.0 / (1.0 + d / self.burial_radius))
 
     # ------------------------------------------------------------------
     # Core detection
@@ -325,19 +256,6 @@ class HotspotDetector:
         combined_grid, per_type_grids = self._load_combined_agfe(cosolvent)
         agfe_array = combined_grid.grid
         shape = agfe_array.shape
-
-        accessible_mask = self._load_accessible_mask(shape)
-        r_vox = self.burial_radius / self.gridsize
-
-        # Build protein KD-tree once for the fallback burial scorer
-        protein_tree = None
-        if accessible_mask is None:
-            try:
-                protein = self.universe.select_atoms("protein and not name H*")
-                if len(protein) > 0:
-                    protein_tree = cKDTree(protein.positions)
-            except Exception as exc:
-                self.logger.debug(f"Could not build protein KD-tree: {exc}")
 
         # --- Threshold ---
         favorable_mask = agfe_array < self.agfe_cutoff
@@ -379,7 +297,7 @@ class HotspotDetector:
         coms = center_of_mass(np.abs(agfe_array), labeled_array, site_labels)
 
         # --- Compute raw scores ---
-        raw_f, raw_b, raw_d, raw_v = [], [], [], []
+        raw_f, raw_d, raw_v = [], [], []
         site_data = []
 
         for lbl, com_vox in zip(site_labels, coms):
@@ -393,16 +311,6 @@ class HotspotDetector:
 
             # Centroid in Angstroms
             centroid_ang = self._voxel_to_angstrom(combined_grid, com_vox)
-
-            # Burial
-            if accessible_mask is not None:
-                b_raw = self._burial_from_mask(
-                    accessible_mask, np.array(com_vox), r_vox, shape
-                )
-            elif protein_tree is not None:
-                b_raw = self._burial_from_protein(protein_tree, centroid_ang)
-            else:
-                b_raw = 0.0
 
             # Diversity: fraction of atom types favorable at this site
             if per_type_grids:
@@ -423,7 +331,6 @@ class HotspotDetector:
             favorable_atomtypes = sorted(per_type_agfe.keys())
 
             raw_f.append(f_raw)
-            raw_b.append(b_raw)
             raw_d.append(d_raw)
             raw_v.append(n_vox)
             site_data.append({
@@ -432,7 +339,6 @@ class HotspotDetector:
                 "centroid_ang": centroid_ang,
                 "agfe_min": float(np.min(voxel_agfe)),
                 "agfe_mean_top_pct": f_raw,
-                "burial": b_raw,
                 "diversity": d_raw,
                 "voxel_mask": site_mask,
                 "favorable_atomtypes": favorable_atomtypes,
@@ -457,7 +363,6 @@ class HotspotDetector:
         w = self.score_weights
         composite = (
             w["favorability"] * f_norm
-            + w["burial"] * np.array(raw_b)
             + w["diversity"] * np.array(raw_d)
             + w["volume"] * v_norm
         )
@@ -477,7 +382,6 @@ class HotspotDetector:
                 agfe_mean_top_pct=sd["agfe_mean_top_pct"],
                 voxel_mask=sd["voxel_mask"],
                 favorability_score=float(f_norm[idx]),
-                burial_score=float(raw_b[idx]),
                 diversity_score=float(raw_d[idx]),
                 volume_score=float(v_norm[idx]),
                 composite_score=float(composite[idx]),
