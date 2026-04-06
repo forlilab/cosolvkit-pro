@@ -15,6 +15,8 @@ def cmd_lineparser():
                         action='store', help='path where to store output files')
     parser.add_argument('-c', '--cosolvents', dest='cosolvents', required=True,
                         action='store', help='list of cosolvents resname to analyze separated by commas')
+    parser.add_argument('--hotspots', dest='hotspots', action='store_true', default=False,
+                        help='run hotspot detection and ranking after density map generation')
     return parser.parse_args()
 
 def main():
@@ -29,10 +31,14 @@ def main():
     logger = setup_logging(level="INFO", filepath=f"{out_path}/cosolvkit.log")
 
     report = Report(statistics_file, traj_file, top_file, cosolvents_names.split(','), out_path)
-    report.generate_report(equilibration=True, rmsf=False, rdf=False)
+    report.generate_report(equilibration=False, rmsf=False, rdf=False)
     report.generate_density_maps(use_atomtypes=True, temperature=300)
     report.generate_pymol_session()
-    
+    if args.hotspots:
+        report.generate_hotspot_report(
+            min_cluster_voxels=20, agfe_cutoff=-1.0
+        )
+
     return
 
 

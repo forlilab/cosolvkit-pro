@@ -32,6 +32,8 @@ sns.set_context("notebook", font_scale=1.2, rc={"lines.linewidth": 3})
 
 from pymol import cmd
 
+from .hotspots import HotspotDetector
+
 
 BOLTZMANN_CONSTANT_KB = 0.0019872041  # kcal/(mol*K)
 
@@ -396,16 +398,22 @@ class Analysis(AnalysisBase):
                     f"Check that the SMARTS is appropriate for this molecule."
                 )
 
-        self.atomtypes_dict = {key: np.unique(ag.atoms.types) for key, ag in self.atomtypes_dict.items()}
-
+        # Map each atom to its category using atom indices from SMARTS matches directly.
+        # Using FF types as an intermediary (e.g. np.unique(ag.atoms.types)) fails when
+        # multiple categories share the same FF type (e.g. C3 appears in both HBA and Car).
+        ag_indices = self._ag.atoms.indices
         mapped_atomtypes = np.zeros_like(self._ag.atoms.types, dtype=object)
 
-        # Map atom types to their respective categories
-        for atom in self._ag.atoms.types:
-            for key, atomtypes in self.atomtypes_dict.items():
-                if atom in atomtypes:
-                    mapped_atomtypes[np.where(self._ag.atoms.types == atom)] = key
-                    break
+        for key, matched_ag in self.atomtypes_dict.items():
+            if matched_ag.n_atoms == 0:
+                continue
+            match_mask = np.isin(ag_indices, matched_ag.atoms.indices)
+            # First-match wins: don't overwrite atoms already claimed by a prior category
+            unassigned_mask = mapped_atomtypes == 0
+            mapped_atomtypes[match_mask & unassigned_mask] = key
+
+        # Rebuild atomtypes_dict so callers can still iterate over its keys
+        self.atomtypes_dict = {key: ag for key, ag in self.atomtypes_dict.items()}
 
         # Warn about atoms that could not be assigned to any SMARTS-defined type
         unmatched_mask = mapped_atomtypes == 0
@@ -1006,9 +1014,74 @@ class Report:
             item.set_visible(False)
         return ax
     
-    def generate_pymol_session(self, 
+    def generate_hotspot_report(self,
+                               cosolvent_names:list=None,
+                               agfe_cutoff:float=-0.5,
+                               min_cluster_voxels:int=5,
+                               burial_radius:float=6.0,
+                               top_percentile:float=10.0,
+                               score_weights:dict=None,
+                               export_label_map:bool=True,
+                               add_to_pymol:bool=True,
+                               gridsize:float=0.5) -> dict:
+        """Detect, score, and rank binding hotspots from AGFE density maps.
+
+        Must be called after :meth:`generate_density_maps`.  Reads the ``.dx``
+        files written to ``out_path``, clusters favorable voxels with
+        connected-components analysis, and scores each site on:
+
+        - **favorability** — mean AGFE of the most-favorable voxels (top percentile)
+        - **burial** — fraction of a surrounding sphere that lies inside the protein
+        - **diversity** — fraction of atom types (HBD/HBA/Car/Cal/Hal) favorable at the site
+        - **volume** — normalised cluster size (proxy for pocket spatial extent)
+
+        Note: persistence (fraction of trajectory occupied) is intentionally omitted
+        because it is mathematically equivalent to AGFE via the Boltzmann relation
+        AGFE = −kT·ln(P_local/P_bulk) and would double-count the favorability signal.
+
+        :param cosolvent_names: cosolvents to analyse, defaults to all.
+        :param agfe_cutoff: AGFE threshold in kcal/mol (default -0.5).
+        :param min_cluster_voxels: minimum cluster size to retain (default 5).
+        :param burial_radius: sphere radius in Å for burial scoring (default 6.0).
+        :param top_percentile: top-N% voxels used for favorability score (default 10.0).
+        :param score_weights: dict with keys favorability/burial/diversity/volume.
+        :param export_label_map: write hotspot_labels_{cosolvent}.dx (default True).
+        :param add_to_pymol: add hotspot spheres to existing .pse session (default True).
+        :param gridsize: voxel size in Å, must match generate_density_maps (default 0.5).
+        :return: dict {cosolvent: List[BindingSite]} sorted by composite score.
+        """
+        if cosolvent_names is None:
+            cosolvent_names = self.cosolvent_names
+
+        detector = HotspotDetector(
+            out_path=self.out_path,
+            cosolvent_names=cosolvent_names,
+            universe=self.universe,
+            agfe_cutoff=agfe_cutoff,
+            min_cluster_voxels=min_cluster_voxels,
+            burial_radius=burial_radius,
+            top_percentile=top_percentile,
+            score_weights=score_weights,
+            gridsize=gridsize,
+        )
+        results = detector.detect_all()
+        detector.export_results(results, label_map=export_label_map)
+
+        if add_to_pymol:
+            pse_path = os.path.join(self.out_path, "pymol_results_session.pse")
+            if os.path.exists(pse_path):
+                detector.add_hotspots_to_pymol_session(results, pse_path)
+            else:
+                self.logger.warning(
+                    "PyMol session not found — run generate_pymol_session() first "
+                    "or pass add_to_pymol=False."
+                )
+
+        return results
+
+    def generate_pymol_session(self,
                                density_files:Union[str, list]=None,
-                               selection_string:str=None, 
+                               selection_string:str=None,
                                reference_pdb:str=None):
         """Generate a PyMol session from the density maps. The average structure is always used as a reference. 
         You can also include a reference pdb file and specify the residues of interest. 
