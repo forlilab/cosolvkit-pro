@@ -879,8 +879,8 @@ class HotspotDetector:
             )
             return
 
-        _RANK_COLORS = {1: "yellow", 2: "orange", 3: "tv_red"}
-        _DEFAULT_COLOR = "salmon"
+        _RANK_COLORS = {1: "tv_green", 2:"yellow", 3: "orange", 4: "salmon", 5: "tv_red"}
+        _DEFAULT_COLOR = "grey"
 
         _pymol_cmd.load(pse_path)
         pml_lines = ["\n# Hotspot sites added by HotspotDetector\n"]
