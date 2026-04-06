@@ -347,11 +347,18 @@ class Analysis(AnalysisBase):
         # regions that water undersamples, giving an accurate reference volume for N_o
         O_sel       = self._u.select_atoms("resname HOH WAT and name O")
         probe_heavy = self._ag.select_atoms("not name H*")
+        # protein heavy atoms define the buried/excluded volume
+        protein_sel = self._u.select_atoms(
+            "protein and not name H* and not (resname HOH WAT)"
+        )
 
         coords = []
+        protein_coords = []
         for ts in self._u.trajectory[::traj_step]: # this stride saves time
             coords.append(O_sel.positions.copy())
             coords.append(probe_heavy.positions.copy())
+            if protein_sel.n_atoms > 0:
+                protein_coords.append(protein_sel.positions.copy())
         coords = np.vstack(coords)
 
         # histogram into current grid
@@ -361,6 +368,13 @@ class Analysis(AnalysisBase):
         # dilate by ≈ probe_radius
         n_iter = int(round(probe_radius / self._gridsize))
         mask = binary_dilation(mask, iterations=max(1, n_iter))
+
+        # exclude voxels occupied by protein atoms (buried volume)
+        if protein_coords:
+            protein_coords_arr = np.vstack(protein_coords)
+            protein_hist, _ = np.histogramdd(protein_coords_arr, bins=self._edges)
+            protein_mask = protein_hist > 0
+            mask = mask & ~protein_mask
 
         # count and save the mask
         self._n_accessible_voxels = int(mask.sum())

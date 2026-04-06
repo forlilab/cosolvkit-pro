@@ -36,7 +36,7 @@ def main():
     report.generate_pymol_session()
     if args.hotspots:
         report.generate_hotspot_report(
-            min_cluster_voxels=20, agfe_cutoff=-1.0
+            min_cluster_voxels=10, agfe_cutoff=-0.5
         )
 
     return
