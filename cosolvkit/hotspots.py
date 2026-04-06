@@ -645,16 +645,13 @@ class HotspotDetector:
         """Overlay fitted decay curves on SP data — one figure per model.
 
         Writes ``survival_probability_fit_{model}_{cosolvent}.png`` for each
-        of the three models: single-exp, bi-exponential, and KWW.
+        of the two models: single-exp and bi-exponential.
         """
         def _single_exp(t, tau):
             return np.exp(-t / tau)
 
         def _bi_exp(t, A, tau1, tau2):
             return A * np.exp(-t / tau1) + (1.0 - A) * np.exp(-t / tau2)
-
-        def _kww(t, tau, beta):
-            return np.exp(-(t / tau) ** beta)
 
         site_by_rank = {site.rank: site for site in sites}
         n_groups = df["Group"].nunique()
@@ -676,16 +673,6 @@ class HotspotDetector:
                     f"τ_fast={p['sp_tau_fast']:.1f}, "
                     f"τ_slow={p['sp_tau_slow']:.1f}, "
                     f"R²={p.get('sp_r2_biexp', 0):.3f}"
-                ),
-            ),
-            (
-                "kww", "KWW (stretched-exp)",
-                _kww,
-                lambda p: (p.get("sp_tau_kww"), p.get("sp_beta_kww")),
-                lambda p: (
-                    f"τ={p['sp_tau_kww']:.1f}, "
-                    f"β={p['sp_beta_kww']:.3f}, "
-                    f"R²={p.get('sp_r2_kww', 0):.3f}"
                 ),
             ),
         ]
@@ -745,10 +732,6 @@ class HotspotDetector:
         * ``sp_tau_fast``       — fast time constant τ₁ (bi-exp)
         * ``sp_tau_slow``       — slow time constant τ₂ (bi-exp)
         * ``sp_r2_biexp``       — R² of bi-exponential fit
-        * ``sp_tau_kww``        — KWW (stretched-exp) characteristic time τ_c
-        * ``sp_beta_kww``       — KWW stretching exponent β (1 = simple exp, <1 = heterogeneous)
-        * ``sp_r2_kww``         — R² of KWW fit
-
         Parameters
         ----------
         results : dict[str, list[BindingSite]]
@@ -765,9 +748,6 @@ class HotspotDetector:
 
         def _bi_exp(t, A, tau1, tau2):
             return A * np.exp(-t / tau1) + (1.0 - A) * np.exp(-t / tau2)
-
-        def _kww(t, tau, beta):
-            return np.exp(-(t / tau) ** beta)
 
         def _r2(y_true, y_pred):
             ss_res = np.sum((y_true - y_pred) ** 2)
@@ -863,23 +843,6 @@ class HotspotDetector:
                     except Exception as exc:
                         self.logger.debug(f"Bi-exp fit failed (zone {zone_idx}): {exc}")
 
-                # KWW (stretched-exponential) fit
-                try:
-                    mrt = props["sp_mrt"]
-                    p0 = [max(mrt, 1.0), 1.0]
-                    popt, _ = curve_fit(
-                        _kww, tau_arr, sp_arr, p0=p0,
-                        bounds=([0, 0.1], [np.inf, 2.0]),
-                        maxfev=5000
-                    )
-                    props["sp_tau_kww"] = round(float(popt[0]), 4)
-                    props["sp_beta_kww"] = round(float(popt[1]), 4)
-                    props["sp_r2_kww"] = round(
-                        _r2(sp_arr, _kww(tau_arr, *popt)), 4
-                    )
-                except Exception as exc:
-                    self.logger.debug(f"KWW fit failed (zone {zone_idx}): {exc}")
-
                 for k, v in props.items():
                     site.add_property(k, v)
 
@@ -887,8 +850,7 @@ class HotspotDetector:
                     f"Site rank {rank} ({cosolvent}): "
                     f"MRT={props['sp_mrt']:.2f}, "
                     f"plateau={props['sp_plateau']:.3f}, "
-                    f"τ_single={props.get('sp_tau_single', 'N/A')}, "
-                    f"β_kww={props.get('sp_beta_kww', 'N/A')}"
+                    f"τ_single={props.get('sp_tau_single', 'N/A')}"
                 )
 
             self._plot_sp_fits(cosolvent, sites, df)
