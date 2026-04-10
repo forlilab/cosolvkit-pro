@@ -1,7 +1,7 @@
 {
 "DACAr_types": [
     {"atype": "HBD", "smarts": "[!$([#6,H0,-,-2,-3])]", "comment": "H-Bond Donor is a non-negatively charged heteroatom with at least one H"},
-    {"atype": "HBA", "smarts": "[#6,#7;R0]=[#8]", "comment": "Only hits carbonyl and nitroso. Matches a 2-atom pattern consisting of a carbon or nitrogen not in a ring, double bonded to an oxygen."},
+    {"atype": "HBA", "smarts": "[!$([#6,F,Cl,Br,I,o,s,nX3,#7v5,#15v5,#16v4,#16v6,*+1,*+2,*+3])]", "comment": "Only hits carbonyl and nitroso. Matches a 2-atom pattern consisting of a carbon or nitrogen not in a ring, double bonded to an oxygen."},
     {"atype": "Car", "smarts": "[#6;r5,r6]", "comment": "Aromatic/ring carbon (5 or 6 membered ring)"},
     {"atype": "Cal", "smarts": "[#6X4]", "comment": "Aliphatic carbon"},
     {"atype": "Hal", "smarts": "[F,Cl,Br,I]", "comment": "Halogen"}
