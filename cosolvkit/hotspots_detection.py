@@ -12,16 +12,17 @@ import glob as glob_module
 import logging
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-import seaborn as sns
 from gridData import Grid
-from scipy.ndimage import label, center_of_mass
+from scipy.ndimage import center_of_mass
+from scipy.optimize import curve_fit
+from scipy.interpolate import interp1d
 
-try:
-    from pymol import cmd as _pymol_cmd
-    _PYMOL_AVAILABLE = True
-except ImportError:
-    _PYMOL_AVAILABLE = False
+from .density_clustering import (
+    ConnectedComponentsClustering,
+    WatershedClustering,
+    DBSCANClustering,
+)
+from . import hotspot_visualization as viz
 
 
 class BindingSite:
@@ -93,7 +94,7 @@ class HotspotDetector:
     """Detect and rank binding hotspots from cosolvent AGFE density maps.
 
     Reads the AGFE ``.dx`` maps produced by :meth:`Report.generate_density_maps`,
-    clusters favorable voxels with connected-components analysis, scores each
+    clusters favorable voxels using a pluggable clustering strategy, scores each
     cluster on four independent axes, and exports ranked results.
 
     **Composite score** = w_fav × favorability + w_div × diversity + w_vol × volume
@@ -121,6 +122,12 @@ class HotspotDetector:
     gridsize : float
         Voxel size in Angstroms (default 0.5).  Should match the value used
         in :meth:`Report.generate_density_maps`.
+    clustering_strategy : ClusteringStrategy, optional
+        Object with a ``cluster(favorable_mask, agfe_array, gridsize)`` method
+        that returns ``(labeled_array, site_labels)``.  Defaults to
+        :class:`ConnectedComponentsClustering` with 6-connectivity.
+        Built-in strategies: :class:`ConnectedComponentsClustering`,
+        :class:`WatershedClustering`, :class:`DBSCANClustering`.
     top_n_survival : int
         Number of top-ranked hotspots (per cosolvent) for which survival
         probability analysis is run automatically by :meth:`detect_all`.
@@ -141,6 +148,7 @@ class HotspotDetector:
                  agfe_cutoff=-0.5, min_cluster_voxels=5,
                  top_percentile=10.0,
                  score_weights=None, gridsize=0.5,
+                 clustering_strategy=None,
                  top_n_survival=10, survival_kwargs=None):
         self.logger = logging.getLogger(__name__)
         self.out_path = out_path
@@ -150,6 +158,11 @@ class HotspotDetector:
         self.min_cluster_voxels = min_cluster_voxels
         self.top_percentile = top_percentile
         self.gridsize = gridsize
+        self.clustering_strategy = (
+            clustering_strategy
+            if clustering_strategy is not None
+            else ConnectedComponentsClustering(min_cluster_voxels=min_cluster_voxels)
+        )
         self.top_n_survival = top_n_survival
         self.survival_kwargs = survival_kwargs or {}
 
@@ -241,6 +254,20 @@ class HotspotDetector:
         """
         return np.array(grid.origin) + np.array(vox_idx) * np.array(grid.delta)
 
+    def _cluster_voxels(self, favorable_mask, agfe_array):
+        """Delegate clustering to ``self.clustering_strategy``.
+
+        Returns
+        -------
+        labeled_array : np.ndarray of int
+            3-D array; 0 = background, positive integers = cluster ids.
+        site_labels : list[int]
+            Cluster ids that survived the minimum-size filter.
+        """
+        return self.clustering_strategy.cluster(
+            favorable_mask, agfe_array, self.gridsize
+        )
+
     # ------------------------------------------------------------------
     # Core detection
     # ------------------------------------------------------------------
@@ -267,19 +294,13 @@ class HotspotDetector:
             )
             return []
 
-        # --- Connected-components clustering (6-connectivity) ---
-        labeled_array, n_raw_sites = label(favorable_mask)
+        # --- Cluster favorable voxels ---
+        labeled_array, site_labels = self._cluster_voxels(favorable_mask, agfe_array)
 
-        # --- Filter small clusters ---
-        site_labels = [
-            lbl for lbl in range(1, n_raw_sites + 1)
-            if int((labeled_array == lbl).sum()) >= self.min_cluster_voxels
-        ]
         if not site_labels:
             self.logger.warning(
-                f"All clusters for '{cosolvent}' are smaller than "
-                f"min_cluster_voxels={self.min_cluster_voxels}. "
-                "Try reducing min_cluster_voxels."
+                f"No clusters survived size filtering for '{cosolvent}'. "
+                "Try reducing min_cluster_voxels or adjusting the clustering strategy."
             )
             return []
 
@@ -414,7 +435,7 @@ class HotspotDetector:
             ``{cosolvent: [site, ...]}`` sorted by composite score per cosolvent.
         """
         results = {cosolvent: self.detect(cosolvent) for cosolvent in self.cosolvent_names}
-
+                
         if self.top_n_survival > 0:
             candidate_zones = {}
             for cosolvent, sites in results.items():
@@ -441,7 +462,7 @@ class HotspotDetector:
     # Export
     # ------------------------------------------------------------------
 
-    def export_results(self, results, label_map=True):
+    def export_results(self, results, label_map=False):
         """Export hotspot results to CSV, JSON, and a label DX map.
 
         Parameters
@@ -502,6 +523,60 @@ class HotspotDetector:
         self.logger.info(
             f"Exported label map: hotspot_labels_{cosolvent}.dx "
             "(voxel value = rank; isosurface at 0.5 shows all sites)"
+        )
+
+    # ------------------------------------------------------------------
+    # Visualisation — thin wrappers; implementation in hotspot_visualization.py
+    # ------------------------------------------------------------------
+
+    def plot_hotspot_clustering_3d(self, cosolvent, sites, output_path=None,
+                                   max_voxels_per_cluster=3000, top_n=10):
+        """See :func:`hotspot_visualization.plot_hotspot_clustering_3d`.
+
+        Requires :meth:`detect` to have been called for *cosolvent* so that
+        the labeled array and combined grid are cached.
+
+        Parameters
+        ----------
+        cosolvent : str
+        sites : list[BindingSite]
+            Output of :meth:`detect` for this cosolvent.
+        output_path : str, optional
+            If given, write an interactive HTML file to this path.
+        max_voxels_per_cluster : int
+            Subsampling cap per cluster (default 3000).
+        top_n : int
+            Maximum number of sites to plot, in rank order (default 10).
+        """
+        if cosolvent not in self._labeled_arrays:
+            raise RuntimeError(
+                f"No cached clustering for '{cosolvent}'. "
+                "Call detect() first."
+            )
+        return viz.plot_hotspot_clustering_3d(
+            labeled_array=self._labeled_arrays[cosolvent],
+            agfe_array=self._combined_grids[cosolvent].grid,
+            sites=sites,
+            combined_grid=self._combined_grids[cosolvent],
+            cosolvent=cosolvent,
+            agfe_cutoff=self.agfe_cutoff,
+            output_path=output_path,
+            max_voxels_per_cluster=max_voxels_per_cluster,
+            top_n=top_n,
+        )
+
+    def visualise_clustering(self, cosolvent, results=None, reference_pdb=None):
+        """See :func:`hotspot_visualization.visualise_clustering`."""
+        if cosolvent not in self._labeled_arrays or results is None:
+            results = self.detect(cosolvent)
+        return viz.visualise_clustering(
+            cosolvent=cosolvent,
+            labeled_array=self._labeled_arrays[cosolvent],
+            combined_grid=self._combined_grids[cosolvent],
+            results=results,
+            out_path=self.out_path,
+            voxel_to_angstrom_fn=self._voxel_to_angstrom,
+            reference_pdb=reference_pdb,
         )
 
     # ------------------------------------------------------------------
@@ -620,98 +695,7 @@ class HotspotDetector:
                 index=False,
             )
 
-            self._plot_sp_raw(cosolvent_name, df_sp)
-
-    def _plot_sp_raw(self, cosolvent_name, df_sp):
-        """Plot raw SP curves with hotspot rank as legend labels."""
-        n_groups = df_sp["Group"].nunique()
-        palette = sns.color_palette("flare", n_colors=max(n_groups, 1))
-        fig, ax = plt.subplots()
-        for zone_idx, group_df in df_sp.groupby("Group"):
-            rank = int(zone_idx) + 1
-            ax.plot(group_df["Time"], group_df["SP"],
-                    label=f"Rank {rank}", color=palette[int(zone_idx)])
-        ax.set_xlabel("Lag time (frames)")
-        ax.set_ylabel("Survival Probability")
-        ax.set_title(f"{cosolvent_name} — Survival Probability")
-        ax.legend(title="Hotspot")
-        fig.tight_layout()
-        fig.savefig(
-            os.path.join(self.out_path, f"survival_probability_{cosolvent_name}.png")
-        )
-        plt.close(fig)
-
-    def _plot_sp_fits(self, cosolvent, sites, df):
-        """Overlay fitted decay curves on SP data — one figure per model.
-
-        Writes ``survival_probability_fit_{model}_{cosolvent}.png`` for each
-        of the two models: single-exp and bi-exponential.
-        """
-        def _single_exp(t, tau):
-            return np.exp(-t / tau)
-
-        def _bi_exp(t, A, tau1, tau2):
-            return A * np.exp(-t / tau1) + (1.0 - A) * np.exp(-t / tau2)
-
-        site_by_rank = {site.rank: site for site in sites}
-        n_groups = df["Group"].nunique()
-        palette = sns.color_palette("flare", n_colors=max(n_groups, 1))
-
-        models = [
-            (
-                "single", "Single-exponential",
-                _single_exp,
-                lambda p: (p.get("sp_tau_single"),),
-                lambda p: f"τ={p['sp_tau_single']:.1f}, R²={p.get('sp_r2_single', 0):.3f}",
-            ),
-            (
-                "biexp", "Bi-exponential",
-                _bi_exp,
-                lambda p: (p.get("sp_amplitude_fast"), p.get("sp_tau_fast"), p.get("sp_tau_slow")),
-                lambda p: (
-                    f"A={p['sp_amplitude_fast']:.2f}, "
-                    f"τ_fast={p['sp_tau_fast']:.1f}, "
-                    f"τ_slow={p['sp_tau_slow']:.1f}, "
-                    f"R²={p.get('sp_r2_biexp', 0):.3f}"
-                ),
-            ),
-        ]
-
-        for model_key, model_title, model_fn, param_getter, label_fn in models:
-            fig, ax = plt.subplots()
-            for zone_idx, group_df in df.groupby("Group"):
-                rank = int(zone_idx) + 1
-                site = site_by_rank.get(rank)
-                color = palette[int(zone_idx)]
-                tau_arr = group_df["Time"].values.astype(float)
-                sp_arr = group_df["SP"].values.astype(float)
-
-                ax.scatter(tau_arr, sp_arr, color=color, s=10, alpha=0.5, zorder=2)
-
-                if site is not None:
-                    params = param_getter(site.properties)
-                    if all(v is not None for v in params):
-                        t_fine = np.linspace(tau_arr[0], tau_arr[-1], 300)
-                        ax.plot(
-                            t_fine, model_fn(t_fine, *params),
-                            color=color,
-                            label=f"Rank {rank} — {label_fn(site.properties)}",
-                        )
-                    else:
-                        ax.plot([], [], color=color, label=f"Rank {rank} (fit failed)")
-
-            ax.set_xlabel("Lag time (frames)")
-            ax.set_ylabel("Survival Probability")
-            ax.set_title(f"{cosolvent} — {model_title} fit")
-            ax.legend(title="Hotspot", fontsize="small")
-            fig.tight_layout()
-            out = os.path.join(
-                self.out_path,
-                f"survival_probability_fit_{model_key}_{cosolvent}.png",
-            )
-            fig.savefig(out)
-            plt.close(fig)
-            self.logger.info(f"Saved {model_title} fit plot: {os.path.basename(out)}")
+            viz.plot_sp_raw(cosolvent_name, df_sp, self.out_path)
 
     def fit_survival_probability(self, results, zone_to_site_rank=None):
         """Fit SP decay curves and store kinetic metrics in each :class:`BindingSite`.
@@ -740,8 +724,7 @@ class HotspotDetector:
             Maps zone index (``Group`` column in CSV) to site rank.
             If *None*, zone 0 → rank 1, zone 1 → rank 2, etc.
         """
-        from scipy.optimize import curve_fit
-        from scipy.interpolate import interp1d
+
 
         def _single_exp(t, tau):
             return np.exp(-t / tau)
@@ -853,67 +836,8 @@ class HotspotDetector:
                     f"τ_single={props.get('sp_tau_single', 'N/A')}"
                 )
 
-            self._plot_sp_fits(cosolvent, sites, df)
-
-    # ------------------------------------------------------------------
-    # PyMol visualisation
-    # ------------------------------------------------------------------
+            viz.plot_sp_fits(cosolvent, sites, df, self.out_path)
 
     def add_hotspots_to_pymol_session(self, results, pse_path, top_n=10):
-        """Add hotspot pseudoatom spheres to an existing PyMol session file.
-
-        The ``.pse`` file is overwritten in-place.  Pseudoatom commands are
-        also appended to the ``.pml`` script (if it exists).
-
-        Parameters
-        ----------
-        results : dict[str, list[BindingSite]]
-        pse_path : str
-            Path to existing ``.pse`` file.
-        top_n : int
-            Maximum sites per cosolvent to add (default 10).
-        """
-        if not _PYMOL_AVAILABLE:
-            self.logger.warning(
-                "PyMol is not available — skipping hotspot session update."
-            )
-            return
-
-        _RANK_COLORS = {1: "tv_green", 2:"yellow", 3: "orange", 4: "salmon", 5: "tv_red"}
-        _DEFAULT_COLOR = "grey"
-
-        _pymol_cmd.load(pse_path)
-        pml_lines = ["\n# Hotspot sites added by HotspotDetector\n"]
-
-        for cosolvent, sites in results.items():
-            group_members = []
-            for site in sites[:top_n]:
-                name = f"hotspot_{cosolvent}_rank{site.rank}"
-                color = _RANK_COLORS.get(site.rank, _DEFAULT_COLOR)
-                vdw = min(site.n_voxels / 50.0, 4.0)
-                cx, cy, cz = float(site.centroid[0]), float(site.centroid[1]), float(site.centroid[2])
-
-                _pymol_cmd.pseudoatom(name, pos=[cx, cy, cz], vdw=vdw)
-                _pymol_cmd.color(color, name)
-                _pymol_cmd.show("spheres", name)
-                group_members.append(name)
-
-                pml_lines.append(
-                    f"pseudoatom {name}, pos=[{cx:.3f},{cy:.3f},{cz:.3f}], vdw={vdw:.2f}\n"
-                    f"color {color}, {name}\n"
-                    f"show spheres, {name}\n"
-                )
-
-            if group_members:
-                group_name = f"hotspots_{cosolvent}"
-                _pymol_cmd.group(group_name, " ".join(group_members))
-                pml_lines.append(f"group {group_name}, {' '.join(group_members)}\n")
-
-        _pymol_cmd.save(pse_path)
-        self.logger.info(f"Updated PyMol session: {pse_path}")
-
-        pml_path = pse_path.replace(".pse", ".pml")
-        if os.path.exists(pml_path):
-            with open(pml_path, "a") as fh:
-                fh.writelines(pml_lines)
-            self.logger.info(f"Appended hotspot commands to: {pml_path}")
+        """See :func:`hotspot_visualization.add_hotspots_to_pymol_session`."""
+        viz.add_hotspots_to_pymol_session(results, pse_path, self.out_path, top_n=top_n)
