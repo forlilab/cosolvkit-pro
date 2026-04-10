@@ -159,7 +159,9 @@ class Report:
 
 
     def generate_report(self,
-                        equilibration:bool=True, rmsf:bool=True, rdf:bool=True,
+                        equilibration:bool=True, 
+                        rmsf:bool=True, 
+                        rdf:bool=False,
                         avg_selection:str="protein",
                         align_selection:str="protein and name CA"
                         ):
@@ -196,17 +198,17 @@ class Report:
         :return: A list of atom types definitions based on SMARTS patterns.
         :rtype: list
         """
-        DARC_default_location = os.path.join(os.path.dirname(__file__), 'data/dacar_atomtypes.json')
+        default_at_location = os.path.join(os.path.dirname(__file__), 'data/default_atomtypes.json')
         if (atomtypes_fname is None) or (not os.path.exists(atomtypes_fname)):
-            self.logger.warning("Warning: Atom types definitions file not found or not provided.\n Using default DACar atom types definitions.")
+            self.logger.warning("Warning: Atom types definitions file not found or not provided.\n Using default atom types definitions.")
             try:
-                with open(DARC_default_location) as fi:
+                with open(default_at_location) as fi:
                     data = json.load(fi)
                     typer_name = next(iter(data))
                     atomtypes_definitions = data[typer_name]
                     self.logger.info(f"Loaded {typer_name} atom types definitions.")
             except FileNotFoundError:
-                self.logger.error(f"Error: Default DACar atom types definitions not found @ {DARC_default_location}")
+                self.logger.error(f"Error: Default atom types definitions not found @ {default_at_location}")
                 sys.exit(1)
         else:
             with open(atomtypes_fname) as fi:
@@ -277,10 +279,10 @@ class Report:
                                 atomtypes_definitions=atomtypes_definitions,
                                 verbose=True)
             analysis.run()
-            analysis.export_density(os.path.join(self.out_path, f"map_rawdensity_{cosolvent}.dx"))
+            # analysis.export_density(os.path.join(self.out_path, f"map_rawdensity_{cosolvent}.dx"))
             analysis.atomic_grid_free_energy(temperature, smoothing=True)
             analysis.export_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_{cosolvent}.dx"))
-            analysis.export_raw_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_raw_{cosolvent}.dx"))
+            # analysis.export_raw_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_raw_{cosolvent}.dx"))
 
         return
 
@@ -476,8 +478,8 @@ class Report:
 
     def generate_hotspot_report(self,
                                cosolvent_names:list=None,
-                               agfe_cutoff:float=-0.5,
-                               min_cluster_voxels:int=5,
+                               agfe_cutoff:float=-1.0,
+                               min_cluster_voxels:int=20,
                                top_percentile:float=10.0,
                                score_weights:dict=None,
                                export_label_map:bool=True,
@@ -499,8 +501,8 @@ class Report:
         AGFE = −kT·ln(P_local/P_bulk) and would double-count the favorability signal.
 
         :param cosolvent_names: cosolvents to analyse, defaults to all.
-        :param agfe_cutoff: AGFE threshold in kcal/mol (default -0.5).
-        :param min_cluster_voxels: minimum cluster size to retain (default 5).
+        :param agfe_cutoff: AGFE threshold in kcal/mol (default -1.0).
+        :param min_cluster_voxels: minimum cluster size to retain (default 20).
         :param top_percentile: top-N% voxels used for favorability score (default 10.0).
         :param score_weights: dict with keys favorability/diversity/volume.
         :param export_label_map: write hotspot_labels_{cosolvent}.dx (default True).
@@ -511,7 +513,6 @@ class Report:
         """
         if cosolvent_names is None:
             cosolvent_names = self.cosolvent_names
-        from .hotspots_detection import WatershedClustering, ConnectedComponentsClustering
 
         detector = HotspotDetector(
             out_path=self.out_path,
@@ -520,21 +521,19 @@ class Report:
             agfe_cutoff=agfe_cutoff,
             min_cluster_voxels=min_cluster_voxels,
             top_percentile=top_percentile,
-            top_n_survival=0,
-            # clustering_strategy=WatershedClustering(),
-            clustering_strategy=ConnectedComponentsClustering(),
+            top_n_survival=3,
             score_weights=score_weights,
             gridsize=gridsize,
         )
         results = detector.detect_all()
-        for cosolvent, sites in results.items():
-            detector.visualise_clustering(cosolvent,
-                                          results=sites,
-                                          reference_pdb=self.avg_pdb_path)
-
         detector.export_results(results, label_map=export_label_map)
+
         for cosolvent, sites in results.items():
             if sites:
+                detector.visualise_clustering(cosolvent,
+                                            results=sites,
+                                            reference_pdb=self.avg_pdb_path)
+
                 detector.plot_hotspot_clustering_3d(
                     cosolvent,
                     sites=sites,

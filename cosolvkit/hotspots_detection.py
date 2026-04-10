@@ -21,6 +21,7 @@ from .density_clustering import (
     ConnectedComponentsClustering,
     WatershedClustering,
     DBSCANClustering,
+    SkimageWatershedClustering,
 )
 from . import hotspot_visualization as viz
 
@@ -81,6 +82,40 @@ class BindingSite:
         d.update({f"agfe_{k}": round(float(v), 4) for k, v in self.per_type_agfe.items()})
         d.update(self.properties)
         return d
+
+    def extract_surface(self, agfe_array, level=0.0, spacing=(1.0, 1.0, 1.0)):
+        """Generate a surface mesh for this hotspot using marching cubes.
+
+        This is an optional visualization helper and is not called during
+        normal hotspot detection.  Returns ``None`` silently on failure.
+
+        Parameters
+        ----------
+        agfe_array : np.ndarray
+            3-D AGFE array with the same shape as this site's voxel mask.
+        level : float
+            Iso-surface level passed to ``marching_cubes`` (default 0.0).
+        spacing : tuple of float
+            Voxel spacing in each dimension, e.g. ``(0.5, 0.5, 0.5)`` for a
+            0.5 Å grid.
+
+        Returns
+        -------
+        tuple or None
+            ``(verts, faces, normals, values)`` from
+            ``skimage.measure.marching_cubes``, or ``None`` if the extraction
+            fails (e.g. scikit-image not available, degenerate surface).
+        """
+        try:
+            from skimage.measure import marching_cubes
+        except ImportError:
+            return None
+        try:
+            vol = np.where(self.voxel_mask, agfe_array, np.nan)
+            return marching_cubes(vol, level=level, spacing=spacing,
+                                  allow_degenerate=False)
+        except Exception:
+            return None
 
     def __repr__(self):
         return (
@@ -145,11 +180,18 @@ class HotspotDetector:
     }
 
     def __init__(self, out_path, cosolvent_names, universe,
-                 agfe_cutoff=-0.5, min_cluster_voxels=5,
+                 agfe_cutoff=-0.5, min_cluster_voxels=1,
                  top_percentile=10.0,
                  score_weights=None, gridsize=0.5,
                  clustering_strategy=None,
-                 top_n_survival=10, survival_kwargs=None):
+                 top_n_survival=10, survival_kwargs=None,
+                 use_skimage_cleanup=False,
+                 cleanup_min_size=1,
+                 cleanup_hole_size=2,
+                 cleanup_opening_radius=None,
+                 cleanup_closing_radius=None,
+                 compute_regionprops=True
+                 ):
         self.logger = logging.getLogger(__name__)
         self.out_path = out_path
         self.cosolvent_names = cosolvent_names
@@ -161,10 +203,18 @@ class HotspotDetector:
         self.clustering_strategy = (
             clustering_strategy
             if clustering_strategy is not None
-            else ConnectedComponentsClustering(min_cluster_voxels=min_cluster_voxels)
+            # else ConnectedComponentsClustering(min_cluster_voxels=min_cluster_voxels)
+            else SkimageWatershedClustering(min_cluster_voxels=min_cluster_voxels,
+                                            h=0.5)
         )
         self.top_n_survival = top_n_survival
         self.survival_kwargs = survival_kwargs or {}
+        self.use_skimage_cleanup = use_skimage_cleanup
+        self.cleanup_min_size = cleanup_min_size
+        self.cleanup_hole_size = cleanup_hole_size
+        self.cleanup_opening_radius = cleanup_opening_radius
+        self.cleanup_closing_radius = cleanup_closing_radius
+        self.compute_regionprops = compute_regionprops
 
         weights = dict(self._DEFAULT_WEIGHTS)
         if score_weights is not None:
@@ -268,6 +318,84 @@ class HotspotDetector:
             favorable_mask, agfe_array, self.gridsize
         )
 
+    def _compute_regionprops(self, labeled_array, intensity_image):
+        """Compute per-region geometric descriptors via regionprops_table.
+
+        Parameters
+        ----------
+        labeled_array : np.ndarray of int
+            Labeled 3-D array (0 = background, positive = cluster ids).
+        intensity_image : np.ndarray of float
+            Intensity image used for weighted centroid and mean intensity
+            (typically ``clip(-agfe_array, 0, None)``).
+
+        Returns
+        -------
+        dict[int, dict]
+            Maps each cluster label to a flat dict of ``geom_*`` properties
+            with Python scalar values, ready for ``site.add_property()``.
+        """
+        from skimage.measure import regionprops_table
+
+        props = regionprops_table(
+            labeled_array,
+            intensity_image=intensity_image,
+            properties=["label", "area", "centroid", "bbox",
+                        "inertia_tensor_eigvals", "extent"],
+        )
+
+        n = len(props["label"])
+        result = {}
+        for i in range(n):
+            lbl = int(props["label"][i])
+            entry = {}
+            for key, arr in props.items():
+                if key == "label":
+                    continue
+                val = arr[i]
+                entry[f"geom_{key}"] = (
+                    float(val) if np.ndim(val) == 0
+                    else [float(v) for v in np.ravel(val)]
+                )
+            result[lbl] = entry
+        return result
+
+    def _preprocess_favorable_mask(self, favorable_mask):
+        """Optionally clean the favorable mask using scikit-image morphology.
+
+        Only active when ``use_skimage_cleanup=True``.  Each step is
+        individually gated by its corresponding parameter — set only the ones
+        you need.
+
+        Returns the (possibly modified) boolean mask.
+        """
+        if not self.use_skimage_cleanup:
+            return favorable_mask
+
+        from skimage.morphology import (
+            remove_small_objects,
+            remove_small_holes,
+            binary_opening,
+            binary_closing,
+            ball,
+        )
+
+        mask = favorable_mask.copy()
+
+        if self.cleanup_min_size is not None:
+            mask = remove_small_objects(mask, max_size=self.cleanup_min_size)
+
+        if self.cleanup_hole_size is not None:
+            mask = remove_small_holes(mask, area_threshold=self.cleanup_hole_size)
+
+        if self.cleanup_opening_radius is not None:
+            mask = binary_opening(mask, footprint=ball(self.cleanup_opening_radius))
+
+        if self.cleanup_closing_radius is not None:
+            mask = binary_closing(mask, footprint=ball(self.cleanup_closing_radius))
+
+        return mask
+
     # ------------------------------------------------------------------
     # Core detection
     # ------------------------------------------------------------------
@@ -291,6 +419,16 @@ class HotspotDetector:
             self.logger.warning(
                 f"No favorable voxels for '{cosolvent}' at cutoff "
                 f"{self.agfe_cutoff} kcal/mol. Try a less strict cutoff."
+            )
+            return []
+
+        # --- Optional mask preprocessing ---
+        favorable_mask = self._preprocess_favorable_mask(favorable_mask)
+        n_favorable = int(favorable_mask.sum())
+        if n_favorable == 0:
+            self.logger.warning(
+                f"No favorable voxels remain for '{cosolvent}' after mask "
+                "preprocessing. Try relaxing the cleanup parameters."
             )
             return []
 
@@ -409,6 +547,15 @@ class HotspotDetector:
                 favorable_atomtypes=sd["favorable_atomtypes"],
                 per_type_agfe=sd["per_type_agfe"],
             ))
+
+        # --- Optional geometry descriptor extraction ---
+        if self.compute_regionprops:
+            score_image = np.clip(-agfe_array, 0, None)
+            rp = self._compute_regionprops(labeled_array, score_image)
+            for site in sites:
+                props = rp.get(site.site_id, {})
+                for k, v in props.items():
+                    site.add_property(k, v)
 
         # Cache for export_results()
         self._labeled_arrays[cosolvent] = labeled_array
