@@ -337,11 +337,19 @@ class CosolventSystem(object):
         for force_name, params in repulsive_forces.items():
             residue_a = params['residueA']
             residue_b = params['residueB']
+            
+            atoms_res_a = set(residue_atom_indices[residue_a])
+            atoms_res_b = set(residue_atom_indices[residue_b])
+            if not atoms_res_a or not atoms_res_b:
+                self.logger.warning(f"Residue {residue_a} or {residue_b} not found in the system! Skipping repulsive force {force_name}.")
+                continue
+            
             epsilon = np.sqrt(params.get('epsilon', None) ** 2) * openmmunit.kilocalories_per_mole
             sigma = params.get('sigma', None) * openmmunit.angstrom
             if epsilon is None or sigma is None:
                 self.logger.warning(f"Repulsive force {force_name} is missing epsilon or sigma parameters! Skipping this force.")
                 continue
+            
             self.logger.info(f"Adding repulsive force {force_name} between residues {residue_a} and {residue_b}")
 
             energy_expression = "4*epsilon * (sigma / r)^12;" #Only the repulsive term of the LJ potential
@@ -363,9 +371,9 @@ class CosolventSystem(object):
                 repulsive_force.addExclusion(idx, jdx)
 
             repulsive_force.addInteractionGroup(
-                set(residue_atom_indices[residue_a]),
-                set(residue_atom_indices[residue_b])
-            )
+                atoms_res_a,
+                atoms_res_b
+                )
             self.system.addForce(repulsive_force)
         return
     
