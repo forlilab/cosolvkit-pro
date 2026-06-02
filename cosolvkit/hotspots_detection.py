@@ -26,6 +26,64 @@ from .density_clustering import (
 from . import hotspot_visualization as viz
 
 
+# Standard skimage regionprops properties safe for 3D volumetric arrays that
+# produce tabular (scalar or fixed-size array) output suitable for CSV/JSON.
+#
+# Excluded — raise NotImplementedError on 3D inputs:
+#   eccentricity, orientation, perimeter, perimeter_crofton,
+#   moments_hu, moments_weighted_hu
+#
+# Excluded — return variable-size per-region arrays or Python objects that
+# break tabular export (pass them explicitly via regionprops_properties to opt in):
+#   image, image_convex, image_filled, image_intensity, coords, coords_scaled, slice
+#
+# Note: 3D moments tensors are 4×4×4 = 64 columns each; the six moment
+# properties in this list expand to ~384 columns in the output.
+REGIONPROPS_ALL = [
+    "area",
+    "area_bbox",
+    "area_convex",
+    "area_filled",
+    "axis_major_length",
+    "axis_minor_length",
+    "bbox",
+    "centroid",
+    "centroid_local",
+    "centroid_weighted",
+    "centroid_weighted_local",
+    "equivalent_diameter_area",
+    "euler_number",
+    "extent",
+    "feret_diameter_max",
+    "inertia_tensor",
+    "inertia_tensor_eigvals",
+    "intensity_max",
+    "intensity_mean",
+    "intensity_min",
+    "intensity_std",
+    "moments",
+    "moments_central",
+    "moments_normalized",
+    "moments_weighted",
+    "moments_weighted_central",
+    "moments_weighted_normalized",
+    "solidity",
+]
+
+
+def _serialize_regionprop_value(val):
+    """Convert a regionprops_table cell to a JSON-safe Python scalar or list."""
+    if isinstance(val, tuple) and any(isinstance(x, slice) for x in val):
+        return [[x.start, x.stop, x.step] for x in val]
+    if isinstance(val, slice):
+        return [val.start, val.stop, val.step]
+    if np.ndim(val) == 0:
+        if isinstance(val, (np.integer, int)):
+            return int(val)
+        return float(val)
+    return [float(v) for v in np.ravel(val)]
+
+
 class BindingSite:
     """A binding hotspot detected from cosolvent AGFE density maps.
 
@@ -246,7 +304,9 @@ class HotspotDetector:
                  cleanup_hole_size=2,
                  cleanup_opening_radius=None,
                  cleanup_closing_radius=None,
-                 compute_regionprops=True
+                 compute_regionprops=True,
+                 regionprops_properties=None,
+                 regionprops_extra_properties=None,
                  ):
         self.logger = logging.getLogger(__name__)
         self.out_path = out_path
@@ -271,6 +331,8 @@ class HotspotDetector:
         self.cleanup_opening_radius = cleanup_opening_radius
         self.cleanup_closing_radius = cleanup_closing_radius
         self.compute_regionprops = compute_regionprops
+        self.regionprops_properties = regionprops_properties
+        self.regionprops_extra_properties = regionprops_extra_properties
 
         weights = dict(self._DEFAULT_WEIGHTS)
         if score_weights is not None:
@@ -373,7 +435,8 @@ class HotspotDetector:
             favorable_mask, agfe_array, self.gridsize
         )
 
-    def _compute_regionprops(self, labeled_array, intensity_image):
+    def _compute_regionprops(self, labeled_array, intensity_image,
+                             properties=None, extra_properties=None):
         """Compute per-region geometric descriptors via regionprops_table.
 
         Parameters
@@ -382,7 +445,20 @@ class HotspotDetector:
             Labeled 3-D array (0 = background, positive = cluster ids).
         intensity_image : np.ndarray of float
             Intensity image used for weighted centroid and mean intensity
-            (typically ``clip(-agfe_array, 0, None)``).
+            (typically ``clip(-agfe_array, 0, None)``; intensity-weighted
+            properties therefore reflect positive AGFE favorability signal).
+        properties : list of str, optional
+            skimage property names to compute. Overrides
+            ``self.regionprops_properties``. ``None`` resolves to
+            ``REGIONPROPS_ALL`` (all 3D-safe tabular properties).
+            Blob/array properties (``image``, ``coords``, ``slice``, etc.) are
+            reachable by passing them explicitly here.
+        extra_properties : iterable of callable, optional
+            Custom callables forwarded to ``regionprops_table``'s
+            ``extra_properties`` argument. Each callable must accept
+            ``(regionmask)`` or ``(regionmask, intensity_image)`` and return a
+            numeric scalar or array. Overrides
+            ``self.regionprops_extra_properties``.
 
         Returns
         -------
@@ -392,11 +468,35 @@ class HotspotDetector:
         """
         from skimage.measure import regionprops_table
 
+        # Resolve property list
+        if properties is None:
+            properties = self.regionprops_properties
+        if properties is None:
+            properties = REGIONPROPS_ALL
+
+        # Guard against names unknown to this skimage version
+        try:
+            from skimage.measure._regionprops import PROP_VALS
+            safe = [p for p in properties if p in PROP_VALS]
+            skipped = [p for p in properties if p not in PROP_VALS]
+            if skipped:
+                self.logger.debug(
+                    "regionprops: skipped (not in this skimage version): %s", skipped
+                )
+            properties = safe
+        except ImportError:
+            pass  # private API unavailable; use list as-is
+
+        requested = ["label"] + [p for p in properties if p != "label"]
+
+        if extra_properties is None:
+            extra_properties = self.regionprops_extra_properties
+
         props = regionprops_table(
             labeled_array,
             intensity_image=intensity_image,
-            properties=["label", "area", "centroid", "bbox",
-                        "inertia_tensor_eigvals", "extent"],
+            properties=requested,
+            extra_properties=extra_properties or None,
         )
 
         n = len(props["label"])
@@ -407,11 +507,7 @@ class HotspotDetector:
             for key, arr in props.items():
                 if key == "label":
                     continue
-                val = arr[i]
-                entry[f"geom_{key}"] = (
-                    float(val) if np.ndim(val) == 0
-                    else [float(v) for v in np.ravel(val)]
-                )
+                entry[f"geom_{key}"] = _serialize_regionprop_value(arr[i])
             result[lbl] = entry
         return result
 
