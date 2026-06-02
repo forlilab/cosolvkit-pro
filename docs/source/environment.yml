@@ -10,6 +10,8 @@ dependencies:
   - espaloma 
   - pymol-open-source 
   - griddataformats
+  - scikit-image
+  - waterdynamics
   - sphinx < 8.0
   - sphinx_rtd_theme >= 2.0 
    
