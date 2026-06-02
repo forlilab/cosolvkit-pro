@@ -82,7 +82,7 @@ class CosolventMolecule(object):
             params.useBasicKnowledge = True
             # Not a mistake, it's 2 not 3
             # https://www.rdkit.org/docs/RDKit_Book.html#parameters-controlling-conformer-generation
-            params.ETVersion = 2
+            params.ETversion = 2
 
             # Setup rdkit molecule
             mol = Chem.MolFromSmiles(smiles)

@@ -1,6 +1,5 @@
 import os
 import io
-import json
 import time
 import sys
 import argparse
@@ -24,7 +23,7 @@ def cmd_lineparser():
                              Scripps Research.""")
     
     parser.add_argument('-c', '--config', dest='config', required=True,
-                        action='store', help='path to the json config file')
+                        action='store', help='path to the yaml config file')
     parser.add_argument(
         "--iteratively_adjust_copies", action="store_true", default=False
     )
@@ -109,9 +108,7 @@ def main():
     if (engine.upper() != "OPENMM") and len(config.repulsive_forces) > 0:
         logger.warning("Custom repulsive forces will only work if the MD engine is OpenMM!")
 
-    # Load cosolvents dictionary
-    with open(config.cosolvents) as fi:
-        cosolvents = json.load(fi)
+    cosolvents = config.cosolvents
 
     if config.membrane:
         logger.info("Building a membrane-cosolvent system")

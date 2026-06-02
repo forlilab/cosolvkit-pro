@@ -5,26 +5,26 @@ cosolvkit API
 
 The CosolvKit API allows for a more advanced, flexible use of CosolvKit where the user can create their own scripts. 
 
-Config class and config.json
+Config class and config.yaml
 ###############################
 
-CosolvKit implements a `Config` class to handle the list of setup options.  
-In the data folder a template of the `config.json` file used to setup the system building is provided.  
+CosolvKit implements a `Config` class to handle the list of setup options.
+In the data folder a template of the `config.yaml` file used to setup the system building is provided.
 It is also possible to overwrite some of the options from the API:
 
 .. code-block:: python
 
     from cosolvkit.config import Config
-    config = Config.from_config('config.json')
+    config = Config.from_config('config.yaml')
 
-    # Modify the receptor option and the radius value
-    config.receptor = FALSE
-    config.radius = 8.5
+    # Modify options before building
+    config.padding = 12.0
+    config.output_dir = 'my_results'
 
-Creating CosolventMolecules without json files
-##############################################
+Creating CosolventMolecules in Python
+######################################
 
-It is possible to avoid to create a `cosolvents.json` recipe file (although highly recommended).  
+It is possible to define cosolvent molecules directly in Python instead of through the YAML config.
 
 .. code-block:: python
 
@@ -46,22 +46,20 @@ It is possible to avoid to create a `cosolvents.json` recipe file (although high
 Building a CosolventSystem
 ##########################
 
-Thanks to the flexible API CosolvKit allows the user to instantiate custom CosolventSystem classes with user prepared proteins:
+Thanks to the flexible API CosolvKit allows the user to instantiate custom CosolventSystem classes with user prepared proteins.
+Cosolvents can be loaded from a YAML config file or defined directly as a list of dicts:
 
 .. code-block:: python
 
-    import json
+    from cosolvkit.config import Config
     from cosolvkit.cosolvent_system import CosolventSystem
     from openmm.app import Modeller
     modeller = Modeller(protein_topology, protein_positions)
 
-    with open('cosovlents.json') as fi:
-        cosolvents = json.load(fi)
-    with open('forcefields.json') as fi:
-        forcefields = json.load(fi)
-    
-    cosolvent_system = CosolventSystem(cosolvents=cosolvents,
-                                       forcefields=forcefields,
+    config = Config.from_config('config.yaml')
+
+    cosolvent_system = CosolventSystem(cosolvents=config.cosolvents,
+                                       forcefields=config.md_engine,
                                        modeller=modeller)
     cosolvent_system.build()
 
@@ -72,24 +70,21 @@ A cosolvent system with membrane can be easily built:
 
 .. code-block:: python
 
-    import json
-    from cosolvkit.cosolvent_system import CosolventSystem
+    from cosolvkit.config import Config
+    from cosolvkit.cosolvent_system import CosolventMembraneSystem
     from openmm.app import Modeller
     modeller = Modeller(protein_topology, protein_positions)
 
-    with open('cosovlents.json') as fi:
-        cosolvents = json.load(fi)
-    with open('forcefields.json') as fi:
-        forcefields = json.load(fi)
-    
-    cosolvent_system = CosolventMembraneSystem(cosolvents=cosolvents,
-                                               forcefields=forcefields,
+    config = Config.from_config('config.yaml')
+
+    cosolvent_system = CosolventMembraneSystem(cosolvents=config.cosolvents,
+                                               forcefields=config.md_engine,
                                                modeller=modeller,
                                                lipid_type="POPC")
 
-    # Or if want to pass a different type of lipids (pre-equilibrated patch needed)
-    cosolvent_system = CosolventMembraneSystem(cosolvents=cosolvents,
-                                               forcefields=forcefields,
+    # Or pass a pre-equilibrated lipid patch
+    cosolvent_system = CosolventMembraneSystem(cosolvents=config.cosolvents,
+                                               forcefields=config.md_engine,
                                                modeller=modeller,
                                                lipid_patch_path="path/to/the/patch")
 
@@ -104,31 +99,24 @@ If aggregation is observed, CosolvKit offers the possibility to add a custom rep
 
 .. code-block:: python
 
-    import json
+    from cosolvkit.config import Config
     from cosolvkit.cosolvent_system import CosolventSystem, CosolventMolecule
     from openmm.app import Modeller
     modeller = Modeller(protein_topology, protein_positions)
 
-    cosolvent_molecules = list()
-    cosolvent_molecules.append(CosolventMolecule(name="benzene",
-                                                 smiles="C1=CC=CC=C1",
-                                                 resname="BEN",
-                                                 concentration=0.25))
-    
-    with open('forcefields.json') as fi:
-        forcefields = json.load(fi)
-    
-    cosolvent_system = CosolventSystem(cosolvents=cosolvents,
-                                       forcefields=forcefields,
+    cosolvent_molecules = [
+        CosolventMolecule(name="benzene", smiles="C1=CC=CC=C1",
+                          resname="BEN", concentration=0.25)
+    ]
+
+    config = Config.from_config('config.yaml')
+
+    cosolvent_system = CosolventSystem(cosolvents=cosolvent_molecules,
+                                       forcefields=config.md_engine,
                                        modeller=modeller)
     cosolvent_system.build()
-    cosolvent_system.add_repulsive_forces(["BEN"])
-
-    # or you can specify epsilon and sigma parameters of the LJ potential
-    e = 0.05
-    s = 9
-
-    cosolvent_system.add_repulsive_forces(["BEN"], epsilon=e, sigma=s)
+    cosolvent_system.add_repulsive_forces({"BEN_BEN": {"residueA": "BEN", "residueB": "BEN",
+                                                        "epsilon": 0.01, "sigma": 4.0}})
 
 
 Use custom solvent
@@ -214,11 +202,11 @@ Furthermore, densities of the specified cosolvent molecules are depicted during 
 
     # The whole analysis module relies on the Report class
     from cosolvkit.analysis import Report
-    
+
     report = Report(log_file="statistics.csv",
                     traj_file="trajectory.dcd",
                     top_file="system.prmtop",
-                    cosolvents_path="cosolvents.json")
+                    cosolvent_names=["BEN"])
     # Generate RDF and autocorrelation plots
     report.generate_report(out_path="results")
 

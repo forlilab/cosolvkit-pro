@@ -56,10 +56,66 @@ class BindingSite:
         self.favorable_atomtypes = favorable_atomtypes  # List[str]
         self.per_type_agfe = per_type_agfe            # Dict[str, float]: min AGFE per type
         self.properties = {}                          # extensible user properties
+        # Grid spatial metadata — set by HotspotDetector.detect() after construction.
+        # Required by CrossProbeConsensusDetector for cross-grid Jaccard computation.
+        self.grid_origin = None                       # np.ndarray (3,), Angstroms
+        self.grid_delta = None                        # np.ndarray (3,), Angstroms per voxel
 
     def add_property(self, name, value):
         """Attach an arbitrary property (e.g. ``site.add_property('residence_time_ns', 12.4)``)."""
         self.properties[name] = value
+
+    @classmethod
+    def from_dict(cls, d, voxel_mask, grid_origin, grid_delta):
+        """Reconstruct a BindingSite from a serialized dict and its voxel mask.
+
+        This is the inverse of the data written by
+        :meth:`HotspotDetector.save_checkpoint`.  It is not intended for use
+        with the human-readable CSV/JSON exports (those do not contain the
+        voxel mask).
+
+        Parameters
+        ----------
+        d : dict
+            Metadata dict as produced by :meth:`to_dict` plus an optional
+            ``_properties`` key carrying the extensible properties dict.
+        voxel_mask : np.ndarray
+            3-D boolean array of shape ``(nx, ny, nz)``.
+        grid_origin : np.ndarray
+            Shape ``(3,)`` origin of the AGFE grid in Angstroms.
+        grid_delta : np.ndarray
+            Shape ``(3,)`` voxel spacing in Angstroms.
+        """
+        favorable_atomtypes = (
+            d["favorable_atomtypes"].split(",")
+            if d.get("favorable_atomtypes")
+            else []
+        )
+        per_type_agfe = {
+            k[5:]: float(v)
+            for k, v in d.items()
+            if k.startswith("agfe_") and k not in ("agfe_min", "agfe_mean_top_pct")
+        }
+        site = cls(
+            rank=int(d["rank"]),
+            site_id=int(d["site_id"]),
+            cosolvent=str(d["cosolvent"]),
+            n_voxels=int(d["n_voxels"]),
+            centroid=np.array([d["centroid_x"], d["centroid_y"], d["centroid_z"]], dtype=float),
+            agfe_min=float(d["agfe_min"]),
+            agfe_mean_top_pct=float(d["agfe_mean_top_pct"]),
+            voxel_mask=voxel_mask,
+            favorability_score=float(d["favorability_score"]),
+            diversity_score=float(d["diversity_score"]),
+            volume_score=float(d["volume_score"]),
+            composite_score=float(d["composite_score"]),
+            favorable_atomtypes=favorable_atomtypes,
+            per_type_agfe=per_type_agfe,
+        )
+        site.properties = dict(d.get("_properties", {}))
+        site.grid_origin = np.asarray(grid_origin, dtype=float)
+        site.grid_delta = np.asarray(grid_delta, dtype=float)
+        return site
 
     def to_dict(self):
         """Flat dict for CSV/JSON export. Includes base scores and ``properties``."""
@@ -386,7 +442,7 @@ class HotspotDetector:
             mask = remove_small_objects(mask, max_size=self.cleanup_min_size)
 
         if self.cleanup_hole_size is not None:
-            mask = remove_small_holes(mask, area_threshold=self.cleanup_hole_size)
+            mask = remove_small_holes(mask, max_size=self.cleanup_hole_size)
 
         if self.cleanup_opening_radius is not None:
             mask = binary_opening(mask, footprint=ball(self.cleanup_opening_radius))
@@ -556,6 +612,14 @@ class HotspotDetector:
                 props = rp.get(site.site_id, {})
                 for k, v in props.items():
                     site.add_property(k, v)
+
+        # Attach grid spatial metadata so CrossProbeConsensusDetector can compute
+        # Jaccard in Angstrom space when probes live on different-shaped grids.
+        grid_origin = np.array(combined_grid.origin)
+        grid_delta = np.array(combined_grid.delta)
+        for site in sites:
+            site.grid_origin = grid_origin
+            site.grid_delta = grid_delta
 
         # Cache for export_results()
         self._labeled_arrays[cosolvent] = labeled_array
@@ -988,3 +1052,121 @@ class HotspotDetector:
     def add_hotspots_to_pymol_session(self, results, pse_path, top_n=10):
         """See :func:`hotspot_visualization.add_hotspots_to_pymol_session`."""
         viz.add_hotspots_to_pymol_session(results, pse_path, self.out_path, top_n=top_n)
+
+    # ------------------------------------------------------------------
+    # Checkpoint serialization
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def save_checkpoint(results, out_path):
+        """Save hotspot detection results to compressed NPZ checkpoint files.
+
+        One file per cosolvent is written to
+        ``{out_path}/hotspot_checkpoints/hotspot_checkpoint_{cosolvent}.npz``.
+        Each file stores the voxel masks (as a stacked boolean array), centroids,
+        grid spatial metadata, and all scalar/string/list fields as JSON.
+
+        The checkpoint can be reloaded with :meth:`load_checkpoint` to skip
+        re-running the full hotspot detection step when only consensus
+        parameters need to change.
+
+        Parameters
+        ----------
+        results : dict[str, list[BindingSite]]
+            Output of :meth:`detect_all`.
+        out_path : str
+            Directory where the ``hotspot_checkpoints/`` sub-directory will be
+            created.
+        """
+        logger = logging.getLogger(__name__)
+        chk_dir = os.path.join(out_path, "hotspot_checkpoints")
+        os.makedirs(chk_dir, exist_ok=True)
+
+        for cosolvent, sites in results.items():
+            if not sites:
+                logger.debug(f"No sites for '{cosolvent}' — skipping checkpoint.")
+                continue
+
+            voxel_masks = np.stack([s.voxel_mask for s in sites])  # (n, nx, ny, nz) bool
+            centroids = np.array([s.centroid for s in sites], dtype=float)
+            grid_origin = (
+                np.asarray(sites[0].grid_origin, dtype=float)
+                if sites[0].grid_origin is not None
+                else np.zeros(3, dtype=float)
+            )
+            grid_delta = (
+                np.asarray(sites[0].grid_delta, dtype=float)
+                if sites[0].grid_delta is not None
+                else np.zeros(3, dtype=float)
+            )
+
+            meta = []
+            for s in sites:
+                m = s.to_dict()
+                m["_properties"] = s.properties
+                meta.append(m)
+
+            npz_path = os.path.join(chk_dir, f"hotspot_checkpoint_{cosolvent}.npz")
+            np.savez_compressed(
+                npz_path,
+                voxel_masks=voxel_masks,
+                centroids=centroids,
+                grid_origin=grid_origin,
+                grid_delta=grid_delta,
+                metadata=np.array([json.dumps(meta)]),
+            )
+            logger.info(
+                f"Saved hotspot checkpoint for '{cosolvent}': {npz_path} "
+                f"({len(sites)} site(s))"
+            )
+
+    @staticmethod
+    def load_checkpoint(out_path, cosolvent_names):
+        """Load hotspot detection results from NPZ checkpoint files.
+
+        Reconstructs :class:`BindingSite` objects (including ``voxel_mask``
+        and grid metadata) previously saved by :meth:`save_checkpoint`.
+
+        Parameters
+        ----------
+        out_path : str
+            Directory that contains the ``hotspot_checkpoints/`` sub-directory.
+        cosolvent_names : list[str]
+            Cosolvents to load.  A :class:`FileNotFoundError` is raised if the
+            checkpoint file for any requested cosolvent is missing.
+
+        Returns
+        -------
+        dict[str, list[BindingSite]]
+            Same structure as the output of :meth:`detect_all`.
+        """
+        logger = logging.getLogger(__name__)
+        chk_dir = os.path.join(out_path, "hotspot_checkpoints")
+        results = {}
+
+        for cosolvent in cosolvent_names:
+            npz_path = os.path.join(chk_dir, f"hotspot_checkpoint_{cosolvent}.npz")
+            if not os.path.exists(npz_path):
+                raise FileNotFoundError(
+                    f"Hotspot checkpoint not found for '{cosolvent}': {npz_path}\n"
+                    "Run the full hotspot detection first (save_checkpoint=True) "
+                    "before using load_checkpoint."
+                )
+
+            data = np.load(npz_path, allow_pickle=True)
+            meta = json.loads(str(data["metadata"][0]))
+            voxel_masks = data["voxel_masks"]
+            grid_origin = data["grid_origin"]
+            grid_delta = data["grid_delta"]
+
+            sites = [
+                BindingSite.from_dict(m, voxel_masks[i].astype(bool), grid_origin, grid_delta)
+                for i, m in enumerate(meta)
+            ]
+            results[cosolvent] = sites
+            logger.info(
+                f"Loaded hotspot checkpoint for '{cosolvent}': {npz_path} "
+                f"({len(sites)} site(s))"
+            )
+
+        return results
