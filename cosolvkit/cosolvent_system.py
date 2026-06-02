@@ -17,11 +17,10 @@ import openmm.unit as openmmunit
 import rdkit
 from rdkit import Chem
 from rdkit.Chem import AllChem
-from rdkit.Chem import SDMolSupplier
 from openff.toolkit import Molecule, Topology
-from openmmforcefields.generators import EspalomaTemplateGenerator, GAFFTemplateGenerator, SMIRNOFFTemplateGenerator
 from openmmforcefields.generators.template_generators import SmallMoleculeTemplateGenerator
 from cosolvkit.utils import fix_pdb, MutuallyExclusiveParametersError, MD_FORMAT_EXTENSIONS
+from cosolvkit.parametrize import load_molecule_from_file, get_template_generator
 from openff.units.openmm import to_openmm
 
 
@@ -168,7 +167,7 @@ class CosolventSystem(object):
                  modeller: app.Modeller,
                  padding: openmmunit.Quantity,
                  box_size: openmmunit.Quantity = None,
-                 small_molecule_ff: str = "espaloma"):
+                 small_molecule_ff: str = "espaloma-0.3.2"):
         """Create cosolvent system.
 
         :param cosolvents: dictionary of cosolvent molecules
@@ -185,7 +184,7 @@ class CosolventSystem(object):
         :type padding: openmm.unit.Quantity, optional
         :param box_size: Specifies the size to create the box without receptor, defaults to None
         :type box_size: openmm.unit.Quantity, optional
-        :param small_molecule_ff: forcefield for small molecules (cosolvents/ligands), defaults to "espaloma"
+        :param small_molecule_ff: versioned forcefield for small molecules, e.g. "espaloma-0.3.2", "gaff-2.11", "openff-2.3.0", defaults to "espaloma-0.3.2"
         :type small_molecule_ff: str, optional
         """
         # Setup logging
@@ -1158,83 +1157,53 @@ class CosolventSystem(object):
         engine = engine.upper()
         ff_key = next(k for k in forcefields if k.upper() == engine)
         forcefield = app.ForceField(*forcefields[ff_key])
-        small_molecule_ff = self._parametrize_cosolvents(cosolvents, small_molecule_ff=self.small_molecule_forcefield)
+        small_molecule_ff = self._parametrize_cosolvents(cosolvents)
         forcefield.registerTemplateGenerator(small_molecule_ff.generator)
         return forcefield
 
-    def _parametrize_cosolvents(self, cosolvents: dict, small_molecule_ff="espaloma") -> SmallMoleculeTemplateGenerator:
-        """Parametrizes cosolvent molecules according to the forcefiled specified.
+    def _parametrize_cosolvents(self, cosolvents) -> SmallMoleculeTemplateGenerator:
+        """Parametrizes cosolvent molecules using the configured small-molecule FF.
 
         :param cosolvents: cosolvents specified
         :type cosolvents: dict
-        :param small_molecule_ff: name of the forcefield to use, defaults to "espaloma"
-        :type small_molecule_ff: str, optional
-        :return: forcefield object for the small molecules
+        :return: configured template generator
         :rtype: SmallMoleculeTemplateGenerator
         """
-        molecules = list()
+        molecules = []
         for cosolvent in cosolvents:
             try:
                 molecules.append(Molecule.from_smiles(cosolvent.smiles, name=cosolvent.name))
             except Exception as e:
                 self.logger.info(e)
                 self.logger.info(cosolvent)
-        if small_molecule_ff == "espaloma":
-            small_ff = EspalomaTemplateGenerator(molecules=molecules, forcefield='espaloma-0.3.2', template_generator_kwargs={"reference_forcefield": "openff_unconstrained-2.1.0", "charge_method": "nn"})
-        elif small_molecule_ff == "gaff":
-            small_ff = GAFFTemplateGenerator(molecules=molecules, forcefield='gaff-2.11')
-        else:
-            small_ff = SMIRNOFFTemplateGenerator(molecules=molecules)
-        return small_ff
+        return get_template_generator(molecules, self.small_molecule_forcefield)
            
     def _parametrize_ligands(self, ligands: dict) -> None:
-        """Parametrizes ligands according to the forcefiled specified.
+        """Parametrizes ligands from SDF/MOL2/PDB files using the configured FF.
 
-        :param ligands: ligands specified
+        :param ligands: dict mapping ligand name to file path
         :type ligands: dict
-        :param small_molecule_ff: name of the forcefield to use, defaults to "espaloma"
-        :type small_molecule_ff: str, optional
-        :return: forcefield object for the small molecules
-        :rtype: SmallMoleculeTemplateGenerator
         """
         for ligname, lig_path in ligands.items():
             try:
-                rdkit_mol = SDMolSupplier(lig_path)[0]
-                ligand = Molecule.from_rdkit(rdkit_mol, allow_undefined_stereo=True)
-                
-                if self.small_molecule_forcefield == "espaloma":
-                    template_generator = EspalomaTemplateGenerator(
-                        molecules=ligand, forcefield="espaloma-0.3.2"
-                    )
-                elif self.small_molecule_forcefield == "SMIRNOFF":
-                    template_generator = SMIRNOFFTemplateGenerator(
-                        molecules=ligand, forcefield="openff-1.2.0"
-                    )
-                elif self.small_molecule_forcefield == "GAFF":
-                    template_generator = GAFFTemplateGenerator(
-                        molecules=ligand, forcefield="gaff-2.11"
-                    )
-
-                # add the template generator to the ff
+                ligand = load_molecule_from_file(lig_path)
+                template_generator = get_template_generator([ligand], self.small_molecule_forcefield)
                 self.forcefield.registerTemplateGenerator(template_generator.generator)
 
-                # make an OpenFF Topology of the ligand
                 ligand_off_topology = Topology.from_molecules(molecules=[ligand])
-
-                # convert it to an OpenMM Topology
                 ligand_topology = ligand_off_topology.to_openmm()
-
-                # get the positions of the ligand
                 ligand_positions = to_openmm(ligand.conformers[0])
-                
+
                 for res in ligand_topology.residues():
                     res.name = ligname
                 self.modeller.add(ligand_topology, ligand_positions)
 
             except Exception as e:
-                self.logger.error(f'Something went wrong parameterizing {ligname} with {self.small_molecule_forcefield} forcefield\n{e}')
+                self.logger.error(
+                    f"Something went wrong parameterizing {ligname} with "
+                    f"{self.small_molecule_forcefield} forcefield\n{e}"
+                )
                 sys.exit(1)
-        return None
 #endregion
     
 #region SimulationBox
@@ -1299,7 +1268,7 @@ class CosolventMembraneSystem(CosolventSystem):
                  box_size: openmmunit.Quantity = None,
                  lipid_type: str=None,
                  lipid_patch_path: str=None,
-                 small_molecule_ff: str = "espaloma"):
+                 small_molecule_ff: str = "espaloma-0.3.2"):
         """Creates a CosolventMembraneSystem.
 
         :param cosolvents: path to the cosolvents.json file
@@ -1319,7 +1288,7 @@ class CosolventMembraneSystem(CosolventSystem):
         :type lipid_type: str, optional
         :param lipid_patch_path: if lipid type is None the path to a pre-equilibrated patch of custom lipids membrane can be passed, defaults to None. Mutually exclusive with <lipid_type>
         :type lipid_patch_path: str, optional
-        :param small_molecule_ff: forcefield for small molecules (cosolvents/ligands), defaults to "espaloma"
+        :param small_molecule_ff: versioned forcefield for small molecules, e.g. "espaloma-0.3.2", "gaff-2.11", "openff-2.3.0", defaults to "espaloma-0.3.2"
         :type small_molecule_ff: str, optional
         :raises MutuallyExclusiveParametersError: custom Exception
         """

@@ -16,8 +16,9 @@ md_engine:
     - amber14-all.xml
     - amber14/tip3pfb.xml
 
-# Force field for small molecules: espaloma | gaff | smirnoff
-small_molecule_ff: "espaloma"
+# Force field for small molecules: espaloma-<version> | gaff-<version> | openff-<version>
+# e.g. "espaloma-0.3.2", "gaff-2.11", "openff-2.3.0"
+small_molecule_ff: "espaloma-0.3.2"
 
 # -----------------------------------------------------------------
 # Receptor / protein

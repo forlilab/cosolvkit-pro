@@ -1,6 +1,7 @@
 import os
 import yaml
 from inspect import signature
+from cosolvkit.parametrize import parse_small_molecule_ff
 
 class Config(object):
     """This class handles the config.yaml options and the whole Cosolvent setup.
@@ -11,7 +12,7 @@ class Config(object):
     def __init__(self,
                  cosolvents=None,
                  md_engine=None,
-                 small_molecule_ff="espaloma",
+                 small_molecule_ff="espaloma-0.3.2",
                  protein_path=None,
                  clean_protein=True,
                  keep_heterogens=False,
@@ -91,5 +92,6 @@ class Config(object):
         return p
     
     def check_validity(self):
-        return
+        if self.small_molecule_ff is not None:
+            parse_small_molecule_ff(self.small_molecule_ff)
     
