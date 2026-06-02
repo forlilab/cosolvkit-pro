@@ -8,6 +8,7 @@
 
 import os
 import logging
+from glob import glob as _glob
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -303,6 +304,37 @@ def plot_sp_fits(cosolvent, sites, df, out_path):
 # ---------------------------------------------------------------------------
 
 
+# Pharmacophore atom-type → PyMOL colour name.
+# Keys are element symbols or common GAFF/AMBER type prefixes.
+_PHARMACOPHORE_COLORS = {
+    'C':  'yellow',
+    'c':  'yellow',
+    'N':  'marine',
+    'n':  'marine',
+    'O':  'red',
+    'o':  'red',
+    'S':  'tv_green',
+    's':  'tv_green',
+    'Cl': 'cyan',
+    'Br': 'orange',
+    'F':  'palegreen',
+    'I':  'purple',
+    'P':  'salmon',
+}
+
+
+def _contour_level_from_dx(dx_path):
+    """Return an isomesh contour level appropriate for a DX file.
+
+    AGFE maps (all values ≤ 0) are contoured at the 0.1th percentile
+    (most negative / most favourable).  Positive maps (z-score density)
+    use the 99.9th percentile.
+    """
+    data = Grid(dx_path).grid
+    is_agfe = np.max(data) <= 0.0
+    return float(np.quantile(data, 0.001 if is_agfe else 0.999))
+
+
 # RGB colours (0–1 range) paired with PyMol named colours for the .pml script
 _PYMOL_CLUSTER_COLORS = [
     ((0.12, 0.47, 0.71), 'marine'),
@@ -519,3 +551,264 @@ def add_hotspots_to_pymol_session(results, pse_path, out_path, top_n=10):
         with open(pml_path, "a") as fh:
             fh.writelines(pml_lines)
         logger.info(f"Appended hotspot commands to: {pml_path}")
+
+
+# ---------------------------------------------------------------------------
+# New canonical sessions (replace the three legacy session creation points)
+# ---------------------------------------------------------------------------
+
+
+def generate_consensus_pockets_session(
+    consensus_sites,
+    out_path,
+    reference_pdb=None,
+    top_n=None,
+):
+    """Generate a PyMOL session visualising all consensus pockets.
+
+    Objects are organised into one PyMOL **group per pocket rank**.  Inside
+    each group the contributing AGFE density for every member probe is shown
+    as a separate isomesh, plus a labelled centroid pseudoatom.
+
+    Parameters
+    ----------
+    consensus_sites : list[ConsensusSite]
+        Ranked consensus sites from :class:`CrossProbeConsensusDetector`.
+    out_path : str
+        Directory that contains the AGFE ``.dx`` maps and receives the session.
+    reference_pdb : str, optional
+        PDB file to load as structural context.
+    top_n : int, optional
+        Limit to the first *top_n* pockets (default: all).
+
+    Returns
+    -------
+    str or None
+        Path to the saved ``.pse`` file, or *None* if PyMOL is unavailable.
+    """
+    if not _PYMOL_AVAILABLE:
+        logger.warning("PyMOL not available — skipping consensus pockets session.")
+        return None
+
+    _pymol_cmd.reinitialize()
+
+    sites = sorted(consensus_sites, key=lambda s: s.consensus_rank)
+    if top_n is not None:
+        sites = sites[:top_n]
+
+    # Reference structure
+    if reference_pdb and os.path.isfile(reference_pdb):
+        struct_name = os.path.splitext(os.path.basename(reference_pdb))[0]
+        _pymol_cmd.load(reference_pdb, struct_name)
+        _pymol_cmd.color('grey50', f'{struct_name} and name C*')
+
+    n_colors = len(_PYMOL_CLUSTER_COLORS)
+
+    for site in sites:
+        rank = site.consensus_rank
+        group_members = []
+
+        # --- centroid sphere --------------------------------------------------
+        cx, cy, cz = (float(v) for v in site.consensus_centroid)
+        centroid_name = f'pocket_rank{rank}_centroid'
+        label_text = (
+            f'R{rank} score={site.consensus_score:.2f} '
+            f'({len(site.member_cosolvents)} probe(s))'
+        )
+        rank_color = _PYMOL_CLUSTER_COLORS[(rank - 1) % n_colors][1]
+
+        _pymol_cmd.pseudoatom(centroid_name, pos=[cx, cy, cz], label=label_text)
+        _pymol_cmd.show('label', centroid_name)
+        _pymol_cmd.show('spheres', centroid_name)
+        _pymol_cmd.set('sphere_scale', 2.0, centroid_name)
+        _pymol_cmd.color(rank_color, centroid_name)
+        group_members.append(centroid_name)
+
+        # --- per-probe density isomeshes --------------------------------------
+        seen_cosolvents = set()
+        probe_color_idx = rank % n_colors  # start offset away from rank color
+
+        for member_site in site.member_sites:
+            cosolvent = member_site.cosolvent
+            if cosolvent in seen_cosolvents:
+                continue
+            seen_cosolvents.add(cosolvent)
+
+            # Prefer the combined AGFE map; fall back to the first per-type map.
+            dx_path = os.path.join(out_path, f"map_agfe_{cosolvent}.dx")
+            if not os.path.isfile(dx_path):
+                candidates = sorted(
+                    f for f in _glob(os.path.join(out_path, f"map_agfe_*_{cosolvent}.dx"))
+                    if 'raw' not in os.path.basename(f)
+                )
+                if not candidates:
+                    logger.warning(f"No AGFE map for {cosolvent} in {out_path} — skipping probe.")
+                    continue
+                dx_path = candidates[0]
+
+            try:
+                contour = _contour_level_from_dx(dx_path)
+            except Exception as exc:
+                logger.warning(f"Could not read {dx_path}: {exc} — skipping.")
+                continue
+
+            probe_color = _PYMOL_CLUSTER_COLORS[probe_color_idx % n_colors][1]
+            probe_color_idx += 1
+
+            map_name  = f'pocket_rank{rank}_{cosolvent}_map'
+            mesh_name = f'pocket_rank{rank}_{cosolvent}_density'
+            _pymol_cmd.load(dx_path, map_name)
+            _pymol_cmd.isomesh(mesh_name, map_name, contour)
+            _pymol_cmd.color(probe_color, mesh_name)
+            group_members.extend([map_name, mesh_name])
+
+        if group_members:
+            _pymol_cmd.group(f'pocket_rank{rank}', ' '.join(group_members))
+
+    _pymol_cmd.set('label_size', 14)
+    _pymol_cmd.set('specular', 1)
+    _pymol_cmd.bg_color('white')
+
+    pse_path = os.path.join(out_path, "consensus_pockets_session.pse")
+    _pymol_cmd.save(pse_path)
+    logger.info(f"Consensus pockets PyMOL session saved: {pse_path}")
+    return pse_path
+
+
+def generate_pharmacophore_session(
+    consensus_sites,
+    out_path,
+    reference_pdb=None,
+    top_n=3,
+):
+    """Generate a PyMOL session painting per-atom-type densities for the top pockets.
+
+    For each of the *top_n* consensus pockets a PyMOL **group** is created.
+    Inside, per-probe **sub-groups** contain one isomesh per atom type, coloured
+    by pharmacophore feature (hydrophobic → yellow, H-bond donor → blue,
+    acceptor → red, etc.).  When only combined AGFE maps are available (no
+    per-atom-type breakdown) a single isomesh per probe is shown instead.
+
+    Parameters
+    ----------
+    consensus_sites : list[ConsensusSite]
+        Ranked consensus sites from :class:`CrossProbeConsensusDetector`.
+    out_path : str
+        Directory that contains the AGFE ``.dx`` maps and receives the session.
+    reference_pdb : str, optional
+        PDB file to load as structural context.
+    top_n : int
+        Number of top-ranked pockets to include (default 3).
+
+    Returns
+    -------
+    str or None
+        Path to the saved ``.pse`` file, or *None* if PyMOL is unavailable.
+    """
+    if not _PYMOL_AVAILABLE:
+        logger.warning("PyMOL not available — skipping pharmacophore session.")
+        return None
+
+    _pymol_cmd.reinitialize()
+
+    sites = sorted(consensus_sites, key=lambda s: s.consensus_rank)[:top_n]
+
+    # Reference structure
+    if reference_pdb and os.path.isfile(reference_pdb):
+        struct_name = os.path.splitext(os.path.basename(reference_pdb))[0]
+        _pymol_cmd.load(reference_pdb, struct_name)
+        _pymol_cmd.color('grey50', f'{struct_name} and name C*')
+
+    n_colors = len(_PYMOL_CLUSTER_COLORS)
+
+    for site in sites:
+        rank = site.consensus_rank
+        pocket_members = []
+
+        # --- centroid label ---------------------------------------------------
+        cx, cy, cz = (float(v) for v in site.consensus_centroid)
+        centroid_name = f'pocket_rank{rank}_centroid'
+        label_text = f'R{rank} score={site.consensus_score:.2f}'
+        rank_color = _PYMOL_CLUSTER_COLORS[(rank - 1) % n_colors][1]
+
+        _pymol_cmd.pseudoatom(centroid_name, pos=[cx, cy, cz], label=label_text)
+        _pymol_cmd.show('label', centroid_name)
+        _pymol_cmd.show('spheres', centroid_name)
+        _pymol_cmd.set('sphere_scale', 1.5, centroid_name)
+        _pymol_cmd.color(rank_color, centroid_name)
+        pocket_members.append(centroid_name)
+
+        # --- per-probe pharmacophore isomeshes --------------------------------
+        seen_cosolvents = set()
+        fallback_color_idx = 0
+
+        for member_site in site.member_sites:
+            cosolvent = member_site.cosolvent
+            if cosolvent in seen_cosolvents:
+                continue
+            seen_cosolvents.add(cosolvent)
+
+            # Collect per-atom-type maps for this probe.
+            per_type_files = sorted(
+                f for f in _glob(os.path.join(out_path, f"map_agfe_*_{cosolvent}.dx"))
+                if 'raw' not in os.path.basename(f)
+            )
+
+            if not per_type_files:
+                # Fall back to combined AGFE map
+                combined = os.path.join(out_path, f"map_agfe_{cosolvent}.dx")
+                if os.path.isfile(combined):
+                    per_type_files = [combined]
+                else:
+                    logger.warning(f"No AGFE maps for {cosolvent} in {out_path} — skipping probe.")
+                    continue
+
+            probe_members = []
+            for dx_path in per_type_files:
+                fname = os.path.basename(dx_path)
+                # Derive atom-type label from filename
+                # pattern: map_agfe_{atomtype}_{cosolvent}.dx  or  map_agfe_{cosolvent}.dx
+                stem = fname[len('map_agfe_'):-len('.dx')]
+                cosolvent_suffix = f'_{cosolvent}'
+                if stem.endswith(cosolvent_suffix):
+                    atomtype = stem[:-len(cosolvent_suffix)]
+                else:
+                    atomtype = cosolvent  # combined map — use probe name as label
+
+                pymol_color = _PHARMACOPHORE_COLORS.get(atomtype)
+                if pymol_color is None:
+                    # Unknown type — cycle through distinct colours
+                    pymol_color = _PYMOL_CLUSTER_COLORS[fallback_color_idx % n_colors][1]
+                    fallback_color_idx += 1
+
+                try:
+                    contour = _contour_level_from_dx(dx_path)
+                except Exception as exc:
+                    logger.warning(f"Could not read {dx_path}: {exc} — skipping.")
+                    continue
+
+                # Sanitise atom-type for PyMOL object names
+                safe_atype = atomtype.replace('+', 'p').replace('-', 'm').replace(' ', '_')
+                map_name  = f'r{rank}_{cosolvent}_{safe_atype}_map'
+                mesh_name = f'r{rank}_{cosolvent}_{safe_atype}_mesh'
+                _pymol_cmd.load(dx_path, map_name)
+                _pymol_cmd.isomesh(mesh_name, map_name, contour)
+                _pymol_cmd.color(pymol_color, mesh_name)
+                probe_members.extend([map_name, mesh_name])
+
+            if probe_members:
+                probe_group = f'pocket_rank{rank}_{cosolvent}'
+                _pymol_cmd.group(probe_group, ' '.join(probe_members))
+                pocket_members.append(probe_group)
+
+        if pocket_members:
+            _pymol_cmd.group(f'pocket_rank{rank}', ' '.join(pocket_members))
+
+    _pymol_cmd.set('label_size', 14)
+    _pymol_cmd.set('specular', 1)
+    _pymol_cmd.bg_color('white')
+
+    pse_path = os.path.join(out_path, "pharmacophore_session.pse")
+    _pymol_cmd.save(pse_path)
+    logger.info(f"Pharmacophore PyMOL session saved: {pse_path}")
+    return pse_path
