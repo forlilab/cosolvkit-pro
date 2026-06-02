@@ -57,6 +57,76 @@ def combine_dx_maps(filepaths: List[str] = None, method: str = 'mean', out_fname
 
     return combined_grid
 
+def combine_dx_maps_with_resampling(
+    filepaths: List[str],
+    method: str = 'mean',
+    resample_to: str = 'first',
+    out_fname: str = 'combined.dx',
+) -> Grid:
+    """Combine .dx maps from simulations that may have different box sizes.
+
+    When box sizes differ (common when different cosolvent probes are run in
+    independent simulations), grids are first resampled onto a common set of
+    edges before aggregation.  When all shapes already match, the fast path
+    is taken (no resampling overhead).
+
+    :param filepaths: Paths to .dx files, one per simulation replica/probe.
+    :type filepaths: list[str]
+    :param method: Aggregation method: 'mean' | 'max' | 'min' | 'sum' | 'median'.
+    :type method: str
+    :param resample_to: Which grid's edges to use as the spatial reference:
+        'first' uses filepaths[0] (fastest);
+        'largest' uses the grid with the most voxels (widest coverage);
+        'smallest' uses the grid with the fewest voxels (most conservative).
+    :type resample_to: str
+    :param out_fname: Output path for the combined .dx file.
+    :type out_fname: str
+    :return: Combined grid exported to out_fname.
+    :rtype: gridData.Grid
+    """
+    grids = [_read_dx(p) for p in filepaths]
+
+    if resample_to == 'first':
+        ref_grid = grids[0]
+    elif resample_to == 'largest':
+        ref_grid = max(grids, key=lambda g: g.grid.size)
+    elif resample_to == 'smallest':
+        ref_grid = min(grids, key=lambda g: g.grid.size)
+    else:
+        raise ValueError(
+            f"Unknown resample_to value: {resample_to!r}. "
+            "Valid values: 'first', 'largest', 'smallest'."
+        )
+
+    shapes_match = all(g.grid.shape == ref_grid.grid.shape for g in grids)
+
+    if shapes_match:
+        resampled = [g.grid for g in grids]
+    else:
+        resampled = []
+        for g in grids:
+            if g.grid.shape == ref_grid.grid.shape:
+                resampled.append(g.grid)
+            else:
+                resampled.append(g.resample(ref_grid.edges).grid)
+
+    agg_fn = {
+        'mean': np.mean,
+        'max': np.max,
+        'min': np.min,
+        'sum': np.sum,
+        'median': np.median,
+    }.get(method)
+
+    if agg_fn is None:
+        raise ValueError(f"Unsupported combination method: {method!r}")
+
+    combined_data = agg_fn(np.stack(resampled), axis=0)
+    combined_grid = Grid(combined_data, ref_grid.edges)
+    combined_grid.export(out_fname)
+    return combined_grid
+
+
 def _grid_free_energy(hist, n_atoms, n_frames, n_accessible_voxels, temperature=300):
     """
     Compute the atomic grid free energy (GFE) from a given histogram.
