@@ -1,9 +1,9 @@
 import os
-import json
+import yaml
 from inspect import signature
 
 class Config(object):
-    """This class handles the config.json options and the whole Cosolvent setup.
+    """This class handles the config.yaml options and the whole Cosolvent setup.
 
     :param object: inherits from the base class
     :type object: object
@@ -70,9 +70,9 @@ class Config(object):
         
     @classmethod
     def from_config(cls, config):
-        """Sets up the parameters to run cosolvent from the config.json file supplied.
+        """Sets up the parameters to run cosolvent from the config.yaml file supplied.
 
-        :param config: loads the config.json file and populates the class attributes
+        :param config: loads the config.yaml file and populates the class attributes
         :type config: str
         :raises ValueError: raises an error if some attributes are not recognized
         :return: instance of the Config class
@@ -80,7 +80,7 @@ class Config(object):
         """
         expected_keys = cls.get_defaults_dict().keys()
         with open(config) as f:
-            config = json.load(f)
+            config = yaml.safe_load(f)
         bad_keys = [k for k in config if k not in expected_keys]
         if len(bad_keys) > 0:
             err_msg = "unexpected keys in Config.from_config():" + os.linesep
