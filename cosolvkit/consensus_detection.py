@@ -392,7 +392,7 @@ class CrossProbeConsensusDetector:
         graph = self.build_overlap_graph()
 
         if self.community_method == "greedy_modularity":
-            from networkx.community import greedy_modularity_communities
+            from networkx.algorithms.community import greedy_modularity_communities
             raw_communities = list(greedy_modularity_communities(graph))
         else:
             raw_communities = list(nx.connected_components(graph))

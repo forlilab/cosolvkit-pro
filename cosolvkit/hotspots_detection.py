@@ -230,13 +230,13 @@ class HotspotDetector:
 
     _DEFAULT_WEIGHTS = {
         "favorability": 0.5,
-        "diversity": 0.2,
-        "volume": 0.1,
-        "sp_mrt": 0.2
+        "diversity": 0.3,
+        "volume": 0.2,
     }
 
     def __init__(self, out_path, cosolvent_names, universe,
-                 agfe_cutoff=-0.5, min_cluster_voxels=1,
+                 agfe_cutoff=-0.5, 
+                 min_cluster_voxels=1,
                  top_percentile=10.0,
                  score_weights=None, gridsize=0.5,
                  clustering_strategy=None,
@@ -294,9 +294,8 @@ class HotspotDetector:
 
         For ``use_atomtypes=True`` runs: takes the element-wise minimum across
         all per-type maps (most favorable signal at each voxel).  This finds
-        any voxel favorable for *any* part of the cosolvent, which is the
-        right signal for pocket detection.  Atom-type composition is then
-        read back per-site for diversity scoring.
+        any voxel favorable for *any* part of the cosolvent.
+        Atom-type composition is then read back per-site for diversity scoring.
 
         Returns
         -------

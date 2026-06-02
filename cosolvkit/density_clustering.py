@@ -211,6 +211,8 @@ class DBSCANClustering:
 
     def cluster(self, favorable_mask, agfe_array, gridsize):
         vox_coords = np.argwhere(favorable_mask).astype(float)
+        if len(vox_coords) == 0:
+            return np.zeros(agfe_array.shape, dtype=int), []
         ang_coords = vox_coords * gridsize
 
         db = DBSCAN(
