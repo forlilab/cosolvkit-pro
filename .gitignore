@@ -10,6 +10,7 @@ cosolvent_system/
 
 # C extensions
 *.so
+*.md
 
 # Distribution / packaging
 .Python
