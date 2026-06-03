@@ -12,10 +12,165 @@ import os
 import logging
 import numpy as np
 import pandas as pd
+from dataclasses import dataclass, field
+from typing import Any, Dict, List, Optional
 from scipy.optimize import curve_fit
 from scipy.interpolate import interp1d
+from scipy.spatial import cKDTree
 
 from . import hotspot_visualization as viz
+
+
+# ---------------------------------------------------------------------------
+# PocketResidue — per-residue data attached to a BindingSite
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PocketResidue:
+    """A protein residue that lines a cosolvent hotspot cavity.
+
+    Populated incrementally by :class:`PocketPropertyCalculator` methods:
+
+    * :meth:`find_pocket_residues` — identity + proximity fields
+    * :meth:`annotate_residue_rmsf` — ``rmsf``
+    * :meth:`compute_cosolvent_contacts` — ``cosolvent_contacts``
+    * :func:`set_residue_embeddings` — ``embedding`` / ``embedding_model``
+
+    Attributes
+    ----------
+    resid : int
+        PDB residue number (MDAnalysis ``resid``).
+    resindex : int
+        Universe-internal index (stable across trajectory frames).
+    resname : str
+        Three-letter residue code, e.g. ``"LEU"``.
+    chain : str
+        Segment / chain ID.
+    n_contact_voxels : int
+        Number of distinct blob voxels within *cutoff* Å of any heavy atom.
+    min_dist_ang : float
+        Distance in Å to the nearest blob voxel.
+    contact_fraction : float
+        ``n_contact_voxels / total_blob_voxels``.
+    rmsf : float or None
+        Cα RMSF in Å (set by :meth:`annotate_residue_rmsf`).
+    embedding : np.ndarray or None
+        PLM feature vector, shape ``(n_dims,)`` (injected externally).
+    embedding_model : str or None
+        Name of the model that produced ``embedding``.
+    cosolvent_contacts : dict
+        ``{cosolvent_name: {cosolvent_resid: [frame_index, ...]}}`` — for each
+        cosolvent molecule (identified by its MDAnalysis ``resid``), the sorted
+        list of trajectory frame indices where it was within *contact_cutoff*
+        of any heavy atom of this residue.
+    properties : dict
+        Extensible bag for arbitrary extra scalar properties.
+    """
+
+    # Required positional fields
+    resid:            int
+    resindex:         int
+    resname:          str
+    chain:            str
+    n_contact_voxels: int
+    min_dist_ang:     float
+    contact_fraction: float
+
+    # Optional, populated by separate methods
+    rmsf:            Optional[float]       = None
+    embedding:       Optional[np.ndarray]  = None
+    embedding_model: Optional[str]         = None
+
+    cosolvent_contacts: Dict[str, Dict[int, List[int]]] = field(
+        default_factory=dict
+    )
+    properties: Dict[str, Any] = field(default_factory=dict)
+
+    # ------------------------------------------------------------------
+    # Convenience accessors
+    # ------------------------------------------------------------------
+
+    def contact_frames(self, cosolvent_name: str) -> List[int]:
+        """Sorted union of frames where ANY molecule of *cosolvent_name* contacted this residue."""
+        mol_dict = self.cosolvent_contacts.get(cosolvent_name, {})
+        all_frames: set = set()
+        for frames in mol_dict.values():
+            all_frames.update(frames)
+        return sorted(all_frames)
+
+    def contact_resids(self, cosolvent_name: str) -> List[int]:
+        """Sorted list of cosolvent molecule resids that ever contacted this residue."""
+        return sorted(self.cosolvent_contacts.get(cosolvent_name, {}).keys())
+
+    def n_contact_events(self, cosolvent_name: str) -> int:
+        """Total (molecule, frame) pairs — proxy for raw contact frequency."""
+        return sum(
+            len(frames)
+            for frames in self.cosolvent_contacts.get(cosolvent_name, {}).values()
+        )
+
+    # ------------------------------------------------------------------
+    # Serialization
+    # ------------------------------------------------------------------
+
+    def to_dict(self) -> dict:
+        """JSON-safe dict representation.
+
+        * ``embedding`` is serialized as ``list[float]`` (or ``None``).
+        * ``cosolvent_contacts`` keys are stringified for JSON compatibility.
+        """
+        return {
+            "resid": self.resid,
+            "resindex": self.resindex,
+            "resname": self.resname,
+            "chain": self.chain,
+            "n_contact_voxels": self.n_contact_voxels,
+            "min_dist_ang": round(float(self.min_dist_ang), 4),
+            "contact_fraction": round(float(self.contact_fraction), 4),
+            "rmsf": round(float(self.rmsf), 4) if self.rmsf is not None else None,
+            "embedding": (
+                [float(v) for v in self.embedding] if self.embedding is not None
+                else None
+            ),
+            "embedding_model": self.embedding_model,
+            "cosolvent_contacts": {
+                cosolvent: {str(rid): frames for rid, frames in mol_dict.items()}
+                for cosolvent, mol_dict in self.cosolvent_contacts.items()
+            },
+            "properties": self.properties,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PocketResidue":
+        """Reconstruct from :meth:`to_dict` output."""
+        pr = cls(
+            resid=int(d["resid"]),
+            resindex=int(d["resindex"]),
+            resname=str(d["resname"]),
+            chain=str(d["chain"]),
+            n_contact_voxels=int(d["n_contact_voxels"]),
+            min_dist_ang=float(d["min_dist_ang"]),
+            contact_fraction=float(d["contact_fraction"]),
+        )
+        pr.rmsf = float(d["rmsf"]) if d.get("rmsf") is not None else None
+        emb = d.get("embedding")
+        pr.embedding = (
+            np.array(emb, dtype=np.float32) if emb is not None else None
+        )
+        pr.embedding_model = d.get("embedding_model")
+        raw = d.get("cosolvent_contacts", {})
+        pr.cosolvent_contacts = {
+            cosolvent: {int(rid): list(frames) for rid, frames in mol_dict.items()}
+            for cosolvent, mol_dict in raw.items()
+        }
+        pr.properties = dict(d.get("properties", {}))
+        return pr
+
+    def __repr__(self) -> str:
+        return (
+            f"PocketResidue({self.resname}{self.resid}, chain={self.chain!r}, "
+            f"min_dist={self.min_dist_ang:.2f}Å, rmsf={self.rmsf})"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +385,39 @@ def compute_composite_score(sites, score_weights):
     for rank, site in enumerate(sorted(sites, key=lambda s: s.composite_score,
                                        reverse=True), start=1):
         site.rank = rank
+
+
+# ---------------------------------------------------------------------------
+# PLM embedding injection
+# ---------------------------------------------------------------------------
+
+def set_residue_embeddings(site, embeddings: Dict[int, Any], model_name: str = "") -> None:
+    """Attach protein language model embeddings to pocket residues by resid.
+
+    Call after :meth:`PocketPropertyCalculator.find_pocket_residues` has
+    populated ``site.pocket_residues``.
+
+    Parameters
+    ----------
+    site : BindingSite
+        Site whose ``pocket_residues`` list to annotate.
+    embeddings : dict[int, array-like]
+        Mapping ``{resid: embedding_vector}``.  Resids that do not match any
+        pocket residue are silently skipped with a warning.
+    model_name : str
+        Recorded as ``PocketResidue.embedding_model`` on each annotated residue.
+    """
+    logger = logging.getLogger(__name__)
+    resid_to_pr = {pr.resid: pr for pr in site.pocket_residues}
+    for resid, vec in embeddings.items():
+        pr = resid_to_pr.get(int(resid))
+        if pr is not None:
+            pr.embedding = np.asarray(vec, dtype=np.float32)
+            pr.embedding_model = model_name or None
+        else:
+            logger.warning(
+                "set_residue_embeddings: resid %d not found in site.pocket_residues", resid
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -574,3 +762,246 @@ class PocketPropertyCalculator:
                 )
 
             viz.plot_sp_fits(cosolvent, sites, df, self.out_path)
+
+    # ------------------------------------------------------------------
+    # Pocket residue identification
+    # ------------------------------------------------------------------
+
+    def find_pocket_residues(self, site, cutoff: float = 4.5) -> None:
+        """Find protein residues that line the hotspot cavity and store them on *site*.
+
+        Uses a KD-tree over the blob voxel coordinates (derived from
+        ``site.voxel_mask``, ``site.grid_origin``, and ``site.grid_delta``) to
+        efficiently identify protein heavy atoms within *cutoff* Å.  One
+        :class:`PocketResidue` is appended to ``site.pocket_residues`` for each
+        qualifying protein residue.
+
+        Atom positions are read from the current frame of ``self.universe``
+        (typically frame 0 or whatever frame the trajectory is at when this
+        method is called).
+
+        Parameters
+        ----------
+        site : BindingSite
+            The hotspot to annotate.  Must have ``voxel_mask``, ``grid_origin``,
+            and ``grid_delta`` already set (populated by
+            :meth:`HotspotDetector.detect`).
+        cutoff : float
+            Distance threshold in Å (default 4.5).  Protein residues with any
+            heavy atom within *cutoff* of any blob voxel are included.
+        """
+        if self.universe is None:
+            raise ValueError(
+                "find_pocket_residues requires a loaded MDAnalysis Universe "
+                "(PocketPropertyCalculator.universe is None)."
+            )
+        if site.grid_origin is None or site.grid_delta is None:
+            raise ValueError(
+                "site.grid_origin / site.grid_delta are not set.  "
+                "Call HotspotDetector.detect() before find_pocket_residues()."
+            )
+
+        # Reconstruct Angstrom coordinates of blob voxels
+        voxel_indices = np.argwhere(site.voxel_mask)          # (N, 3) int
+        voxel_coords = (
+            site.grid_origin + voxel_indices * site.grid_delta  # (N, 3) float
+        )
+        n_voxels = len(voxel_coords)
+        if n_voxels == 0:
+            self.logger.warning("find_pocket_residues: site has no voxels, skipping.")
+            return
+
+        tree = cKDTree(voxel_coords)
+
+        u = self.universe
+        protein_ag = u.select_atoms("protein and not name H*")
+
+        site.pocket_residues = []
+        for res in protein_ag.residues:
+            res_pos = res.atoms.positions  # (n_res_atoms, 3)
+
+            # Nearest voxel distance for each heavy atom; keep residue if any is close
+            dists, _ = tree.query(res_pos, k=1)
+            min_dist = float(dists.min())
+            if min_dist > cutoff:
+                continue
+
+            # Count unique blob voxels contacted by any heavy atom of this residue
+            contacted = set()
+            for voxel_id_list in tree.query_ball_point(res_pos, r=cutoff):
+                contacted.update(voxel_id_list)
+            n_contact = len(contacted)
+
+            pr = PocketResidue(
+                resid=int(res.resid),
+                resindex=int(res.resindex),
+                resname=str(res.resname),
+                chain=str(res.segid),
+                n_contact_voxels=n_contact,
+                min_dist_ang=round(min_dist, 4),
+                contact_fraction=round(n_contact / n_voxels, 4),
+            )
+            site.pocket_residues.append(pr)
+
+        self.logger.info(
+            "find_pocket_residues: %d residues within %.1f Å of site %d (%s)",
+            len(site.pocket_residues), cutoff, site.site_id, site.cosolvent,
+        )
+
+    # ------------------------------------------------------------------
+    # RMSF annotation
+    # ------------------------------------------------------------------
+
+    def annotate_residue_rmsf(self, site, rmsf_by_resid: Dict[int, float]) -> None:
+        """Map pre-computed RMSF values onto pocket residues.
+
+        Does **not** run any trajectory analysis — it just looks up each
+        pocket residue's ``resid`` in *rmsf_by_resid* and stores the result.
+        The expectation is that RMSF was already computed earlier in the
+        analysis pipeline (e.g. via :class:`cosolvkit.analysis.analysis.Report`)
+        and the caller passes the resulting mapping here.
+
+        Call after :meth:`find_pocket_residues`.
+
+        Parameters
+        ----------
+        site : BindingSite
+            Site whose ``pocket_residues`` to annotate.
+        rmsf_by_resid : dict[int, float]
+            Mapping ``{resid: rmsf_angstroms}``.  Typically built from the
+            ``RMSF`` result in the analysis pipeline::
+
+                ca = universe.select_atoms("protein and name CA")
+                rmsf_result = RMSF(ca).run()
+                rmsf_by_resid = {
+                    int(res.resid): float(val)
+                    for res, val in zip(ca.residues, rmsf_result.results.rmsf)
+                }
+
+            Pocket residues whose ``resid`` is absent from the mapping receive
+            ``rmsf = None``.
+        """
+        if not site.pocket_residues:
+            return
+        matched = 0
+        for pr in site.pocket_residues:
+            val = rmsf_by_resid.get(pr.resid)
+            if val is not None:
+                pr.rmsf = round(float(val), 4)
+                matched += 1
+        self.logger.info(
+            "annotate_residue_rmsf: mapped RMSF for %d / %d pocket residues "
+            "of site %d (%s)",
+            matched, len(site.pocket_residues), site.site_id, site.cosolvent,
+        )
+
+    # ------------------------------------------------------------------
+    # Per-frame cosolvent contact tracking
+    # ------------------------------------------------------------------
+
+    def compute_cosolvent_contacts(
+        self,
+        site,
+        cosolvent_names: List[str],
+        contact_cutoff: float = 4.0,
+        step: int = 1,
+    ) -> None:
+        """Record trajectory frames in which each cosolvent molecule contacts each pocket residue.
+
+        For every pocket residue in *site*, and for every individual cosolvent
+        molecule (identified by its MDAnalysis ``resid``), this method iterates
+        the trajectory and records the frame indices where any heavy atom of the
+        molecule comes within *contact_cutoff* Å of any heavy atom of the
+        residue.
+
+        Results are stored in :attr:`PocketResidue.cosolvent_contacts` as::
+
+            {cosolvent_name: {cosolvent_resid: [frame_idx, ...]}}
+
+        Call after :meth:`find_pocket_residues`.
+
+        Parameters
+        ----------
+        site : BindingSite
+            Site whose ``pocket_residues`` to annotate.
+        cosolvent_names : list[str]
+            Residue names of cosolvent species to analyse.
+        contact_cutoff : float
+            Distance threshold in Å (default 4.0).
+        step : int
+            Trajectory stride — contacts are recorded only for sampled frames
+            (default 1 = every frame).
+
+        Notes
+        -----
+        Atom group objects are cached before the trajectory loop so that only
+        ``.positions`` is accessed inside the hot path.  For very long
+        trajectories with many cosolvent molecules, use ``step > 1`` to limit
+        computation time.
+        """
+        if not site.pocket_residues:
+            return
+        if self.universe is None:
+            raise ValueError(
+                "compute_cosolvent_contacts requires a loaded MDAnalysis Universe."
+            )
+
+        u = self.universe
+
+        # Cache residue AtomGroups once before the trajectory loop
+        res_atom_groups: Dict[int, Any] = {
+            pr.resindex: u.select_atoms(f"resindex {pr.resindex} and not name H*")
+            for pr in site.pocket_residues
+        }
+
+        for cosolvent_name in cosolvent_names:
+            cosol_heavy = u.select_atoms(f"resname {cosolvent_name} and not name H*")
+            if len(cosol_heavy) == 0:
+                self.logger.warning(
+                    "compute_cosolvent_contacts: no atoms found for resname %s",
+                    cosolvent_name,
+                )
+                continue
+
+            cosol_resids: List[int] = [int(r) for r in np.unique(cosol_heavy.resids)]
+
+            # Cache per-molecule AtomGroups
+            mol_atom_groups: Dict[int, Any] = {
+                rid: u.select_atoms(
+                    f"resname {cosolvent_name} and resid {rid} and not name H*"
+                )
+                for rid in cosol_resids
+            }
+
+            n_frames = 0
+            for ts in u.trajectory[::step]:
+                frame = int(ts.frame)
+                n_frames += 1
+                for rid, mol_ag in mol_atom_groups.items():
+                    mol_pos = mol_ag.positions  # (n_mol_atoms, 3)
+                    for pr in site.pocket_residues:
+                        res_pos = res_atom_groups[pr.resindex].positions  # (n_res_atoms, 3)
+                        dists = np.linalg.norm(
+                            mol_pos[:, np.newaxis, :] - res_pos[np.newaxis, :, :],
+                            axis=-1,
+                        )  # (n_mol_atoms, n_res_atoms)
+                        if dists.min() <= contact_cutoff:
+                            (
+                                pr.cosolvent_contacts
+                                .setdefault(cosolvent_name, {})
+                                .setdefault(rid, [])
+                                .append(frame)
+                            )
+
+            # Ensure frame lists are sorted (trajectory may not always be forward)
+            for pr in site.pocket_residues:
+                mol_dict = pr.cosolvent_contacts.get(cosolvent_name, {})
+                for rid in mol_dict:
+                    mol_dict[rid].sort()
+
+            self.logger.info(
+                "compute_cosolvent_contacts: %s — scanned %d frames, "
+                "%d molecules, %d pocket residues for site %d",
+                cosolvent_name, n_frames, len(cosol_resids),
+                len(site.pocket_residues), site.site_id,
+            )

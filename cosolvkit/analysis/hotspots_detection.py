@@ -22,7 +22,7 @@ from .density_clustering import (
     SkimageWatershedClustering,
 )
 from . import hotspot_visualization as viz
-from .pocket_properties import PocketPropertyCalculator, compute_composite_score
+from .pocket_properties import PocketPropertyCalculator, PocketResidue, compute_composite_score
 
 
 class BindingSite:
@@ -55,6 +55,7 @@ class BindingSite:
         self.favorable_atomtypes = favorable_atomtypes  # List[str]
         self.per_type_agfe = per_type_agfe            # Dict[str, float]: min AGFE per type
         self.properties = {}                          # extensible user properties
+        self.pocket_residues = []                     # List[PocketResidue], populated on demand
         # Grid spatial metadata — set by HotspotDetector.detect() after construction.
         # Required by CrossProbeConsensusDetector for cross-grid Jaccard computation.
         self.grid_origin = None                       # np.ndarray (3,), Angstroms
@@ -112,6 +113,9 @@ class BindingSite:
             per_type_agfe=per_type_agfe,
         )
         site.properties = dict(d.get("_properties", {}))
+        site.pocket_residues = [
+            PocketResidue.from_dict(r) for r in d.get("pocket_residues", [])
+        ]
         site.grid_origin = np.asarray(grid_origin, dtype=float)
         site.grid_delta = np.asarray(grid_delta, dtype=float)
         return site
@@ -136,6 +140,8 @@ class BindingSite:
         }
         d.update({f"agfe_{k}": round(float(v), 4) for k, v in self.per_type_agfe.items()})
         d.update(self.properties)
+        if self.pocket_residues:
+            d["pocket_residues"] = [r.to_dict() for r in self.pocket_residues]
         return d
 
     def extract_surface(self, agfe_array, level=0.0, spacing=(1.0, 1.0, 1.0)):
