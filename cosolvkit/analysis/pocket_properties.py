@@ -330,12 +330,28 @@ class PocketPropertyCalculator:
         if extra_properties is None:
             extra_properties = self.regionprops_extra_properties
 
-        props = regionprops_table(
-            labeled_array,
-            intensity_image=intensity_image,
-            properties=requested,
-            extra_properties=extra_properties or None,
-        )
+        try:
+            props = regionprops_table(
+                labeled_array,
+                intensity_image=intensity_image,
+                properties=requested,
+                extra_properties=extra_properties or None,
+            )
+        except ValueError:
+            # feret_diameter_max calls marching_cubes on the convex hull image,
+            # which fails for degenerate/tiny clusters where qhull returns an
+            # empty image. Retry without it.
+            fallback = [p for p in requested if p != "feret_diameter_max"]
+            self.logger.warning(
+                "regionprops_table failed (feret_diameter_max on degenerate cluster); "
+                "retrying without feret_diameter_max."
+            )
+            props = regionprops_table(
+                labeled_array,
+                intensity_image=intensity_image,
+                properties=fallback,
+                extra_properties=extra_properties or None,
+            )
 
         n = len(props["label"])
         region_props = {}
