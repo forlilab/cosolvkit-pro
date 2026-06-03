@@ -14,8 +14,6 @@ import numpy as np
 import pandas as pd
 from gridData import Grid
 from scipy.ndimage import center_of_mass
-from scipy.optimize import curve_fit
-from scipy.interpolate import interp1d
 
 from .density_clustering import (
     ConnectedComponentsClustering,
@@ -24,64 +22,7 @@ from .density_clustering import (
     SkimageWatershedClustering,
 )
 from . import hotspot_visualization as viz
-
-
-# Standard skimage regionprops properties safe for 3D volumetric arrays that
-# produce tabular (scalar or fixed-size array) output suitable for CSV/JSON.
-#
-# Excluded — raise NotImplementedError on 3D inputs:
-#   eccentricity, orientation, perimeter, perimeter_crofton,
-#   moments_hu, moments_weighted_hu
-#
-# Excluded — return variable-size per-region arrays or Python objects that
-# break tabular export (pass them explicitly via regionprops_properties to opt in):
-#   image, image_convex, image_filled, image_intensity, coords, coords_scaled, slice
-#
-# Note: 3D moments tensors are 4×4×4 = 64 columns each; the six moment
-# properties in this list expand to ~384 columns in the output.
-REGIONPROPS_ALL = [
-    "area",
-    "area_bbox",
-    "area_convex",
-    "area_filled",
-    "axis_major_length",
-    "axis_minor_length",
-    "bbox",
-    "centroid",
-    "centroid_local",
-    "centroid_weighted",
-    "centroid_weighted_local",
-    "equivalent_diameter_area",
-    "euler_number",
-    "extent",
-    "feret_diameter_max",
-    "inertia_tensor",
-    "inertia_tensor_eigvals",
-    "intensity_max",
-    "intensity_mean",
-    "intensity_min",
-    "intensity_std",
-    "moments",
-    "moments_central",
-    "moments_normalized",
-    "moments_weighted",
-    "moments_weighted_central",
-    "moments_weighted_normalized",
-    "solidity",
-]
-
-
-def _serialize_regionprop_value(val):
-    """Convert a regionprops_table cell to a JSON-safe Python scalar or list."""
-    if isinstance(val, tuple) and any(isinstance(x, slice) for x in val):
-        return [[x.start, x.stop, x.step] for x in val]
-    if isinstance(val, slice):
-        return [val.start, val.stop, val.step]
-    if np.ndim(val) == 0:
-        if isinstance(val, (np.integer, int)):
-            return int(val)
-        return float(val)
-    return [float(v) for v in np.ravel(val)]
+from .pocket_properties import PocketPropertyCalculator, compute_composite_score
 
 
 class BindingSite:
@@ -309,9 +250,9 @@ class HotspotDetector:
                  regionprops_extra_properties=None,
                  ):
         self.logger = logging.getLogger(__name__)
-        self.out_path = out_path
+        self._out_path = out_path
         self.cosolvent_names = cosolvent_names
-        self.universe = universe
+        self._universe = universe
         self.agfe_cutoff = agfe_cutoff
         self.min_cluster_voxels = min_cluster_voxels
         self.top_percentile = top_percentile
@@ -343,6 +284,40 @@ class HotspotDetector:
         # Caches populated during detect() for use in export_results()
         self._labeled_arrays = {}
         self._combined_grids = {}
+
+        self.property_calculator = PocketPropertyCalculator(
+            out_path=self._out_path,
+            universe=self._universe,
+            gridsize=self.gridsize,
+            regionprops_properties=self.regionprops_properties,
+            regionprops_extra_properties=self.regionprops_extra_properties,
+        )
+
+    # ------------------------------------------------------------------
+    # out_path and universe properties — setters propagate to property_calculator
+    # so that multi_report.py can mutate them between SP calls without breaking
+    # the calculator's reference.
+    # ------------------------------------------------------------------
+
+    @property
+    def out_path(self):
+        return self._out_path
+
+    @out_path.setter
+    def out_path(self, value):
+        self._out_path = value
+        if hasattr(self, "property_calculator"):
+            self.property_calculator.out_path = value
+
+    @property
+    def universe(self):
+        return self._universe
+
+    @universe.setter
+    def universe(self, value):
+        self._universe = value
+        if hasattr(self, "property_calculator"):
+            self.property_calculator.universe = value
 
     # ------------------------------------------------------------------
     # Internal loaders
@@ -434,82 +409,6 @@ class HotspotDetector:
         return self.clustering_strategy.cluster(
             favorable_mask, agfe_array, self.gridsize
         )
-
-    def _compute_regionprops(self, labeled_array, intensity_image,
-                             properties=None, extra_properties=None):
-        """Compute per-region geometric descriptors via regionprops_table.
-
-        Parameters
-        ----------
-        labeled_array : np.ndarray of int
-            Labeled 3-D array (0 = background, positive = cluster ids).
-        intensity_image : np.ndarray of float
-            Intensity image used for weighted centroid and mean intensity
-            (typically ``clip(-agfe_array, 0, None)``; intensity-weighted
-            properties therefore reflect positive AGFE favorability signal).
-        properties : list of str, optional
-            skimage property names to compute. Overrides
-            ``self.regionprops_properties``. ``None`` resolves to
-            ``REGIONPROPS_ALL`` (all 3D-safe tabular properties).
-            Blob/array properties (``image``, ``coords``, ``slice``, etc.) are
-            reachable by passing them explicitly here.
-        extra_properties : iterable of callable, optional
-            Custom callables forwarded to ``regionprops_table``'s
-            ``extra_properties`` argument. Each callable must accept
-            ``(regionmask)`` or ``(regionmask, intensity_image)`` and return a
-            numeric scalar or array. Overrides
-            ``self.regionprops_extra_properties``.
-
-        Returns
-        -------
-        dict[int, dict]
-            Maps each cluster label to a flat dict of ``geom_*`` properties
-            with Python scalar values, ready for ``site.add_property()``.
-        """
-        from skimage.measure import regionprops_table
-
-        # Resolve property list
-        if properties is None:
-            properties = self.regionprops_properties
-        if properties is None:
-            properties = REGIONPROPS_ALL
-
-        # Guard against names unknown to this skimage version
-        try:
-            from skimage.measure._regionprops import PROP_VALS
-            safe = [p for p in properties if p in PROP_VALS]
-            skipped = [p for p in properties if p not in PROP_VALS]
-            if skipped:
-                self.logger.debug(
-                    "regionprops: skipped (not in this skimage version): %s", skipped
-                )
-            properties = safe
-        except ImportError:
-            pass  # private API unavailable; use list as-is
-
-        requested = ["label"] + [p for p in properties if p != "label"]
-
-        if extra_properties is None:
-            extra_properties = self.regionprops_extra_properties
-
-        props = regionprops_table(
-            labeled_array,
-            intensity_image=intensity_image,
-            properties=requested,
-            extra_properties=extra_properties or None,
-        )
-
-        n = len(props["label"])
-        result = {}
-        for i in range(n):
-            lbl = int(props["label"][i])
-            entry = {}
-            for key, arr in props.items():
-                if key == "label":
-                    continue
-                entry[f"geom_{key}"] = _serialize_regionprop_value(arr[i])
-            result[lbl] = entry
-        return result
 
     def _preprocess_favorable_mask(self, favorable_mask):
         """Optionally clean the favorable mask using scikit-image morphology.
@@ -702,11 +601,9 @@ class HotspotDetector:
         # --- Optional geometry descriptor extraction ---
         if self.compute_regionprops:
             score_image = np.clip(-agfe_array, 0, None)
-            rp = self._compute_regionprops(labeled_array, score_image)
-            for site in sites:
-                props = rp.get(site.site_id, {})
-                for k, v in props.items():
-                    site.add_property(k, v)
+            self.property_calculator.compute_regionprops(
+                sites, labeled_array, score_image
+            )
 
         # Attach grid spatial metadata so CrossProbeConsensusDetector can compute
         # Jaccard in Angstrom space when probes live on different-shaped grids.
@@ -755,12 +652,19 @@ class HotspotDetector:
                     f"Running survival probability for top {len(top_sites)} "
                     f"hotspot(s) of '{cosolvent}'."
                 )
-                self.survival_probability(
+                self.property_calculator.run_survival_probability(
                     cosolvent_names=[cosolvent],
                     candidate_zones=candidate_zones[cosolvent],
                     **self.survival_kwargs,
                 )
-            self.fit_survival_probability(results)
+            self.property_calculator.fit_survival_probability(results)
+
+            # After SP metrics are attached, recompute composite if any
+            # sp_* keys appear in score_weights.
+            if any(k.startswith("sp_") for k in self.score_weights):
+                for cosolvent_sites in results.values():
+                    if cosolvent_sites:
+                        compute_composite_score(cosolvent_sites, self.score_weights)
 
         return results
 
@@ -886,263 +790,36 @@ class HotspotDetector:
         )
 
     # ------------------------------------------------------------------
-    # Survival probability
+    # Survival probability — thin wrappers delegating to property_calculator
     # ------------------------------------------------------------------
 
-    def survival_probability(self,
-                             cosolvent_names: list = None,
-                             candidate_zones: list = None,
-                             radius: float = 6.0,
-                             max_tau: int = 100,
-                             intermittency: int = 2):
-        """Compute the survival probability of cosolvents inside spherical zones.
+    def survival_probability(self, cosolvent_names=None, candidate_zones=None,
+                             radius=6.0, max_tau=100, intermittency=2):
+        """Delegate to :meth:`PocketPropertyCalculator.run_survival_probability`.
 
-        Each zone can be defined either as a group of residue IDs *or* as an
-        explicit XYZ coordinate (an arbitrary point in space).  The two forms
-        can be mixed freely within the same ``candidate_zones`` list.
-
-        **Zone formats** — each element of ``candidate_zones`` is one zone:
-
-        * ``[resid1, resid2, ...]`` / ``(resid1, resid2, ...)``  — sphere centred
-          at the COM of the listed residues (original behaviour).
-        * ``[x, y, z]`` / ``(x, y, z)``  — sphere centred at the explicit
-          Angstrom coordinate.  Detected when the group contains exactly 3
-          float-like values.
-        * A bare ``int`` — treated as ``[resid]``.
-
-        Results are saved as ``survival_probability_{cosolvent}.csv`` and
-        ``survival_probability_{cosolvent}.png`` under ``self.out_path``.
-
-        Parameters
-        ----------
-        cosolvent_names : list[str], optional
-            Cosolvent residue names to analyse.  Defaults to all cosolvents.
-        candidate_zones : list, required
-            Zones to analyse (see format description above).
-        radius : float
-            Sphere radius in Angstroms (default 5.0).
-        max_tau : int
-            Maximum lag time for the survival-probability calculation (default 100).
-        intermittency : int
-            Intermittency for the waterdynamics SurvivalProbability (default 1).
-
-        More info: https://www.mdanalysis.org/waterdynamics/api.html#waterdynamics.SurvivalProbability
+        See that method for full documentation.  ``cosolvent_names=None``
+        defaults to all cosolvents registered on this detector.
         """
-        try:
-            from waterdynamics import SurvivalProbability as SP
-        except ImportError:
-            raise ImportError(
-                "waterdynamics package is required for survival probability analysis. "
-                "Please install it."
-            )
-
-        if candidate_zones is None:
-            raise ValueError("candidate_zones must be provided.")
         if cosolvent_names is None:
             self.logger.warning(
                 "No cosolvent specified for survival probability analysis. "
                 "Using all cosolvents..."
             )
             cosolvent_names = self.cosolvent_names
-
-        def _is_xyz(group):
-            """Return True if group encodes an XYZ point (3 float-like values)."""
-            return (
-                len(group) == 3
-                and all(isinstance(v, float) for v in group)
-            )
-
-        def _build_selection(cosolvent_name, group):
-            if isinstance(group, int):
-                return (
-                    f"resname {cosolvent_name} and sphzone {radius} resid {group}",
-                    str(group),
-                )
-            group = list(group)
-            if _is_xyz(group):
-                x, y, z = group
-                return (
-                    f"resname {cosolvent_name} and point {x} {y} {z} {radius}",
-                    f"({x:.2f}, {y:.2f}, {z:.2f})",
-                )
-            # residue-ID group
-            resids = " or ".join(f"resid {r}" for r in group)
-            return (
-                f"resname {cosolvent_name} and sphzone {radius} ({resids})",
-                " ".join(str(r) for r in group),
-            )
-
-        for cosolvent_name in cosolvent_names:
-            data = []
-            zone_labels = []
-
-            for zone_idx, zone in enumerate(candidate_zones):
-                select, label_str = _build_selection(cosolvent_name, zone)
-                zone_labels.append(label_str)
-                self.logger.info(
-                    f"Zone {zone_idx} [{label_str}] — cosolvent {cosolvent_name}"
-                )
-
-                sp = SP(self.universe, select, verbose=True)
-                sp.run(tau_max=max_tau, residues=False, intermittency=intermittency)
-
-                for tau, sp_value in zip(sp.tau_timeseries, sp.sp_timeseries):
-                    data.append({
-                        "Group": zone_idx,
-                        "Zone": label_str,
-                        "Time": tau,
-                        "SP": sp_value,
-                        "Cosolvent": cosolvent_name,
-                    })
-
-            df_sp = pd.DataFrame(data)
-            df_sp.to_csv(
-                os.path.join(self.out_path, f"survival_probability_{cosolvent_name}.csv"),
-                index=False,
-            )
-
-            viz.plot_sp_raw(cosolvent_name, df_sp, self.out_path)
+        self.property_calculator.run_survival_probability(
+            cosolvent_names=cosolvent_names,
+            candidate_zones=candidate_zones,
+            radius=radius,
+            max_tau=max_tau,
+            intermittency=intermittency,
+        )
 
     def fit_survival_probability(self, results, zone_to_site_rank=None):
-        """Fit SP decay curves and store kinetic metrics in each :class:`BindingSite`.
+        """Delegate to :meth:`PocketPropertyCalculator.fit_survival_probability`.
 
-        Reads the ``survival_probability_{cosolvent}.csv`` files written by
-        :meth:`survival_probability`, fits three decay models to each zone's
-        curve, and stores the derived metrics in ``BindingSite.properties``
-        via :meth:`BindingSite.add_property`.
-
-        **Stored properties** (prefixed ``sp_``):
-
-        * ``sp_mrt``            — mean residence time (trapezoid integral of SP)
-        * ``sp_half_life``      — time at SP = 0.5
-        * ``sp_plateau``        — mean SP over the last 10 % of timepoints
-        * ``sp_tau_single``     — single-exponential time constant τ
-        * ``sp_r2_single``      — R² of single-exp fit
-        * ``sp_amplitude_fast`` — fraction in the fast population (bi-exp A)
-        * ``sp_tau_fast``       — fast time constant τ₁ (bi-exp)
-        * ``sp_tau_slow``       — slow time constant τ₂ (bi-exp)
-        * ``sp_r2_biexp``       — R² of bi-exponential fit
-        Parameters
-        ----------
-        results : dict[str, list[BindingSite]]
-            Output of :meth:`detect_all`.
-        zone_to_site_rank : dict[int, int], optional
-            Maps zone index (``Group`` column in CSV) to site rank.
-            If *None*, zone 0 → rank 1, zone 1 → rank 2, etc.
+        See that method for full documentation.
         """
-
-
-        def _single_exp(t, tau):
-            return np.exp(-t / tau)
-
-        def _bi_exp(t, A, tau1, tau2):
-            return A * np.exp(-t / tau1) + (1.0 - A) * np.exp(-t / tau2)
-
-        def _r2(y_true, y_pred):
-            ss_res = np.sum((y_true - y_pred) ** 2)
-            ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
-            return float(1.0 - ss_res / ss_tot) if ss_tot > 1e-20 else 0.0
-
-        for cosolvent, sites in results.items():
-            csv_path = os.path.join(
-                self.out_path, f"survival_probability_{cosolvent}.csv"
-            )
-            if not os.path.exists(csv_path):
-                self.logger.warning(
-                    f"No SP CSV found for '{cosolvent}': {csv_path}. "
-                    "Run survival_probability() first."
-                )
-                continue
-
-            df = pd.read_csv(csv_path)
-            site_by_rank = {site.rank: site for site in sites}
-
-            for zone_idx, group_df in df.groupby("Group"):
-                rank = (
-                    zone_to_site_rank.get(int(zone_idx))
-                    if zone_to_site_rank is not None
-                    else int(zone_idx) + 1
-                )
-                site = site_by_rank.get(rank)
-                if site is None:
-                    self.logger.debug(
-                        f"Zone {zone_idx} → rank {rank}: no matching site, skipping."
-                    )
-                    continue
-
-                tau_arr = group_df["Time"].values.astype(float)
-                sp_arr = group_df["SP"].values.astype(float)
-
-                if len(tau_arr) < 3:
-                    continue
-
-                props = {}
-
-                # MRT — trapezoidal integral
-                props["sp_mrt"] = round(float(np.trapz(sp_arr, tau_arr)), 4)
-
-                # Half-life — interpolate SP = 0.5
-                try:
-                    f_interp = interp1d(
-                        sp_arr[::-1], tau_arr[::-1],
-                        bounds_error=False, fill_value=np.nan
-                    )
-                    hl = float(f_interp(0.5))
-                    props["sp_half_life"] = round(hl, 4) if np.isfinite(hl) else None
-                except Exception:
-                    props["sp_half_life"] = None
-
-                # Late-time plateau (mean of last 10 % of timepoints)
-                n_tail = max(1, len(sp_arr) // 10)
-                props["sp_plateau"] = round(float(np.mean(sp_arr[-n_tail:])), 4)
-
-                # Single-exponential fit
-                try:
-                    p0 = [max(props["sp_mrt"], 1.0)]
-                    popt, _ = curve_fit(
-                        _single_exp, tau_arr, sp_arr,
-                        p0=p0, bounds=(0, np.inf), maxfev=5000
-                    )
-                    props["sp_tau_single"] = round(float(popt[0]), 4)
-                    props["sp_r2_single"] = round(
-                        _r2(sp_arr, _single_exp(tau_arr, *popt)), 4
-                    )
-                except Exception as exc:
-                    self.logger.debug(f"Single-exp fit failed (zone {zone_idx}): {exc}")
-
-                # Bi-exponential fit (requires at least 6 points)
-                if len(tau_arr) >= 6:
-                    try:
-                        mrt = props["sp_mrt"]
-                        p0 = [0.5, max(mrt * 0.1, 1.0), max(mrt, 1.0)]
-                        popt, _ = curve_fit(
-                            _bi_exp, tau_arr, sp_arr, p0=p0,
-                            bounds=([0, 0, 0], [1, np.inf, np.inf]),
-                            maxfev=10000
-                        )
-                        A, tau1, tau2 = float(popt[0]), float(popt[1]), float(popt[2])
-                        if tau1 > tau2:          # enforce fast < slow convention
-                            A, tau1, tau2 = 1.0 - A, tau2, tau1
-                        props["sp_amplitude_fast"] = round(A, 4)
-                        props["sp_tau_fast"] = round(tau1, 4)
-                        props["sp_tau_slow"] = round(tau2, 4)
-                        props["sp_r2_biexp"] = round(
-                            _r2(sp_arr, _bi_exp(tau_arr, *popt)), 4
-                        )
-                    except Exception as exc:
-                        self.logger.debug(f"Bi-exp fit failed (zone {zone_idx}): {exc}")
-
-                for k, v in props.items():
-                    site.add_property(k, v)
-
-                self.logger.info(
-                    f"Site rank {rank} ({cosolvent}): "
-                    f"MRT={props['sp_mrt']:.2f}, "
-                    f"plateau={props['sp_plateau']:.3f}, "
-                    f"τ_single={props.get('sp_tau_single', 'N/A')}"
-                )
-
-            viz.plot_sp_fits(cosolvent, sites, df, self.out_path)
+        self.property_calculator.fit_survival_probability(results, zone_to_site_rank)
 
     def add_hotspots_to_pymol_session(self, results, pse_path, top_n=10):
         """See :func:`hotspot_visualization.add_hotspots_to_pymol_session`."""
