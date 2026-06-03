@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from gridData import Grid
 
-from cosolvkit.hotspots_detection import BindingSite
+from cosolvkit.analysis.hotspots_detection import BindingSite
 
 
 # ---------------------------------------------------------------------------

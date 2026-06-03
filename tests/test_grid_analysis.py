@@ -95,14 +95,14 @@ def synthetic_universe():
 class TestGridAnalysisNonAtomtype:
 
     def test_run_completes(self, synthetic_universe, tmp_cwd):
-        from cosolvkit.density_analysis import GridAnalysis
+        from cosolvkit.analysis.density_analysis import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
         assert analysis._nframes == 5
 
     def test_grid_shape_is_set_after_run(self, synthetic_universe, tmp_cwd):
-        from cosolvkit.density_analysis import GridAnalysis
+        from cosolvkit.analysis.density_analysis import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
@@ -110,7 +110,7 @@ class TestGridAnalysisNonAtomtype:
         assert analysis._histogram.grid.ndim == 3
 
     def test_agfe_computed(self, synthetic_universe, tmp_cwd):
-        from cosolvkit.density_analysis import GridAnalysis
+        from cosolvkit.analysis.density_analysis import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
@@ -120,7 +120,7 @@ class TestGridAnalysisNonAtomtype:
 
     def test_agfe_smoothed_all_nonpositive(self, synthetic_universe, tmp_cwd):
         """Load-bearing invariant: smoothed AGFE <= 0 everywhere (PyMol relies on this)."""
-        from cosolvkit.density_analysis import GridAnalysis
+        from cosolvkit.analysis.density_analysis import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
@@ -129,7 +129,7 @@ class TestGridAnalysisNonAtomtype:
 
     def test_hotspot_region_more_favorable_than_background(self, synthetic_universe, tmp_cwd):
         """BEN atoms piled near (2,2,2) → that region should have lower AGFE."""
-        from cosolvkit.density_analysis import GridAnalysis
+        from cosolvkit.analysis.density_analysis import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
@@ -155,7 +155,7 @@ class TestGridAnalysisNonAtomtype:
         )
 
     def test_export_agfe_writes_dx(self, synthetic_universe, tmp_cwd):
-        from cosolvkit.density_analysis import GridAnalysis
+        from cosolvkit.analysis.density_analysis import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
@@ -174,7 +174,7 @@ class TestGridAnalysisNonAtomtype:
         """Verify _nframes matches the trajectory length."""
         if not HAS_MDA:
             pytest.skip("MDAnalysis not available")
-        from cosolvkit.density_analysis import GridAnalysis
+        from cosolvkit.analysis.density_analysis import GridAnalysis
         u = _make_universe(n_frames=3)
         ag = u.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
@@ -183,7 +183,7 @@ class TestGridAnalysisNonAtomtype:
 
     def test_use_atomtypes_without_definitions_exits(self, synthetic_universe, tmp_cwd):
         """use_atomtypes=True with atomtypes_definitions=None → SystemExit."""
-        from cosolvkit.density_analysis import GridAnalysis
+        from cosolvkit.analysis.density_analysis import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         with pytest.raises(SystemExit):
             GridAnalysis(ag, gridsize=1.0, use_atomtypes=True, atomtypes_definitions=None)

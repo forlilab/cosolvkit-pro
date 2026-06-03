@@ -368,7 +368,7 @@ class HotspotDashboard:
 
         Reuses :func:`~cosolvkit.hotspot_visualization.plot_hotspot_clustering_3d`.
         """
-        from cosolvkit.hotspot_visualization import plot_hotspot_clustering_3d
+        from cosolvkit.analysis.hotspot_visualization import plot_hotspot_clustering_3d
 
         label_dx = os.path.join(self._map_dir, f"hotspot_labels_{cosolvent}.dx")
         agfe_dx = os.path.join(self._map_dir, f"map_agfe_{cosolvent}.dx")

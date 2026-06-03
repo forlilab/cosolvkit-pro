@@ -5,7 +5,7 @@ import sys
 import argparse
 from collections import defaultdict
 from cosolvkit.config import Config
-from cosolvkit.utils import setup_logging, fix_pdb, add_variants, MD_FORMAT_EXTENSIONS
+from cosolvkit.analysis.utils import setup_logging, fix_pdb, add_variants, MD_FORMAT_EXTENSIONS
 from cosolvkit.cosolvent_system import CosolventSystem, CosolventMembraneSystem
 from openmm.app import *
 from openmm import *

@@ -2,7 +2,7 @@ import os
 import sys
 import argparse
 from cosolvkit.simulation import run_simulation
-from cosolvkit.utils import setup_logging
+from cosolvkit.analysis.utils import setup_logging
 
 #TODO When Autopath is published, this class should be a wrapper around Autopath classses API.
 # It should coordinate the dispatch of multiple simulation replicas and optionally monitor convergence

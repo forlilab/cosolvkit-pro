@@ -97,7 +97,7 @@ def main():
     args = cmd_lineparser()
 
     try:
-        from cosolvkit.hotspot_dashboard import HotspotDashboard
+        from cosolvkit.analysis.hotspot_dashboard import HotspotDashboard
     except ImportError as exc:
         print(f"Import error: {exc}")
         print(

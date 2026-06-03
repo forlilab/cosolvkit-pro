@@ -10,7 +10,7 @@ import os
 import numpy as np
 import pytest
 
-from cosolvkit.consensus_detection import CrossProbeConsensusDetector
+from cosolvkit.analysis.consensus_detection import CrossProbeConsensusDetector
 
 
 # ---------------------------------------------------------------------------

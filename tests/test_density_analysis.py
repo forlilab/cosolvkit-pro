@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from gridData import Grid
 
-from cosolvkit.density_analysis import (
+from cosolvkit.analysis.density_analysis import (
     BOLTZMANN_CONSTANT_KB,
     _grid_free_energy,
     _smooth_grid_free_energy,

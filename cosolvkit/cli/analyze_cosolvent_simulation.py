@@ -1,7 +1,7 @@
 import sys
 import os
 import argparse
-from cosolvkit.utils import setup_logging
+from cosolvkit.analysis.utils import setup_logging
 
 
 def cmd_lineparser():
@@ -75,8 +75,8 @@ Examples:
 
 
 def _run_from_yaml(config_path: str, logger):
-    from cosolvkit.analysis_config import AnalysisConfig
-    from cosolvkit.multi_report import MultiReport
+    from cosolvkit.analysis.analysis_config import AnalysisConfig
+    from cosolvkit.analysis.multi_report import MultiReport
 
     cfg = AnalysisConfig.from_yaml(config_path)
     runner = MultiReport(cfg)
@@ -138,7 +138,7 @@ def main():
 
     # --generate-config: write template and exit
     if args.generate_config is not None:
-        from cosolvkit.analysis_config import AnalysisConfig
+        from cosolvkit.analysis.analysis_config import AnalysisConfig
         AnalysisConfig.generate_template(args.generate_config)
         print(f"Template written to: {args.generate_config}")
         sys.exit(0)

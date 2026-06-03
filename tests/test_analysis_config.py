@@ -4,7 +4,7 @@ import os
 import pytest
 import yaml
 
-from cosolvkit.analysis_config import (
+from cosolvkit.analysis.analysis_config import (
     AnalysisConfig,
     ClusteringConfig,
     DensityMapsConfig,

@@ -7,7 +7,7 @@ blobs (125 voxels each) and one tiny 2×2×2 blob (8 voxels).
 import numpy as np
 import pytest
 
-from cosolvkit.density_clustering import (
+from cosolvkit.analysis.density_clustering import (
     ConnectedComponentsClustering,
     DBSCANClustering,
     SkimageWatershedClustering,
