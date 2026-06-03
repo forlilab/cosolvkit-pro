@@ -69,7 +69,7 @@ class HotspotsConfig:
     add_to_pymol:       bool                 = True
     gridsize:           float                = 0.5
     top_n_plot:         int                  = 10
-    top_n_survival:     int                  = 0
+    compute_survival_probability: bool       = False
     survival_kwargs:    Optional[Dict]       = field(default_factory=dict)
     clustering:         ClusteringConfig     = field(default_factory=ClusteringConfig)
 

@@ -211,7 +211,7 @@ class MultiReport:
             top_percentile=hs.top_percentile,
             score_weights=hs.score_weights,
             gridsize=hs.gridsize,
-            top_n_survival=0,
+            compute_survival_probability=False,
             use_skimage_cleanup=cl.use_skimage_cleanup,
             cleanup_min_size=cl.cleanup_min_size,
             cleanup_hole_size=cl.cleanup_hole_size,
@@ -235,7 +235,7 @@ class MultiReport:
         # Run survival probability per-cosolvent using the simulation universe
         # that actually contains each probe.  Outputs (CSV + PNG) are written
         # to the probe's own simulation subfolder, not the merged directory.
-        if hs.top_n_survival > 0:
+        if hs.compute_survival_probability:
             cosolvent_to_universe = _build_cosolvent_universe_map(
                 self.config.simulations, self._reports
             )
@@ -245,8 +245,7 @@ class MultiReport:
             survival_kwargs = hs.survival_kwargs or {}
             ran_any = False
             for cosolvent, sites in results.items():
-                top_sites = sites[:hs.top_n_survival]
-                if not top_sites:
+                if not sites:
                     continue
                 if cosolvent not in cosolvent_to_universe:
                     self.logger.warning(
@@ -255,16 +254,16 @@ class MultiReport:
                     )
                     continue
                 candidate_zones = [
-                    [float(v) for v in site.centroid] for site in top_sites
+                    [float(v) for v in site.centroid] for site in sites
                 ]
                 sim_out = cosolvent_to_out_path[cosolvent]
                 self.logger.info(
-                    f"Running survival probability for top {len(top_sites)} "
-                    f"hotspot(s) of '{cosolvent}' → {sim_out}"
+                    f"Running survival probability for {len(sites)} "
+                    f"site(s) of '{cosolvent}' → {sim_out}"
                 )
                 detector.universe = cosolvent_to_universe[cosolvent]
                 detector.out_path = sim_out
-                detector.survival_probability(
+                detector.property_calculator.run_survival_probability(
                     cosolvent_names=[cosolvent],
                     candidate_zones=candidate_zones,
                     **survival_kwargs,
@@ -272,12 +271,10 @@ class MultiReport:
                 ran_any = True
 
             if ran_any:
-                # fit_survival_probability reads the CSV files written above;
-                # swap out_path per-cosolvent so it finds the right files.
                 for cosolvent in results:
                     if cosolvent in cosolvent_to_out_path:
                         detector.out_path = cosolvent_to_out_path[cosolvent]
-                        detector.fit_survival_probability(
+                        detector.property_calculator.fit_survival_probability(
                             {cosolvent: results[cosolvent]}
                         )
 

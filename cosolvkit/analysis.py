@@ -529,7 +529,6 @@ class Report:
             agfe_cutoff=agfe_cutoff,
             min_cluster_voxels=min_cluster_voxels,
             top_percentile=top_percentile,
-            top_n_survival=5,
             score_weights=score_weights,
             gridsize=gridsize,
         )

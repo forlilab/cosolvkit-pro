@@ -218,12 +218,12 @@ class HotspotDetector:
         :class:`ConnectedComponentsClustering` with 6-connectivity.
         Built-in strategies: :class:`ConnectedComponentsClustering`,
         :class:`WatershedClustering`, :class:`DBSCANClustering`.
-    top_n_survival : int
-        Number of top-ranked hotspots (per cosolvent) for which survival
-        probability analysis is run automatically by :meth:`detect_all`.
-        ``0`` (default) disables automatic survival probability analysis.
+    compute_survival_probability : bool
+        If ``True``, :meth:`detect_all` runs survival probability analysis for
+        all detected sites (default ``False``).
     survival_kwargs : dict, optional
-        Extra keyword arguments forwarded to :meth:`survival_probability`
+        Extra keyword arguments forwarded to
+        :meth:`PocketPropertyCalculator.run_survival_probability`
         (e.g. ``radius``, ``max_tau``, ``intermittency``).
     """
 
@@ -239,7 +239,7 @@ class HotspotDetector:
                  top_percentile=10.0,
                  score_weights=None, gridsize=0.5,
                  clustering_strategy=None,
-                 top_n_survival=10, survival_kwargs=None,
+                 compute_survival_probability=False, survival_kwargs=None,
                  use_skimage_cleanup=False,
                  cleanup_min_size=1,
                  cleanup_hole_size=2,
@@ -264,7 +264,7 @@ class HotspotDetector:
             else SkimageWatershedClustering(min_cluster_voxels=min_cluster_voxels,
                                             h=0.5)
         )
-        self.top_n_survival = top_n_survival
+        self.compute_survival_probability = compute_survival_probability
         self.survival_kwargs = survival_kwargs or {}
         self.use_skimage_cleanup = use_skimage_cleanup
         self.cleanup_min_size = cleanup_min_size
@@ -627,10 +627,10 @@ class HotspotDetector:
     def detect_all(self):
         """Run hotspot detection for all cosolvents.
 
-        If ``top_n_survival > 0``, automatically runs :meth:`survival_probability`
-        for the top ``top_n_survival`` hotspots (by composite score) per cosolvent
-        and then :meth:`fit_survival_probability` to attach kinetic metrics to each
-        :class:`BindingSite`.
+        If ``compute_survival_probability=True``, runs survival probability
+        analysis for all detected sites and attaches kinetic metrics to each
+        :class:`BindingSite`.  If ``sp_*`` keys appear in ``score_weights``,
+        the composite score is recomputed after SP metrics are attached.
 
         Returns
         -------
@@ -638,29 +638,25 @@ class HotspotDetector:
             ``{cosolvent: [site, ...]}`` sorted by composite score per cosolvent.
         """
         results = {cosolvent: self.detect(cosolvent) for cosolvent in self.cosolvent_names}
-                
-        if self.top_n_survival > 0:
-            candidate_zones = {}
+
+        if self.compute_survival_probability:
             for cosolvent, sites in results.items():
-                top_sites = sites[:self.top_n_survival]
-                if not top_sites:
+                if not sites:
                     continue
-                candidate_zones[cosolvent] = [
-                    list(float(v) for v in site.centroid) for site in top_sites
+                candidate_zones = [
+                    [float(v) for v in site.centroid] for site in sites
                 ]
                 self.logger.info(
-                    f"Running survival probability for top {len(top_sites)} "
-                    f"hotspot(s) of '{cosolvent}'."
+                    f"Running survival probability for {len(sites)} "
+                    f"site(s) of '{cosolvent}'."
                 )
                 self.property_calculator.run_survival_probability(
                     cosolvent_names=[cosolvent],
-                    candidate_zones=candidate_zones[cosolvent],
+                    candidate_zones=candidate_zones,
                     **self.survival_kwargs,
                 )
             self.property_calculator.fit_survival_probability(results)
 
-            # After SP metrics are attached, recompute composite if any
-            # sp_* keys appear in score_weights.
             if any(k.startswith("sp_") for k in self.score_weights):
                 for cosolvent_sites in results.values():
                     if cosolvent_sites:
@@ -788,38 +784,6 @@ class HotspotDetector:
             voxel_to_angstrom_fn=self._voxel_to_angstrom,
             reference_pdb=reference_pdb,
         )
-
-    # ------------------------------------------------------------------
-    # Survival probability — thin wrappers delegating to property_calculator
-    # ------------------------------------------------------------------
-
-    def survival_probability(self, cosolvent_names=None, candidate_zones=None,
-                             radius=6.0, max_tau=100, intermittency=2):
-        """Delegate to :meth:`PocketPropertyCalculator.run_survival_probability`.
-
-        See that method for full documentation.  ``cosolvent_names=None``
-        defaults to all cosolvents registered on this detector.
-        """
-        if cosolvent_names is None:
-            self.logger.warning(
-                "No cosolvent specified for survival probability analysis. "
-                "Using all cosolvents..."
-            )
-            cosolvent_names = self.cosolvent_names
-        self.property_calculator.run_survival_probability(
-            cosolvent_names=cosolvent_names,
-            candidate_zones=candidate_zones,
-            radius=radius,
-            max_tau=max_tau,
-            intermittency=intermittency,
-        )
-
-    def fit_survival_probability(self, results, zone_to_site_rank=None):
-        """Delegate to :meth:`PocketPropertyCalculator.fit_survival_probability`.
-
-        See that method for full documentation.
-        """
-        self.property_calculator.fit_survival_probability(results, zone_to_site_rank)
 
     def add_hotspots_to_pymol_session(self, results, pse_path, top_n=10):
         """See :func:`hotspot_visualization.add_hotspots_to_pymol_session`."""
