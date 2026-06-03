@@ -19,7 +19,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from openff.toolkit import Molecule, Topology
 from openmmforcefields.generators.template_generators import SmallMoleculeTemplateGenerator
-from cosolvkit.utils import fix_pdb, MutuallyExclusiveParametersError, MD_FORMAT_EXTENSIONS
+from cosolvkit.analysis.utils import fix_pdb, MutuallyExclusiveParametersError, MD_FORMAT_EXTENSIONS
 from cosolvkit.parametrize import load_molecule_from_file, get_template_generator
 from openff.units.openmm import to_openmm
 
