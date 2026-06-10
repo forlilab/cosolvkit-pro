@@ -1,24 +1,23 @@
 import os
-import json
+import yaml
 from inspect import signature
+from cosolvkit.parametrize import parse_small_molecule_ff
 
 class Config(object):
-    """This class handles the config.json options and the whole Cosolvent setup.
+    """This class handles the config.yaml options and the whole Cosolvent setup.
 
     :param object: inherits from the base class
     :type object: object
     """
-    def __init__(self, 
+    def __init__(self,
                  cosolvents=None,
-                 forcefields=None,
-                 md_format=None,
+                 md_engine=None,
+                 small_molecule_ff="espaloma-0.3.2",
                  protein_path=None,
                  clean_protein=True,
                  keep_heterogens=False,
                  variants=dict(),
-                 repulsive_residues=list(),
-                 repulsive_epsilon=None,
-                 repulsive_sigma=None,
+                 repulsive_forces=dict(),
                  solvent_smiles=None,
                  solvent_copies=None,
                  positive_ion="Na+",
@@ -31,20 +30,16 @@ class Config(object):
                  lipid_patch_path=None,
                  memb_cosolv_placement='both',
                  waters_to_keep=list(),
-                 output_dir=None,
-                 run_cosolvent_system=True,
-                 run_md=False):
+                 output_dir=None):
         
         self.cosolvents = cosolvents
-        self.forcefields = forcefields
-        self.md_format = md_format.upper()
+        self.md_engine = md_engine
+        self.small_molecule_ff = small_molecule_ff
         self.protein_path = protein_path
         self.clean_protein = clean_protein
         self.keep_heterogens = keep_heterogens
         self.variants = variants
-        self.repulsive_residues = repulsive_residues
-        self.repulsive_epsilon = repulsive_epsilon
-        self.repulsive_sigma = repulsive_sigma
+        self.repulsive_forces = repulsive_forces
         self.solvent_smiles = solvent_smiles
         self.solvent_copies = solvent_copies
         self.positive_ion = positive_ion
@@ -58,8 +53,6 @@ class Config(object):
         self.memb_cosolv_placement = memb_cosolv_placement
         self.waters_to_keep = waters_to_keep
         self.output_dir = output_dir
-        self.run_cosovlent_system = run_cosolvent_system
-        self.run_md = run_md
         self.check_validity()
     
     @classmethod
@@ -78,9 +71,9 @@ class Config(object):
         
     @classmethod
     def from_config(cls, config):
-        """Sets up the parameters to run cosolvent from the config.json file supplied.
+        """Sets up the parameters to run cosolvent from the config.yaml file supplied.
 
-        :param config: loads the config.json file and populates the class attributes
+        :param config: loads the config.yaml file and populates the class attributes
         :type config: str
         :raises ValueError: raises an error if some attributes are not recognized
         :return: instance of the Config class
@@ -88,7 +81,7 @@ class Config(object):
         """
         expected_keys = cls.get_defaults_dict().keys()
         with open(config) as f:
-            config = json.load(f)
+            config = yaml.safe_load(f)
         bad_keys = [k for k in config if k not in expected_keys]
         if len(bad_keys) > 0:
             err_msg = "unexpected keys in Config.from_config():" + os.linesep
@@ -99,7 +92,6 @@ class Config(object):
         return p
     
     def check_validity(self):
-        if self.run_md:
-            assert self.md_format == "OPENMM", f"{self.md_format} is not supported with the parameter run_md set to {self.run_md}. Only OPENMM is available with this option."
-        return
+        if self.small_molecule_ff is not None:
+            parse_small_molecule_ff(self.small_molecule_ff)
     

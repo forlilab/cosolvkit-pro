@@ -5,9 +5,13 @@ __pycache__/
 
 # test data
 test/
+results/
+cosolvent_system/
+scratch/
 
 # C extensions
 *.so
+*.md
 
 # Distribution / packaging
 .Python

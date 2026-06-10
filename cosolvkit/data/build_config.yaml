@@ -1,0 +1,80 @@
+# CosolvKit system building configuration
+# Run with: create_cosolvent_system -c config.yaml
+#
+# All file paths are resolved relative to the working directory
+# from which the command is invoked.
+
+# Output directory for topology and system files
+output_dir: "results"
+
+# -----------------------------------------------------------------
+# MD engine and force fields
+# Supported engines: openmm, amber, gromacs, charmm
+# -----------------------------------------------------------------
+md_engine:
+  openmm:
+    - amber14-all.xml
+    - amber14/tip3pfb.xml
+
+# Force field for small molecules: espaloma-<version> | gaff-<version> | openff-<version>
+# e.g. "espaloma-0.3.2", "gaff-2.11", "openff-2.3.0"
+small_molecule_ff: "espaloma-0.3.2"
+
+# -----------------------------------------------------------------
+# Receptor / protein
+# Set protein_path to null and box_size to a float when building
+# a ligand-only box (no protein).
+# -----------------------------------------------------------------
+protein_path: "example/protein.pdb"
+clean_protein: true          # run PDBFixer to fix missing atoms/residues
+keep_heterogens: false        # keep non-standard residues during cleaning
+
+# Protonation state variants: {"chain:resid": "variant_name"}
+# e.g. {"A:10": "ASH"}  — leave empty ({}) for no variants
+variants: {}
+
+# -----------------------------------------------------------------
+# Solvation
+# -----------------------------------------------------------------
+solvent_smiles: "H2O"
+solvent_copies: null          # null = fill box to ~60% volume; integer = exact count
+positive_ion: "Na+"
+negative_ion: "Cl-"
+padding: 10.0                 # Angstrom padding around the protein
+box_size: null                # Angstrom box edge when no protein_path is given
+
+# Ligands to include (name -> path to SDF/MOL2 file)
+ligands: {}
+
+# -----------------------------------------------------------------
+# Cosolvents
+# Each entry must have: name, smiles, resname
+# Specify either concentration (mol/L) or copies (integer count).
+# -----------------------------------------------------------------
+cosolvents:
+  - name: "benzene"
+    smiles: "c1ccccc1"
+    resname: "BEN"
+    concentration: 0.2        # mol/L; replace with 'copies: N' for explicit count
+
+# -----------------------------------------------------------------
+# Repulsive forces (optional, OpenMM only)
+# Adds a soft LJ repulsion between cosolvent centroids to prevent
+# aggregation at high concentrations.
+# epsilon in kcal/mol, sigma in Angstrom.
+# -----------------------------------------------------------------
+repulsive_forces:
+  BEN_BEN:
+    residueA: "BEN"
+    residueB: "BEN"
+    epsilon: 0.01
+    sigma: 4.0
+
+# -----------------------------------------------------------------
+# Membrane (optional)
+# -----------------------------------------------------------------
+membrane: false
+lipid_type: "POPC"            # POPC | POPE | DLPC | DLPE | DMPC | DOPC | DPPC
+lipid_patch_path: null        # path to pre-equilibrated lipid patch (overrides lipid_type)
+memb_cosolv_placement: "both" # inside | outside | both
+waters_to_keep: []            # list of water residue indices to preserve

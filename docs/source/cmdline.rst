@@ -9,12 +9,12 @@ If this is your first time learning about CosolvKit, take a look at the page :re
 CosolvKit inputs
 **************************
 
-The script `create_cosolvent_system.py` provide all the necessary tools to build a cosolvent system and optionally run an MD simulation with standard setup.
-The main entry point of the script is the file `config.json` where all the necessary flags and command line options are specified.
-A template for the `config.json` can be found in `cosolvkit/data/config.json`. Cosolvents and forcefields templates can be found in the folder `cosolvkit/data/` as well. 
+The script `create_cosolvent_system.py` provides all the necessary tools to build a cosolvent system and optionally run an MD simulation with standard setup.
+The main entry point of the script is the file `config.yaml` where all the necessary flags and command line options are specified.
+A template for the `config.yaml` can be found in `cosolvkit/data/config.yaml`.
 
 
-.. list-table:: CosolvKit config.json structure
+.. list-table:: CosolvKit config.yaml structure
     :widths: 25 15 70 25 15 15 15 15
     :header-rows: 1
 
@@ -28,49 +28,41 @@ A template for the `config.json` can be found in `cosolvkit/data/config.json`. C
       - CHARMM
 
     * - cosolvents
+      - list
+      - List of cosolvent molecules. Each entry requires ``name``, ``smiles``, ``resname``, and either ``concentration`` (mol/L) or ``copies`` (integer count).
+      - no default
+      -
+      -
+      -
+      -
+    * - md_engine
+      - dict
+      - Dict mapping engine name to list of forcefield XML files. Supported engines: [openmm, amber, gromacs, charmm]
+      - no default
+      -
+      -
+      -
+      -
+    * - small_molecule_ff
       - string
-      - Path to the json file containing the cosolvents to add to the system.
-      - no default
+      - Force field for small molecules. Options: espaloma, gaff, smirnoff
+      - espaloma
       -
       -
       -
-      - 
-    * - forcefields
-      - string
-      - Path to the json file containing the forcefields to use.
-      - no default
       -
-      -
-      -
-      - 
-    * - md_format
-      - string
-      - Format to use for the MD simulations and topology files. Supported formats: [OPENMM, AMBER, GROMACS, CHARMM]
-      - no default
-      -
-      -
-      -
-      - 
-    * - receptor
-      - boolean
-      - Boolean describing if the receptor is present or not.
-      - no default
-      -
-      -
-      -
-      - 
     * - protein_path
       - string
-      - If receptor is `true` this should be the path to the protein structure.
-      - no default
-      - 
+      - Path to the protein structure (PDB or PDBx). Set to null when using box_size.
+      - null
+      -
       -
       -
       -
     * - clean_protein
       - boolean
-      - Flag indicating if cleaning the protein with `PDBFixer`
-      - TRUE
+      - Flag indicating if cleaning the protein with ``PDBFixer``
+      - true
       -
       -
       -
@@ -78,54 +70,30 @@ A template for the `config.json` can be found in `cosolvkit/data/config.json`. C
     * - keep_heterogens
       - boolean
       - Flag indicating if keeping the heterogen atoms while cleaning the protein. Waters will be always kept.
-      - FALSE
-      - 
+      - false
+      -
       -
       -
       -
     * - variants
       - dictionary
-      - Dictionary of residues for which a variant is requested (different protonation state) in the form {"chain_id:res_id":"protonation_state"}, `None` for the rest of the residues.
-      - empty dictionary
+      - Dictionary of residues for which a variant is requested (different protonation state) in the form ``{"chain_id:res_id": "protonation_state"}``.
+      - {}
       -
       -
       -
       -
-    * - add_repulsive
-      - boolean
-      - Flag indicating if adding repulsive forces between certain residues or not.
-      - FALSE
-      - ✔️
-      - ✖️
-      - ✖️
-      - ✖️
-    * - repulsive_resiudes
-      - list
-      - List of residues for which applying the repulsive forces.
-      - empty list
-      - ✔️
-      - ✖️
-      - ✖️
-      - ✖️
-    * - epsilon
-      - float
-      - Depth of the potential well in kcal/mol
-      - 0.01 kcal/mol
-      - ✔️
-      - ✖️
-      - ✖️
-      - ✖️
-    * - sigma
-      - float
-      - inter-particle distance in Angstrom
-      - 10.0 Angstrom
+    * - repulsive_forces
+      - dict
+      - Dict of pairwise repulsive forces: ``{"name": {"residueA": "BEN", "residueB": "PRP", "epsilon": 0.01, "sigma": 4.0}}``. epsilon in kcal/mol, sigma in Angstrom.
+      - {}
       - ✔️
       - ✖️
       - ✖️
       - ✖️
     * - solvent_smiles
       - string
-      - Smiles string of the solvent to use.
+      - SMILES string of the solvent to use.
       - H2O
       -
       -
@@ -134,87 +102,102 @@ A template for the `config.json` can be found in `cosolvkit/data/config.json`. C
     * - solvent_copies
       - integer
       - If specified, the box won't be filled up with solvent, but will have the exact number of solvent molecules specified.
-      - no default
+      - null
+      -
+      -
+      -
+      -
+    * - positive_ion
+      - string
+      - Ion type for positive charge neutralisation.
+      - Na+
+      -
+      -
+      -
+      -
+    * - negative_ion
+      - string
+      - Ion type for negative charge neutralisation.
+      - Cl-
+      -
+      -
+      -
+      -
+    * - padding
+      - float
+      - Padding around the protein in Angstrom.
+      - 10.0
+      -
+      -
+      -
+      -
+    * - box_size
+      - float
+      - Box edge length in Angstrom. Required when no protein_path is given.
+      - null
+      -
+      -
+      -
+      -
+    * - ligands
+      - dict
+      - Dict mapping ligand name to path of SDF/MOL2 file.
+      - {}
       -
       -
       -
       -
     * - membrane
       - boolean
-      - Flag indicating if the system has membranes or not.
-      - FALSE
+      - Flag indicating if the system has a membrane or not.
+      - false
       -
       -
       -
       -
     * - lipid_type
       - string
-      - If membrane is TRUE specify the lipid to use. Supported lipids: ["POPC", "POPE", "DLPC", "DLPE", "DMPC", "DOPC", "DPPC"]
-      - "POPC"
+      - If membrane is true specify the lipid to use. Supported lipids: [POPC, POPE, DLPC, DLPE, DMPC, DOPC, DPPC]
+      - POPC
       -
       -
       -
       -
     * - lipid_patch_path
       - string
-      - If the lipid required is not in the available, it is possible to pass a pre-equilibrated patch of the lipid of interest.
-      - no default
+      - Path to a pre-equilibrated lipid patch (mutually exclusive with lipid_type).
+      - null
       -
       -
       -
       -
-    * - cosolvent_placement
-      - integer
-      - Integer deciding on which side of the membrane to place the cosolvents. Available options: [0 -> no preference, 1 -> outside, -1 -> inside]
-      - 0
+    * - memb_cosolv_placement
+      - string
+      - Which side of the membrane to place the cosolvents. Options: both, outside, inside
+      - both
       -
       -
       -
       -
     * - waters_to_keep
       - list
-      - List of indices of waters of interest in a membrane system.
-      - no default
+      - List of residue indices of waters to preserve in membrane systems.
+      - []
       -
       -
       -
       -
-    * - radius
-      - float
-      - If no receptor, the radius is necessary to set the size of the simulation box.
-      - no default
-      -
-      -
-      -
-      -
-    * - output
+    * - output_dir
       - string
-      - Path to where save the results.
+      - Path to the output directory for results.
       - no default
       -
       -
       -
       -
-    * - run_cosolvent_system
-      - boolean
-      - Flag indicating if running creating the system or not.
-      - TRUE
-      -
-      -
-      -
-      -
-    * - run_md
-      - boolean
-      - Flag indicating if running the md simulation after creating the system or not.
-      - FALSE
-      - ✔️
-      - ✖️
-      - ✖️
-      - ✖️
 
 
-CosolvKit can be run with and without protein (receptor), variants for the protonation states can be specified in the form of a `python` dictionary and custom repulsive forces can be specified between specific molecules in the system.
-The flag `run_cosolvent_system` decides if a new cosolvent system will be created, while the `run_md` flag takes care of running the MD simulation using the standard protocol provided by CosolvKit and generate trajectories (please note that this task is resources and time intensive depending on the hardware).
+CosolvKit can be run with and without a protein receptor. Variants for protonation states can be specified as a YAML dictionary, and custom repulsive forces can be defined between specific cosolvent pairs (OpenMM only).
 
 Post-processing pipeline
 ************************

@@ -1,0 +1,128 @@
+# cosolvkit analysis configuration
+# Generate a fresh copy with: analyze_cosolvent_simulation --generate-config analysis.yaml
+#
+# All file paths are resolved relative to this config file's directory,
+# so the config is portable across machines and working directories.
+
+# Output directory for all results (per-sim subdirs + merged maps)
+out_path: "results"
+
+# -----------------------------------------------------------------
+# simulations: list of MD trajectories to analyse jointly.
+# Each entry may use a different cosolvent probe (different topology).
+# Results are merged at the density-map level before hotspot detection.
+# -----------------------------------------------------------------
+simulations:
+  - trajectory: "sim1/traj.xtc"          # MDAnalysis-readable trajectory
+    topology:   "sim1/system.prmtop"      # topology (prmtop, psf, tpr, gro, ...)
+    cosolvents: ["BEN", "ACE"]            # residue names of cosolvents in this topology
+    statistics: "sim1/statistics.csv"     # optional: MD log for equilibration plots
+    label:      "BEN_ACE_probe"           # optional: names the per-sim output subdir
+                                          # defaults to sim_0, sim_1, ...
+
+  # Add more simulations to enable multi-probe analysis:
+  # - trajectory: "sim2/traj.xtc"
+  #   topology:   "sim2/system.prmtop"
+  #   cosolvents: ["IPA"]
+  #   statistics: null
+  #   label:      "IPA_probe"
+
+# Optional: explicit PDB to use as the protein reference in hotspot
+# visualisation. Defaults to the averaged structure from simulations[0].
+reference_pdb: null
+
+# -----------------------------------------------------------------
+# report: per-simulation structural analysis
+# -----------------------------------------------------------------
+report:
+  equilibration:   false          # plot potential energy / temperature / volume
+                                  # requires 'statistics' file per simulation
+  rmsf:            true           # compute RMSF and write averaged_trajectory.pdb
+  rdf:             false          # compute radial distribution functions (slow)
+  avg_selection:   "protein"      # MDAnalysis selection for averaging
+  align_selection: "protein and name CA"  # selection for RMSD alignment
+
+# -----------------------------------------------------------------
+# density_maps: controls AGFE grid generation
+# -----------------------------------------------------------------
+density_maps:
+  use_atomtypes:  true            # split density by pharmacophoric atom type
+                                  # (HBD, HBA, Car, Cal, Hal) using SMARTS patterns
+  atomtypes_file: null            # path to custom atomtypes JSON; null → built-in default
+  gridsize:       0.5             # voxel edge length in Angstroms
+  temperature:    300.0           # simulation temperature in Kelvin
+
+# -----------------------------------------------------------------
+# merge: how per-simulation AGFE maps are combined
+# Only relevant when the same cosolvent appears in multiple simulations.
+# -----------------------------------------------------------------
+merge:
+  method:      "mean"             # aggregation: mean | min | max | sum | median
+  resample_to: "smallest"            # reference grid for resampling when box sizes differ
+                                  # first     → use simulations[0]'s grid extents (fastest)
+                                  # largest   → use the grid covering the most voxels
+                                  # smallest  → use the most conservative (smallest) grid
+
+# -----------------------------------------------------------------
+# hotspots: HotspotDetector settings
+# Must be run after density_maps.
+# -----------------------------------------------------------------
+hotspots:
+  agfe_cutoff:        -2.0        # kcal/mol; voxels below this are "favorable"
+  min_cluster_voxels: 20          # discard clusters smaller than this
+  top_percentile:     10.0        # top N% of voxels used for favorability score
+  score_weights:      null        # null → equal weights {favorability, diversity, volume}
+                                  # custom example: {favorability: 0.5, diversity: 0.3, volume: 0.2}
+  export_label_map:   true        # write hotspot_labels_{cosolvent}.dx
+  add_to_pymol:       true        # embed hotspot spheres in the PyMol session
+  gridsize:           0.5         # must match density_maps.gridsize
+  top_n_plot:         10          # max hotspots shown in the interactive 3D plot
+  top_n_survival:     0           # top-N sites per cosolvent for survival probability
+                                  # 0 = disable; each cosolvent is analysed using the
+                                  # universe of its own simulation trajectory
+  survival_kwargs:               # extra kwargs forwarded to survival_probability()
+    radius:        6.0            # sphere radius around hotspot centroid (Angstroms)
+    max_tau:       100            # maximum lag time
+    intermittency: 2              # allowed gaps in occupancy (frames)
+  clustering:
+    use_skimage_cleanup: false    # apply scikit-image morphology cleanup before clustering
+    cleanup_min_size:    1        # remove objects smaller than this (voxels)
+    cleanup_hole_size:   2        # fill holes smaller than this (voxels)
+
+# -----------------------------------------------------------------
+# consensus: cross-probe consensus binding site detection
+# Run after hotspot detection to group sites from different probes
+# that share favorable voxels into consensus communities.
+# Each community gets a pharmacophore profile showing which atom
+# types from which probes are favorable and at what AGFE level.
+# -----------------------------------------------------------------
+consensus:
+  enabled:           false        # set to true to run consensus detection
+  jaccard_threshold: 0.05         # minimum voxel-mask Jaccard overlap to link two sites
+                                  # lower → merge sites that barely touch
+                                  # higher → require strong spatial agreement
+  community_method:  "connected_components"
+                                  # connected_components: fast, no extra deps (recommended)
+                                  # greedy_modularity: finer splitting of large communities
+                                  #   (requires networkx >= 2.6, already available)
+  score_weights:     null         # null → default {coverage: 0.4, favorability: 0.4, volume: 0.2}
+                                  # coverage dominates: a pocket seen by many probes ranks higher
+                                  # custom example: {coverage: 0.5, favorability: 0.3, volume: 0.2}
+
+# -----------------------------------------------------------------
+# checkpoint: save/load hotspot results to skip re-detection
+# Hotspot detection (clustering + optional survival probability) is
+# the slowest step.  Enabling checkpoints lets you re-run consensus
+# with different parameters without redoing earlier steps.
+# -----------------------------------------------------------------
+checkpoint:
+  save_hotspots: true             # write hotspot_checkpoints/{cosolvent}.npz after detection
+  load_hotspots: false            # skip hotspot detection and reload from checkpoint instead
+                                  # set to true when you only want to re-run consensus
+
+# -----------------------------------------------------------------
+# pymol: PyMol session generation
+# -----------------------------------------------------------------
+pymol:
+  selection_string: null          # MDAnalysis/PyMol selection to highlight in session
+  reference_pdb:    null          # additional PDB to load (overrides top-level reference_pdb)

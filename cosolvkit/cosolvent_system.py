@@ -17,11 +17,10 @@ import openmm.unit as openmmunit
 import rdkit
 from rdkit import Chem
 from rdkit.Chem import AllChem
-from rdkit.Chem import SDMolSupplier
 from openff.toolkit import Molecule, Topology
-from openmmforcefields.generators import EspalomaTemplateGenerator, GAFFTemplateGenerator, SMIRNOFFTemplateGenerator
 from openmmforcefields.generators.template_generators import SmallMoleculeTemplateGenerator
-from cosolvkit.utils import fix_pdb, MutuallyExclusiveParametersError, MD_FORMAT_EXTENSIONS
+from cosolvkit.analysis.utils import fix_pdb, MutuallyExclusiveParametersError, MD_FORMAT_EXTENSIONS
+from cosolvkit.parametrize import load_molecule_from_file, get_template_generator
 from openff.units.openmm import to_openmm
 
 
@@ -82,7 +81,7 @@ class CosolventMolecule(object):
             params.useBasicKnowledge = True
             # Not a mistake, it's 2 not 3
             # https://www.rdkit.org/docs/RDKit_Book.html#parameters-controlling-conformer-generation
-            params.ETVersion = 2
+            params.ETversion = 2
 
             # Setup rdkit molecule
             mol = Chem.MolFromSmiles(smiles)
@@ -160,23 +159,24 @@ class CosolventMolecule(object):
         return conect
 
 class CosolventSystem(object):
-    def __init__(self, 
+    def __init__(self,
                  cosolvents: dict,
                  forcefields: dict,
                  ligands: dict,
-                 simulation_format: str, 
-                 modeller: app.Modeller,  
-                 padding: openmmunit.Quantity, 
-                 box_size: openmmunit.Quantity = None):
+                 simulation_format: str,
+                 modeller: app.Modeller,
+                 padding: openmmunit.Quantity,
+                 box_size: openmmunit.Quantity = None,
+                 small_molecule_ff: str = "espaloma-0.3.2"):
         """Create cosolvent system.
 
         :param cosolvents: dictionary of cosolvent molecules
         :type cosolvents: dict
-        :param forcefields: dictionary of forcefields to use
+        :param forcefields: dict mapping engine name to list of XML forcefield files, e.g. {"openmm": ["amber14-all.xml", "amber14/tip3pfb.xml"]}
         :type forcefields: dict
         :param ligands: dictionary of ligands to use
         :type ligands: dict
-        :param simulation_format: MD format that want to be used for the simulation. Supported formats: Amber, Gromacs, CHARMM, openMM 
+        :param simulation_format: MD engine to use. Supported: amber, gromacs, charmm, openmm
         :type simulation_format: str
         :param modeller: openmm modeller created from topology and positions.
         :type modeller: openmm.app.Modeller
@@ -184,6 +184,8 @@ class CosolventSystem(object):
         :type padding: openmm.unit.Quantity, optional
         :param box_size: Specifies the size to create the box without receptor, defaults to None
         :type box_size: openmm.unit.Quantity, optional
+        :param small_molecule_ff: versioned forcefield for small molecules, e.g. "espaloma-0.3.2", "gaff-2.11", "openff-2.3.0", defaults to "espaloma-0.3.2"
+        :type small_molecule_ff: str, optional
         """
         # Setup logging
         self.logger = logging.getLogger(__name__)
@@ -203,7 +205,7 @@ class CosolventSystem(object):
         self.modeller = None
         self.cosolvents = dict()
         self.box_size = box_size
-        self.small_molecule_forcefield = forcefields["small_molecules"][0]
+        self.small_molecule_forcefield = small_molecule_ff
         padding = padding * openmmunit.angstrom
         
         assert (simulation_format.upper() in self._available_formats), f"Error! The simulation format supplied is not supported! Available simulation engines:\n\t{self._available_formats}"
@@ -234,7 +236,8 @@ class CosolventSystem(object):
         self._periodic_box_vectors = self.modeller.topology.getPeriodicBoxVectors().value_in_unit(openmmunit.nanometer)
         vX, vY, vZ = self.modeller.topology.getUnitCellDimensions().value_in_unit(openmmunit.nanometer)
         self.box_volume = vX * vY * vZ
-        self.logger.info("Parameterizing system components with forcefields")
+        
+        self.logger.info("Assigning forcefield parameters to the system...")
         self.forcefield = self._parametrize_system(forcefields, simulation_format, self.cosolvents)
         return
     
@@ -265,7 +268,7 @@ class CosolventSystem(object):
         :param iteratively_adjust_copies: if True, the number of copies of each cosolvent will iteratively be reduced until a valid starting configuration is found
         :type iteratively_adjust_copies: bool, optional
         """
-        self.logger.info("Checking volumes..")
+        self.logger.debug("Checking volumes..")
         volume_not_occupied_by_cosolvent = self.fitting_checks()
         assert volume_not_occupied_by_cosolvent is not None, "The requested volume for the cosolvents exceeds the available volume! Please try increasing the padding or box_size."
         receptor_positions = self.modeller.positions.value_in_unit(openmmunit.nanometer)
@@ -282,7 +285,7 @@ class CosolventSystem(object):
         if solvent_smiles == "H2O":
             if n_solvent_molecules is None: self.modeller.addSolvent(self.forcefield, neutralize=neutralize, positiveIon=positive_ion, negativeIon=negative_ion)
             else: self.modeller.addSolvent(self.forcefield, numAdded=n_solvent_molecules, neutralize=neutralize, positiveIon=positive_ion, negativeIon=negative_ion)
-            self.logger.info(f"Waters added: {self._get_n_waters()}")
+            self.logger.info(f"Added {self._get_n_waters()} water molecules.")
         elif solvent_smiles is not None:
             c = {"name": "solvent",
                  "smiles": solvent_smiles}
@@ -296,7 +299,8 @@ class CosolventSystem(object):
             d_mol = {solvent_mol: cosolv_xyz.value_in_unit(openmmunit.nanometer)}
             # need to register the custom solvent if not present already
             self.forcefield.registerTemplateGenerator(self._parametrize_cosolvents(d_mol).generator)
-            self.logger.info(f"Placing {solvent_mol.copies}")
+            
+            self.logger.info(f"Placing {solvent_mol.copies} molecules of {solvent_mol.name}")
             if iteratively_adjust_copies: 
                 solv_xyz = self.add_cosolvents_adaptive(d_mol, self.vectors, self.lowerBound, self.upperBound, self.modeller.positions)
             else:
@@ -306,57 +310,72 @@ class CosolventSystem(object):
         self.system = self._create_system(self.forcefield, self.modeller.topology)
         return
     
-    def add_repulsive_forces(self, residues_names: list, epsilon: float=0.01, sigma: float=4.0):
-        """This function adds a LJ repulsive potential between the specified molecules.
+    def add_repulsive_forces(self, repulsive_forces: dict):
+        """Adds pairwise LJ repulsive potentials between specified residue pairs.
 
-        :param residues_names: list of residue names
-        :type residues_names: list
-        :param epsilon: depth of the potential well in kcal/mol, defaults to 0.01
-        :type epsilon: float, optional
-        :param sigma: inter-particle distance in Angstrom, defaults to 4.0
-        :type sigma: float, optional
-        """            
-        epsilon = np.sqrt(epsilon * epsilon) * openmmunit.kilocalories_per_mole
-        sigma = sigma * openmmunit.angstrom
+        Each entry in the dict creates one CustomNonbondedForce acting between
+        atoms of residueA and atoms of residueB, with its own epsilon and sigma.
 
-        forces = { force.__class__.__name__ : force for force in self.system.getForces()}
+        :param repulsive_forces: dict mapping a force name to its parameters, e.g.
+            {"BEN_PRP": {"residueA": "BEN", "residueB": "PRP", "epsilon": 0.01, "sigma": 4.0}}
+            epsilon is in kcal/mol (default 0.01), sigma is in Angstrom (default 4.0).
+        :type repulsive_forces: dict
+        """
+        forces = {force.__class__.__name__: force for force in self.system.getForces()}
         nb_force = forces['NonbondedForce']
         cutoff_distance = nb_force.getCutoffDistance()
-        energy_expression = "4*epsilon * (sigma / r)^12;" #Only the repulsive term of the LJ potential
-        energy_expression += f"epsilon = {epsilon.value_in_unit_system(openmmunit.md_unit_system)};"
-        energy_expression += f"sigma = {sigma.value_in_unit_system(openmmunit.md_unit_system)};"
-        repulsive_force = CustomNonbondedForce(energy_expression)
-        repulsive_force.addPerParticleParameter("sigma")
-        repulsive_force.addPerParticleParameter("epsilon")
-        repulsive_force.setNonbondedMethod(NonbondedForce.CutoffPeriodic)
-        repulsive_force.setCutoffDistance(cutoff_distance)
-        repulsive_force.setUseLongRangeCorrection(False)
-        repulsive_force.setUseSwitchingFunction(True)
-        repulsive_force.setSwitchingDistance(cutoff_distance - 0.1 * openmmunit.nanometer)
 
-        target_indices = defaultdict(list)
+        nb_params = [nb_force.getParticleParameters(i) for i in range(nb_force.getNumParticles())]
+        exceptions = [(nb_force.getExceptionParameters(i)[0], nb_force.getExceptionParameters(i)[1])
+                      for i in range(nb_force.getNumExceptions())]
+
+        residue_atom_indices = defaultdict(list)
         for i, atom in enumerate(self.modeller.getTopology().atoms()):
-            if not atom.residue.name in residues_names:
-                charge, sigma, epsilon = nb_force.getParticleParameters(i)
-            else:
-                target_indices[atom.residue.id].append(i) 
-            repulsive_force.addParticle([sigma, epsilon])
-        
-        for index in range(nb_force.getNumExceptions()):
-            idx, jdx, c, s, eps = nb_force.getExceptionParameters(index)
-            repulsive_force.addExclusion(idx, jdx)
-        
-        for res in target_indices.keys():
-            indexes = set()
-            for x in target_indices.keys():
-                if x!= res:
-                    for y in target_indices[x]:
-                        indexes.add(y)
-            repulsive_force.addInteractionGroup(set(target_indices[res]), indexes)
-        self.system.addForce(repulsive_force)
+            residue_atom_indices[atom.residue.name].append(i)
 
+        for force_name, params in repulsive_forces.items():
+            residue_a = params['residueA']
+            residue_b = params['residueB']
+            
+            atoms_res_a = set(residue_atom_indices[residue_a])
+            atoms_res_b = set(residue_atom_indices[residue_b])
+            if not atoms_res_a or not atoms_res_b:
+                self.logger.warning(f"Residue {residue_a} or {residue_b} not found in the system! Skipping repulsive force {force_name}.")
+                continue
+            
+            epsilon = np.sqrt(params.get('epsilon', None) ** 2) * openmmunit.kilocalories_per_mole
+            sigma = params.get('sigma', None) * openmmunit.angstrom
+            if epsilon is None or sigma is None:
+                self.logger.warning(f"Repulsive force {force_name} is missing epsilon or sigma parameters! Skipping this force.")
+                continue
+            
+            self.logger.info(f"Adding repulsive force {force_name} between residues {residue_a} and {residue_b}")
+
+            energy_expression = "4*epsilon * (sigma / r)^12;" #Only the repulsive term of the LJ potential
+            energy_expression += f"epsilon = {epsilon.value_in_unit_system(openmmunit.md_unit_system)};"
+            energy_expression += f"sigma = {sigma.value_in_unit_system(openmmunit.md_unit_system)};"
+
+            repulsive_force = CustomNonbondedForce(energy_expression)
+            repulsive_force.addPerParticleParameter("sigma")
+            repulsive_force.addPerParticleParameter("epsilon")
+            repulsive_force.setNonbondedMethod(NonbondedForce.CutoffPeriodic)
+            repulsive_force.setCutoffDistance(cutoff_distance)
+            repulsive_force.setUseLongRangeCorrection(False)
+            repulsive_force.setUseSwitchingFunction(True)
+            repulsive_force.setSwitchingDistance(cutoff_distance - 0.1 * openmmunit.nanometer)
+
+            for charge, s, e in nb_params:
+                repulsive_force.addParticle([s, e])
+            for idx, jdx in exceptions:
+                repulsive_force.addExclusion(idx, jdx)
+
+            repulsive_force.addInteractionGroup(
+                atoms_res_a,
+                atoms_res_b
+                )
+            self.system.addForce(repulsive_force)
         return
-
+    
     def save_pdb(self, topology: app.Topology, positions: list, out_path: str):
         """Saves the specified topology and position to the out_path file.
 
@@ -945,12 +964,12 @@ class CosolventSystem(object):
         :rtype: Union[float, None]
         """
 
-        self.logger.info(f"Volume of the box: {self.box_volume:.2f} nm³")
+        self.logger.debug(f"Volume of the box: {self.box_volume:.2f} nm³")
 
         prot_volume = 0
         if self.receptor:
             prot_volume = self.calculate_mol_volume(self.modeller.positions)
-            self.logger.info(f"Volume of the protein: {prot_volume:.2f} nm³")
+            self.logger.debug(f"Volume of the protein: {prot_volume:.2f} nm³")
         empty_volume = self.cubic_nanometers_to_liters(self.box_volume - prot_volume)
         self._copies_from_concentration(empty_volume)
         cosolvs_volume = defaultdict(float)
@@ -958,8 +977,8 @@ class CosolventSystem(object):
             cosolvs_volume[cosolvent] = self.calculate_mol_volume(self.cosolvents[cosolvent])*cosolvent.copies
         volume_occupied_by_cosolvent = round(sum(cosolvs_volume.values()), 3)
         empty_available_volume = round(self.liters_to_cubic_nanometers(empty_volume)/2., 3)
-        self.logger.info(f"Volume requested for cosolvents: {volume_occupied_by_cosolvent:.2f} nm³")
-        self.logger.info(f"Volume available for cosolvents: {empty_available_volume} nm³")
+        self.logger.debug(f"Volume requested for cosolvents: {volume_occupied_by_cosolvent:.2f} nm³")
+        self.logger.debug(f"Volume available for cosolvents: {empty_available_volume} nm³")
         if volume_occupied_by_cosolvent > empty_available_volume:
             return None
         return empty_available_volume
@@ -994,95 +1013,65 @@ class CosolventSystem(object):
     def _parametrize_system(self, forcefields: dict, engine: str, cosolvents: dict) -> app.ForceField:
         """Parametrize the system with the specified forcefields
 
-        :param forcefields: dictionary of the forcefields to use (from forcefields.json)
+        :param forcefields: dict mapping engine name to list of XML forcefield files
         :type forcefields: dict
         :param engine: name of the simulation engine to use
         :type engine: str
-        :param cosolvents: cosolvent moleucles (from cosolvents.json)
+        :param cosolvents: cosolvent molecules (from cosolvents.json)
         :type cosolvents: dict
         :return: forcefield object
         :rtype: openmm.app.ForceField
         """
         engine = engine.upper()
-        forcefield = app.ForceField(*forcefields[engine])
-        sm_ff = forcefields["small_molecules"][0]
-        small_molecule_ff = self._parametrize_cosolvents(cosolvents, small_molecule_ff=sm_ff)
+        ff_key = next(k for k in forcefields if k.upper() == engine)
+        forcefield = app.ForceField(*forcefields[ff_key])
+        small_molecule_ff = self._parametrize_cosolvents(cosolvents)
         forcefield.registerTemplateGenerator(small_molecule_ff.generator)
         return forcefield
 
-    def _parametrize_cosolvents(self, cosolvents: dict, small_molecule_ff="espaloma") -> SmallMoleculeTemplateGenerator:
-        """Parametrizes cosolvent molecules according to the forcefiled specified.
+    def _parametrize_cosolvents(self, cosolvents) -> SmallMoleculeTemplateGenerator:
+        """Parametrizes cosolvent molecules using the configured small-molecule FF.
 
         :param cosolvents: cosolvents specified
         :type cosolvents: dict
-        :param small_molecule_ff: name of the forcefield to use, defaults to "espaloma"
-        :type small_molecule_ff: str, optional
-        :return: forcefield object for the small molecules
+        :return: configured template generator
         :rtype: SmallMoleculeTemplateGenerator
         """
-        molecules = list()
+        molecules = []
         for cosolvent in cosolvents:
             try:
                 molecules.append(Molecule.from_smiles(cosolvent.smiles, name=cosolvent.name))
             except Exception as e:
                 self.logger.info(e)
                 self.logger.info(cosolvent)
-        if small_molecule_ff == "espaloma":
-            small_ff = EspalomaTemplateGenerator(molecules=molecules, forcefield='espaloma-0.3.2', template_generator_kwargs={"reference_forcefield": "openff_unconstrained-2.1.0", "charge_method": "nn"})
-        elif small_molecule_ff == "gaff":
-            small_ff = GAFFTemplateGenerator(molecules=molecules, forcefield='gaff-2.11')
-        else:
-            small_ff = SMIRNOFFTemplateGenerator(molecules=molecules)
-        return small_ff
+        return get_template_generator(molecules, self.small_molecule_forcefield)
            
     def _parametrize_ligands(self, ligands: dict) -> None:
-        """Parametrizes ligands according to the forcefiled specified.
+        """Parametrizes ligands from SDF/MOL2/PDB files using the configured FF.
 
-        :param ligands: ligands specified
+        :param ligands: dict mapping ligand name to file path
         :type ligands: dict
-        :param small_molecule_ff: name of the forcefield to use, defaults to "espaloma"
-        :type small_molecule_ff: str, optional
-        :return: forcefield object for the small molecules
-        :rtype: SmallMoleculeTemplateGenerator
         """
         for ligname, lig_path in ligands.items():
             try:
-                rdkit_mol = SDMolSupplier(lig_path)[0]
-                ligand = Molecule.from_rdkit(rdkit_mol, allow_undefined_stereo=True)
-                
-                if self.small_molecule_forcefield == "espaloma":
-                    template_generator = EspalomaTemplateGenerator(
-                        molecules=ligand, forcefield="espaloma-0.3.2"
-                    )
-                elif self.small_molecule_forcefield == "SMIRNOFF":
-                    template_generator = SMIRNOFFTemplateGenerator(
-                        molecules=ligand, forcefield="openff-1.2.0"
-                    )
-                elif self.small_molecule_forcefield == "GAFF":
-                    template_generator = GAFFTemplateGenerator(
-                        molecules=ligand, forcefield="gaff-2.11"
-                    )
-
-                # add the template generator to the ff
+                ligand = load_molecule_from_file(lig_path)
+                template_generator = get_template_generator([ligand], self.small_molecule_forcefield)
                 self.forcefield.registerTemplateGenerator(template_generator.generator)
 
-                # make an OpenFF Topology of the ligand
                 ligand_off_topology = Topology.from_molecules(molecules=[ligand])
-
-                # convert it to an OpenMM Topology
                 ligand_topology = ligand_off_topology.to_openmm()
-
-                # get the positions of the ligand
                 ligand_positions = to_openmm(ligand.conformers[0])
-                
+
                 for res in ligand_topology.residues():
                     res.name = ligname
                 self.modeller.add(ligand_topology, ligand_positions)
 
             except Exception as e:
-                self.logger.error(f'Something went wrong parameterizing {ligname} with {self.small_molecule_forcefield} forcefield\n{e}')
+                self.logger.error(
+                    f"Something went wrong parameterizing {ligname} with "
+                    f"{self.small_molecule_forcefield} forcefield\n{e}"
+                )
                 sys.exit(1)
-        return None
 #endregion
     
 #region SimulationBox
@@ -1137,23 +1126,24 @@ class CosolventSystem(object):
 #endregion
     
 class CosolventMembraneSystem(CosolventSystem):  
-    def __init__(self, 
+    def __init__(self,
                  cosolvents: str,
-                 forcefields: str,
+                 forcefields: dict,
                  ligands: dict,
-                 simulation_format: str, 
-                 modeller: app.Modeller,  
-                 padding: openmmunit.Quantity = 10 * openmmunit.angstrom, 
+                 simulation_format: str,
+                 modeller: app.Modeller,
+                 padding: openmmunit.Quantity = 10 * openmmunit.angstrom,
                  box_size: openmmunit.Quantity = None,
                  lipid_type: str=None,
-                 lipid_patch_path: str=None):
+                 lipid_patch_path: str=None,
+                 small_molecule_ff: str = "espaloma-0.3.2"):
         """Creates a CosolventMembraneSystem.
 
         :param cosolvents: path to the cosolvents.json file
         :type cosolvents: str
-        :param forcefields: path to the forcefields.json file
-        :type forcefields: str
-        :param simulation_format: MD format that want to be used for the simulation
+        :param forcefields: dict mapping engine name to list of XML forcefield files
+        :type forcefields: dict
+        :param simulation_format: MD engine to use. Supported: amber, gromacs, charmm, openmm
         :type simulation_format: str
         :param modeller: Modeller containing topology and positions information
         :type modeller: openmm.app.Modeller
@@ -1161,11 +1151,13 @@ class CosolventMembraneSystem(CosolventSystem):
         :type padding: openmm.unit.Quantity, optional
         :param box_size: specifies the size to create the box without receptor, defaults to None
         :type box_size: openmm.unit.Quantity, optional
-        :param lipid_type: lipid type to use to build the membrane system, defaults to None. Supported types: ["POPC", "POPE", "DLPC", "DLPE", "DMPC", "DOPC", "DPPC"]. 
+        :param lipid_type: lipid type to use to build the membrane system, defaults to None. Supported types: ["POPC", "POPE", "DLPC", "DLPE", "DMPC", "DOPC", "DPPC"].
                                         Mutually exclusive with <lipid_patch_path>.
         :type lipid_type: str, optional
         :param lipid_patch_path: if lipid type is None the path to a pre-equilibrated patch of custom lipids membrane can be passed, defaults to None. Mutually exclusive with <lipid_type>
         :type lipid_patch_path: str, optional
+        :param small_molecule_ff: versioned forcefield for small molecules, e.g. "espaloma-0.3.2", "gaff-2.11", "openff-2.3.0", defaults to "espaloma-0.3.2"
+        :type small_molecule_ff: str, optional
         :raises MutuallyExclusiveParametersError: custom Exception
         """
         super().__init__(cosolvents=cosolvents,
@@ -1174,7 +1166,8 @@ class CosolventMembraneSystem(CosolventSystem):
                          simulation_format=simulation_format,
                          modeller=modeller,
                          padding=padding,
-                         box_size=box_size)
+                         box_size=box_size,
+                         small_molecule_ff=small_molecule_ff)
 
         self.protein_raidus = 1.5 * openmmunit.angstrom
         self.cosolvents_radius = 2.5 * openmmunit.angstrom           
