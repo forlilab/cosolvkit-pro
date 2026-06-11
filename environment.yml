@@ -1,4 +1,4 @@
-name: prova
+name: cosolvkit-pro
 channels:
 - conda-forge
 dependencies:
