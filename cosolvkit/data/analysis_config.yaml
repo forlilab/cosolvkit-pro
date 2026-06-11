@@ -77,9 +77,9 @@ hotspots:
   add_to_pymol:       true        # embed hotspot spheres in the PyMol session
   gridsize:           0.5         # must match density_maps.gridsize
   top_n_plot:         10          # max hotspots shown in the interactive 3D plot
-  top_n_survival:     0           # top-N sites per cosolvent for survival probability
-                                  # 0 = disable; each cosolvent is analysed using the
-                                  # universe of its own simulation trajectory
+  compute_survival_probability: false   # run survival-probability analysis on detected sites
+                                  # false = disable; when true, each cosolvent is analysed
+                                  # using the universe of its own simulation trajectory
   survival_kwargs:               # extra kwargs forwarded to survival_probability()
     radius:        6.0            # sphere radius around hotspot centroid (Angstroms)
     max_tau:       100            # maximum lag time

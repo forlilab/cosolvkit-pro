@@ -18,14 +18,14 @@ md_engine:
 
 # Force field for small molecules: espaloma-<version> | gaff-<version> | openff-<version>
 # e.g. "espaloma-0.3.2", "gaff-2.11", "openff-2.3.0"
-small_molecule_ff: "espaloma-0.3.2"
+small_molecule_ff: "openff-2.3.0"
 
 # -----------------------------------------------------------------
 # Receptor / protein
 # Set protein_path to null and box_size to a float when building
 # a ligand-only box (no protein).
 # -----------------------------------------------------------------
-protein_path: "example/protein.pdb"
+protein_path: "example/6E22.pdb"
 clean_protein: true          # run PDBFixer to fix missing atoms/residues
 keep_heterogens: false        # keep non-standard residues during cleaning
 

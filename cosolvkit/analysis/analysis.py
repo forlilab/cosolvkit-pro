@@ -203,7 +203,7 @@ class Report:
         :return: A list of atom types definitions based on SMARTS patterns.
         :rtype: list
         """
-        default_at_location = os.path.join(os.path.dirname(__file__), 'data/default_atomtypes.json')
+        default_at_location = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data/default_atomtypes.json')
         if (atomtypes_fname is None) or (not os.path.exists(atomtypes_fname)):
             self.logger.warning("Warning: Atom types definitions file not found or not provided.\n Using default atom types definitions.")
             try:

@@ -495,7 +495,7 @@ class CosolventSystem(object):
         res = [r.name for r in self.modeller.topology.residues()]
         return res.count('HOH')
  
-     def _setup_new_topology(self, cosolvents_positions: dict) -> app.Modeller:
+    def _setup_new_topology(self, cosolvents_positions: dict) -> app.Modeller:
         """Returns a new modeller with the topolgy with the new molecules specified
 
         :param cosolvents_positions: keys are cosolvent molecules and values are lists of position of the new molecules to add

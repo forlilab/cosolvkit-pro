@@ -257,6 +257,6 @@ class AnalysisConfig:
             Destination path for the template YAML file.
         """
         template_src = os.path.join(
-            os.path.dirname(__file__), "data", "analysis_config.yaml"
+            os.path.dirname(os.path.dirname(__file__)), "data", "analysis_config.yaml"
         )
         shutil.copy(template_src, path)
