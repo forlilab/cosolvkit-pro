@@ -2,8 +2,8 @@
 
 Key insight: self.universe is only accessed inside survival_probability()
 (line ~891 of hotspots_detection.py). All other methods are pure grid-math.
-We pass top_n_survival=0 so survival_probability is never called, making
-universe=None safe for all tests in this file.
+We pass compute_survival_probability=False so survival_probability is never
+called, making universe=None safe for all tests in this file.
 """
 
 import json
@@ -54,10 +54,10 @@ def _make_detector(tmp_path, cosolvent="BEN", agfe_cutoff=-1.0, min_cluster_voxe
     return HotspotDetector(
         out_path=str(tmp_path),
         cosolvent_names=[cosolvent],
-        universe=None,          # safe because top_n_survival=0
+        universe=None,          # safe because compute_survival_probability=False
         agfe_cutoff=agfe_cutoff,
         min_cluster_voxels=min_cluster_voxels,
-        top_n_survival=0,
+        compute_survival_probability=False,
         score_weights=score_weights,
     )
 
