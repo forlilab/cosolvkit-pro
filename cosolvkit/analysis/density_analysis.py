@@ -518,6 +518,9 @@ class GridAnalysis(AnalysisBase):
 
         """
 
+        # gaussian_filter interprets sigma in VOXELS
+        sigma_vox = (atom_radius / 3.0) / self._gridsize
+
         if self.use_atomtypes:
             self._type_agfe_raw = {}
             for atom_type, grid in self._type_histograms.items():
@@ -525,7 +528,7 @@ class GridAnalysis(AnalysisBase):
                 agfe = _grid_free_energy(grid.grid, n_atoms_type, self._nframes, self._n_accessible_voxels, temperature)
                 self._type_agfe_raw[atom_type] = Grid(agfe, edges=grid.edges)
                 if smoothing:
-                    agfe = _smooth_grid_free_energy(agfe, sigma=atom_radius / 3.0, energy_cutoff=0)
+                    agfe = _smooth_grid_free_energy(agfe, sigma=sigma_vox, energy_cutoff=0)
 
                 self.logger.info(f"Free energy for {atom_type}: MIN: {np.min(agfe):.2f} kcal/mol, MAX: {np.max(agfe):.2f} kcal/mol")
                 self._type_histograms[atom_type] = Grid(agfe, edges=grid.edges)
@@ -534,8 +537,8 @@ class GridAnalysis(AnalysisBase):
             self._agfe_raw = Grid(agfe, edges=self._histogram.edges)
 
             if smoothing:
-                # We divide by 3 in order to have radius == 3 sigma
-                agfe = _smooth_grid_free_energy(agfe, sigma=atom_radius / 3.0, energy_cutoff=0)
+                # radius == 3 sigma, converted from Angstrom to voxels.
+                agfe = _smooth_grid_free_energy(agfe, sigma=sigma_vox, energy_cutoff=0)
                 self.logger.info(f"Free energy: MIN: {np.min(agfe):.2f} kcal/mol, MAX: {np.max(agfe):.2f} kcal/mol")
 
             self._agfe = Grid(agfe, edges=self._histogram.edges)
