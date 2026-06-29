@@ -121,7 +121,8 @@ def main():
                                                 padding=config.padding,
                                                 box_size=config.box_size,
                                                 lipid_type=config.lipid_type,
-                                                lipid_patch_path=config.lipid_patch_path)
+                                                lipid_patch_path=config.lipid_patch_path,
+                                                output_dir=config.output_dir)
         cosolv_system.add_membrane(cosolvent_placement=config.memb_cosolv_placement,
                                 positive_ion=config.positive_ion,
                                 negative_ion=config.negative_ion,
@@ -136,7 +137,8 @@ def main():
                                         simulation_format=engine,
                                         modeller=protein_modeller,
                                         padding=config.padding,
-                                        box_size=config.box_size)
+                                        box_size=config.box_size,
+                                        output_dir=config.output_dir)
         cosolv_system.build(solvent_smiles=config.solvent_smiles,
                             n_solvent_molecules=config.solvent_copies,
                             positive_ion=config.positive_ion,

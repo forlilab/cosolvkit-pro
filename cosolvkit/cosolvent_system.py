@@ -167,7 +167,8 @@ class CosolventSystem(object):
                  modeller: app.Modeller,
                  padding: openmmunit.Quantity,
                  box_size: openmmunit.Quantity = None,
-                 small_molecule_ff: str = "espaloma-0.3.2"):
+                 small_molecule_ff: str = "openff-2.3.0",
+                 output_dir: str = None):
         """Create cosolvent system.
 
         :param cosolvents: dictionary of cosolvent molecules
@@ -186,6 +187,10 @@ class CosolventSystem(object):
         :type box_size: openmm.unit.Quantity, optional
         :param small_molecule_ff: versioned forcefield for small molecules, e.g. "espaloma-0.3.2", "gaff-2.11", "openff-2.3.0", defaults to "espaloma-0.3.2"
         :type small_molecule_ff: str, optional
+        :param output_dir: directory where generated cosolvent .mol files are
+            written. Defaults to None (current working directory). A cosolvent
+            entry that sets its own mol_save_dir overrides this.
+        :type output_dir: str, optional
         """
         # Setup logging
         self.logger = logging.getLogger(__name__)
@@ -206,14 +211,19 @@ class CosolventSystem(object):
         self.cosolvents = dict()
         self.box_size = box_size
         self.small_molecule_forcefield = small_molecule_ff
+        self.output_dir = output_dir
         padding = padding * openmmunit.angstrom
         
         assert (simulation_format.upper() in self._available_formats), f"Error! The simulation format supplied is not supported! Available simulation engines:\n\t{self._available_formats}"
         
         self.ligands = ligands
 
-        # Creating cosolvent molecules
+        # Creating cosolvent molecules. Generated .mol files are written to
+        # output_dir (alongside the rest of the build outputs) unless the
+        # cosolvent entry already specifies its own mol_save_dir.
         for c in cosolvents:
+            if output_dir is not None and c.get("mol_save_dir") is None:
+                c = {**c, "mol_save_dir": output_dir}
             cosolvent = CosolventMolecule(**c)
             cosolvent_xyz = cosolvent.positions*openmmunit.angstrom
             cosolvent_xyz = cosolvent_xyz.value_in_unit(openmmunit.nanometer)
@@ -289,6 +299,8 @@ class CosolventSystem(object):
         elif solvent_smiles is not None:
             c = {"name": "solvent",
                  "smiles": solvent_smiles}
+            if self.output_dir is not None:
+                c["mol_save_dir"] = self.output_dir
             solvent_mol = CosolventMolecule(**c)
             cosolv_xyz = solvent_mol.positions*openmmunit.angstrom
             if n_solvent_molecules is not None:
@@ -1145,7 +1157,8 @@ class CosolventMembraneSystem(CosolventSystem):
                  box_size: openmmunit.Quantity = None,
                  lipid_type: str=None,
                  lipid_patch_path: str=None,
-                 small_molecule_ff: str = "espaloma-0.3.2"):
+                 small_molecule_ff: str = "openff-2.3.0",
+                 output_dir: str = None):
         """Creates a CosolventMembraneSystem.
 
         :param cosolvents: path to the cosolvents.json file
@@ -1171,6 +1184,8 @@ class CosolventMembraneSystem(CosolventSystem):
         :type lipid_patch_path: str, optional
         :param small_molecule_ff: versioned forcefield for small molecules, e.g. "espaloma-0.3.2", "gaff-2.11", "openff-2.3.0", defaults to "espaloma-0.3.2"
         :type small_molecule_ff: str, optional
+        :param output_dir: directory where generated cosolvent .mol files are written, defaults to None (current working directory)
+        :type output_dir: str, optional
         :raises MutuallyExclusiveParametersError: custom Exception
         """
         super().__init__(cosolvents=cosolvents,
@@ -1180,7 +1195,8 @@ class CosolventMembraneSystem(CosolventSystem):
                          modeller=modeller,
                          padding=padding,
                          box_size=box_size,
-                         small_molecule_ff=small_molecule_ff)
+                         small_molecule_ff=small_molecule_ff,
+                         output_dir=output_dir)
 
         self.protein_raidus = 1.5 * openmmunit.angstrom
         self.cosolvents_radius = 2.5 * openmmunit.angstrom           
