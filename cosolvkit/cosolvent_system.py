@@ -1049,12 +1049,21 @@ class CosolventSystem(object):
     def _parametrize_ligands(self, ligands: dict) -> None:
         """Parametrizes ligands from SDF/MOL2/PDB files using the configured FF.
 
-        :param ligands: dict mapping ligand name to file path
+        :param ligands: dict mapping ligand name to either a file path (str), or
+            a mapping with key 'path' and optional 'smiles'. Supplying a
+            reference SMILES is strongly recommended for PDB inputs (and SDFs
+            lacking bond orders): without it, bond-order perception is
+            unreliable. See cosolvkit.parametrize.load_molecule_from_file.
         :type ligands: dict
         """
-        for ligname, lig_path in ligands.items():
+        for ligname, spec in ligands.items():
+            if isinstance(spec, dict):
+                lig_path = spec.get("path")
+                smiles = spec.get("smiles")
+            else:
+                lig_path, smiles = spec, None
             try:
-                ligand = load_molecule_from_file(lig_path)
+                ligand = load_molecule_from_file(lig_path, smiles=smiles)
                 template_generator = get_template_generator([ligand], self.small_molecule_forcefield)
                 self.forcefield.registerTemplateGenerator(template_generator.generator)
 
@@ -1143,6 +1152,10 @@ class CosolventMembraneSystem(CosolventSystem):
         :type cosolvents: str
         :param forcefields: dict mapping engine name to list of XML forcefield files
         :type forcefields: dict
+        :param ligands: dict of explicit ligands to embed (name -> file path, or
+            name -> {'path', optional 'smiles'}). Parametrized and added to the
+            topology during build(); pass {} for none.
+        :type ligands: dict
         :param simulation_format: MD engine to use. Supported: amber, gromacs, charmm, openmm
         :type simulation_format: str
         :param modeller: Modeller containing topology and positions information
@@ -1294,6 +1307,11 @@ class CosolventMembraneSystem(CosolventSystem):
         else:
             cosolv_xyzs = self.add_cosolvents(self.cosolvents, self.vectors, lowerBound, upperBound, receptor_positions)
         self.modeller = self._setup_new_topology(cosolv_xyzs)
+
+        # Parametrize ligands (mirrors CosolventSystem.build)
+        if self.ligands is not None:
+            self._parametrize_ligands(self.ligands)
+
         self.modeller.addSolvent(forcefield=self.forcefield, neutralize=neutralize, positiveIon=positive_ion, negativeIon=negative_ion)
         self.system = self._create_system(self.forcefield, self.modeller.topology)
         return
