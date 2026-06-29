@@ -333,7 +333,6 @@ class GridAnalysis(AnalysisBase):
                 hist, _ = np.histogramdd(positions, bins=self._edges)
                 self._histogram = Grid(hist, origin=origin, delta=self._gridsize)
                 self._density = Grid(_grid_density(hist), origin=origin, delta=self._gridsize)
-                self._build_accessible_mask()
                 return
 
             # Get atom types for all frames as a single array
@@ -366,7 +365,6 @@ class GridAnalysis(AnalysisBase):
                 hist, _ = np.histogramdd(positions, bins=self._edges)
                 self._histogram = Grid(hist, origin=origin, delta=self._gridsize)
                 self._density = Grid(_grid_density(hist), origin=origin, delta=self._gridsize)
-                self._build_accessible_mask()
                 return
             total_hist = sum(grid.grid for grid in self._type_histograms.values())
             self._histogram = Grid(total_hist, origin=origin, delta=self._gridsize)
@@ -375,9 +373,6 @@ class GridAnalysis(AnalysisBase):
             hist, _ = np.histogramdd(positions, bins=self._edges)
             self._histogram = Grid(hist, origin=origin, delta=self._gridsize)
             self._density = Grid(_grid_density(hist), origin=origin, delta=self._gridsize)
-
-        # Calculate the number of accessible voxels, once per trajectory
-        self._build_accessible_mask()
 
     def _get_positions(self, start=0, stop=None):
         positions = self._positions[start:stop, :, :]
