@@ -179,6 +179,18 @@ class TestCombineDxMaps:
         combine_dx_maps([p], out_fname=out)
         assert os.path.exists(out)
 
+    def test_same_shape_different_origin_raises(self, tmp_path):
+        """Same shape but offset origin must NOT be silently averaged."""
+        arr = np.zeros((4, 4, 4))
+        # g1 spans [0, 5], g2 spans [10, 15] — same shape, disjoint location.
+        g1 = Grid(arr, edges=[np.linspace(0, 5, 5)] * 3)
+        g2 = Grid(arr, edges=[np.linspace(10, 15, 5)] * 3)
+        p1, p2 = str(tmp_path / "g1.dx"), str(tmp_path / "g2.dx")
+        g1.export(p1)
+        g2.export(p2)
+        with pytest.raises(ValueError, match="origin/spacing"):
+            combine_dx_maps([p1, p2], out_fname=str(tmp_path / "out.dx"))
+
 
 # ---------------------------------------------------------------------------
 # combine_dx_maps_with_resampling
