@@ -26,16 +26,37 @@ def _read_dx(filepath: str = None) -> Grid:
     """Reads a .dx map using gridData.Grid."""
     return Grid(str(filepath))
 
+def _grids_spatially_aligned(g1: Grid, g2: Grid, atol: float = 1e-3) -> bool:
+    """True if two grids share shape, origin, and spacing.
+
+    Equal shape alone is not enough: two maps can have identical dimensions but
+    different origin/spacing, in which case voxel [i, j, k] points to a
+    different physical location in each. Comparing the full per-axis edges
+    captures both origin and spacing in one check.
+    """
+    if g1.grid.shape != g2.grid.shape:
+        return False
+    return all(
+        len(e1) == len(e2) and np.allclose(e1, e2, atol=atol)
+        for e1, e2 in zip(g1.edges, g2.edges)
+    )
+
 def combine_dx_maps(filepaths: List[str] = None, method: str = 'mean', out_fname: str = 'combined.dx') -> Grid:
     """Combines multiple .dx map files into one using a specified method."""
 
     grids = [_read_dx(path) for path in filepaths]
 
-    # Validate all grids match in shape. This is kinda clunky, but it works.
-    shape = grids[0].grid.shape
+    # Validate all grids are spatially aligned (same shape AND origin AND
+    # spacing). Shape equality alone would silently average misaligned maps.
+    ref = grids[0]
     for g in grids:
-        if g.grid.shape != shape:
+        if g.grid.shape != ref.grid.shape:
             raise ValueError("All input maps must have the same shape.")
+        if not _grids_spatially_aligned(ref, g):
+            raise ValueError(
+                "Input maps share shape but differ in origin/spacing — they are "
+                "not spatially aligned. Use combine_dx_maps_with_resampling() instead."
+            )
 
     stacked = np.stack([g.grid for g in grids])
 
@@ -98,14 +119,15 @@ def combine_dx_maps_with_resampling(
             "Valid values: 'first', 'largest', 'smallest'."
         )
 
-    shapes_match = all(g.grid.shape == ref_grid.grid.shape for g in grids)
-
-    if shapes_match:
+    # Gate the fast path on full spatial alignment, not just shape: two maps can
+    # share dimensions but differ in origin/spacing, which would otherwise skip
+    # resampling and average misaligned voxels.
+    if all(_grids_spatially_aligned(g, ref_grid) for g in grids):
         resampled = [g.grid for g in grids]
     else:
         resampled = []
         for g in grids:
-            if g.grid.shape == ref_grid.grid.shape:
+            if _grids_spatially_aligned(g, ref_grid):
                 resampled.append(g.grid)
             else:
                 resampled.append(g.resample(ref_grid.edges).grid)
