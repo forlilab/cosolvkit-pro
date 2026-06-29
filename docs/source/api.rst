@@ -150,46 +150,14 @@ Depending on what MD engine was selected the format of the topology files can ch
                                    forcefield=cosolvent_system.forcefield)
 
 
-Run MD simulations with CosolvKit
-#################################
+Run MD simulations
+##################
 
-CosolvKit offers a general and standard protocol to run MD simulations that can be used for the majority of the use cases.  
-The flags `run_cosolvent_system` and `run_md` in the `Config` class take care of building the cosolvent system and using the standard MD protocol to run a simulation.
-
-.. code-block:: python
-
-    from cosolvkit.simulation import run_simulation
-
-    if config.md_format.upper() != "OPENMM":
-            # Change the next two lines depending on the simulation_format you chose
-            topo = os.path.join(config.output, "system.prmtop")
-            pos = os.path.join(config.output, "system.rst7")
-            # This is for openmm
-            pdb = None
-            system = None
-        else:
-            topo = None
-            pos = None
-            # This is for openmm
-            pdb = os.path.join(config.output, "system.pdb")
-            system = os.path.join(config.output, "system.xml")
-        
-        if config.md_format.upper() == "OPENMM":
-            print(f"Starting MD simulation from the files: {pdb}, {system}")
-        else:
-            print(f"Starting MD simulation from the files: {topo}, {pos}")
-        
-        run_simulation(
-                        simulation_format = config.md_format,
-                        topology = topo,
-                        positions = pos,
-                        pdb = pdb,
-                        system = system,
-                        warming_steps = 100000,
-                        simulation_steps = 6250000, # 25ns
-                        results_path = config.output, # This should be the name of system being simulated
-                        seed=None
-        )
+CosolvKit no longer runs MD simulations itself. ``save_topology`` writes the
+system in the format you selected (OpenMM ``system.xml`` + ``system.pdb``, or
+Amber/GROMACS/CHARMM topology and coordinate files), and you run the MD with the
+external engine of your choice using those files. Once the trajectory is
+produced, feed it back into CosolvKit's analysis (see below).
 
 Post processing analysis
 ########################

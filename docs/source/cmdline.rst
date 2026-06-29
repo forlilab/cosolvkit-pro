@@ -3,13 +3,13 @@
 cosolvkit command line interface
 ################################
 
-The CosolvKit command line interface is the easiest method to create and simulate a cosolvent system. 
+The CosolvKit command line interface is the easiest method to create a cosolvent system.
 If this is your first time learning about CosolvKit, take a look at the page :ref:`Get started <get_started>`. 
 
 CosolvKit inputs
 **************************
 
-The script `create_cosolvent_system.py` provides all the necessary tools to build a cosolvent system and optionally run an MD simulation with standard setup.
+The script `create_cosolvent_system.py` provides all the necessary tools to build a cosolvent system. The prepared system is written in the format of the selected MD engine; running the MD itself is left to that external engine.
 The main entry point of the script is the file `config.yaml` where all the necessary flags and command line options are specified.
 A template for the `config.yaml` can be found in `cosolvkit/data/config.yaml`.
 

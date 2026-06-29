@@ -88,28 +88,16 @@ The main entry point is the file `config.yaml` where all the necessary options a
 $ create_cosolvent_system -c config.yaml
 ```
 
-3. **Run MD simulations**
-If you don't want to setup your own simulation, we provide a standard simulation protocol using `OpenMM`
+2. **Run MD simulations (external)**
+CosolvKit no longer runs MD itself — that step is delegated to an external MD
+engine. Step 1 writes the prepared system in the format you selected
+(`md_engine`): OpenMM (`system.xml` + `system.pdb`), or Amber / GROMACS / CHARMM
+topology and coordinate files. Run the simulation with the engine of your
+choice using those files, then bring the resulting trajectory back for analysis.
 
-```python
-from cosolvkit.simulation import run_simulation
+3. **Analysis**
 
-print("Running MD simulation")
-start = time.time()
-run_simulation(
-                pdb_fname = 'system.pdb',
-                system_fname = 'system.xml',
-                temperature = 300,
-                time_step = 0.004,
-                simulation_steps = 25000000, 
-                results_path = 'results',
-                )
-print(f"Simulation finished after {(time.time() - start)/60:.2f} min.")
-```
-
-4. **Analysis**
-
-#### 4.1 centering, imaging, and aligning a trajectory
+#### 3.1 centering, imaging, and aligning a trajectory
 To generate meaningful cosolvent densities for visualization, the trajectory
 must be centered and aligned on the region of interest. Centering is
 placing a set of atoms at the center of the simulation box
@@ -154,7 +142,7 @@ An example of another program that can image and center trajectories is
 MDAnalysis. For imaging, see its documentation about
 [wrapping and unwrapping](https://docs.mdanalysis.org/stable/documentation_pages/transformations/wrap.html).
 
-#### 4.2 the actual analysis
+#### 3.2 the actual analysis
 ```python
 from cosolvkit.analysis import Report
 """

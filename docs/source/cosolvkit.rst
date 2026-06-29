@@ -20,14 +20,6 @@ cosolvkit.cosolvent\_system module
    :undoc-members:
    :show-inheritance:
 
-cosolvkit.simulation module
----------------------------
-
-.. automodule:: cosolvkit.simulation
-   :members:
-   :undoc-members:
-   :show-inheritance:
-
 cosolvkit.parametrize module
 ----------------------------
 

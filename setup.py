@@ -39,7 +39,6 @@ setup(name="cosolvkit",
       entry_points={
           'console_scripts': [
               'create_cosolvent_system=cosolvkit.cli.create_cosolvent_system:main',
-              'run_simulation=cosolvkit.cli.run_simulation:main',
               'analyze_cosolvent_simulation=cosolvkit.cli.analyze_cosolvent_simulation:main',
               'visualize_hotspots=cosolvkit.cli.visualize_hotspots:main',
           ]
