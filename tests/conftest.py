@@ -7,16 +7,16 @@ import numpy as np
 import pytest
 from gridData import Grid
 
-from cosolvkit.analysis.hotspots_detection import BindingSite
+from cosolvkit.analysis.hotspots_detection import Hotspot
 
 
 # ---------------------------------------------------------------------------
-# BindingSite factory
+# Hotspot factory
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
-def make_binding_site():
-    """Return a factory that builds a BindingSite with controlled geometry."""
+def make_hotspot():
+    """Return a factory that builds a Hotspot with controlled geometry."""
     def _factory(
         rank=1,
         site_id=1,
@@ -42,7 +42,7 @@ def make_binding_site():
             voxel_mask[5:10, 5:10, 5:10] = True
 
         _centroid = centroid if centroid is not None else np.array([3.75, 3.75, 3.75])
-        site = BindingSite(
+        site = Hotspot(
             rank=rank,
             site_id=site_id,
             cosolvent=cosolvent,

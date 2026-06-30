@@ -185,7 +185,7 @@ class MultiReport:
         Returns
         -------
         dict
-            ``{cosolvent: List[BindingSite]}`` sorted by composite score.
+            ``{cosolvent: List[Hotspot]}`` sorted by composite score.
         """
         if not self._reports:
             raise RuntimeError(

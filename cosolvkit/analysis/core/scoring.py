@@ -59,7 +59,7 @@ def combine_detect_scores(raw_f, raw_d, raw_v, weights):
 # Composite score
 # ---------------------------------------------------------------------------
 
-# Maps short weight-key aliases to the actual BindingSite attribute name.
+# Maps short weight-key aliases to the actual Hotspot attribute name.
 _CORE_ATTR_ALIASES = {
     "favorability": "favorability_score",
     "diversity": "diversity_score",
@@ -71,7 +71,7 @@ _CORE_ATTR_ALIASES = {
 
 
 def _get_site_value(site, key):
-    """Retrieve a scoring component from a BindingSite.
+    """Retrieve a scoring component from a Hotspot.
 
     Checks core attribute aliases first, then site.properties.
     Returns None if the key is unknown or the value is None.
@@ -83,7 +83,7 @@ def _get_site_value(site, key):
 
 
 def compute_composite_score(sites, score_weights):
-    """Recompute composite scores for a list of BindingSite objects.
+    """Recompute composite scores for a list of Hotspot objects.
 
     Supports any combination of core field weights (``favorability``,
     ``diversity``, ``volume``, or their ``_score`` variants) and
@@ -108,7 +108,7 @@ def compute_composite_score(sites, score_weights):
 
     Parameters
     ----------
-    sites : list[BindingSite]
+    sites : list[Hotspot]
     score_weights : dict[str, float]
         Weight keys resolved via ``_get_site_value``.  Need not sum to 1;
         the function normalises internally.

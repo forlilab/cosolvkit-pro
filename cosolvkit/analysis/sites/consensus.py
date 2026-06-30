@@ -21,7 +21,7 @@ from cosolvkit.analysis.core.models import ConsensusSite
 class CrossProbeConsensusDetector:
     """Detect consensus binding sites from overlapping per-probe hotspots.
 
-    Takes the ``Dict[str, List[BindingSite]]`` output of
+    Takes the ``Dict[str, List[Hotspot]]`` output of
     :meth:`HotspotDetector.detect_all` and groups sites from different
     cosolvents that share favorable voxels into communities. Each community
     becomes a :class:`ConsensusSite` with a pharmacophore profile describing
@@ -38,7 +38,7 @@ class CrossProbeConsensusDetector:
 
     Parameters
     ----------
-    probe_results : dict[str, list[BindingSite]]
+    probe_results : dict[str, list[Hotspot]]
         Output of :meth:`HotspotDetector.detect_all`.
     jaccard_threshold : float
         Minimum Jaccard similarity to add an edge (default 0.05).  Lower values
@@ -68,7 +68,7 @@ class CrossProbeConsensusDetector:
         total = sum(weights.values())
         self.score_weights = {k: v / total for k, v in weights.items()}
 
-        # Flat list of (cosolvent, BindingSite) for indexed graph nodes
+        # Flat list of (cosolvent, Hotspot) for indexed graph nodes
         self._all_sites = [
             (cosolvent, site)
             for cosolvent, sites in probe_results.items()

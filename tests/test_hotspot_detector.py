@@ -14,7 +14,7 @@ import pandas as pd
 import pytest
 from gridData import Grid
 
-from cosolvkit.analysis.hotspots_detection import BindingSite, HotspotDetector
+from cosolvkit.analysis.hotspots_detection import Hotspot, HotspotDetector
 
 
 # ---------------------------------------------------------------------------

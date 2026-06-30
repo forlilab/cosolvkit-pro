@@ -235,7 +235,7 @@ def visualise_clustering(
         Cluster label grid (0 = background).
     combined_grid : gridData.Grid
         AGFE grid used for coordinate conversion.
-    results : list[BindingSite]
+    results : list[Hotspot]
     out_path : str
         Directory for output files.
     voxel_to_angstrom_fn : callable
@@ -350,7 +350,7 @@ def add_hotspots_to_pymol_session(results, pse_path, out_path, top_n=10):
 
     Parameters
     ----------
-    results : dict[str, list[BindingSite]]
+    results : dict[str, list[Hotspot]]
     pse_path : str
         Path to existing ``.pse`` file.
     out_path : str

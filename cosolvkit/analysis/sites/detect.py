@@ -19,7 +19,7 @@ from cosolvkit.analysis.sites.clustering import (
     SkimageWatershedClustering,
 )
 from cosolvkit.analysis.sites.properties import PocketPropertyCalculator
-from cosolvkit.analysis.core.models import BindingSite
+from cosolvkit.analysis.core.models import Hotspot
 from cosolvkit.analysis.core.scoring import compute_composite_score, combine_detect_scores
 
 
@@ -296,7 +296,7 @@ class HotspotDetector:
     def detect(self, cosolvent):
         """Detect and score hotspots for one cosolvent.
 
-        Returns a list of :class:`BindingSite` objects sorted by composite
+        Returns a list of :class:`Hotspot` objects sorted by composite
         score (rank 1 = highest score).
         """
         self.logger.info(f"Detecting hotspots for {cosolvent}...")
@@ -403,12 +403,12 @@ class HotspotDetector:
 
         composite, f_norm, v_norm = combine_detect_scores(raw_f, raw_d, raw_v, self.score_weights)
 
-        # --- Sort descending and build BindingSite objects ---
+        # --- Sort descending and build Hotspot objects ---
         order = np.argsort(-composite)
         sites = []
         for rank, idx in enumerate(order, start=1):
             sd = site_data[idx]
-            sites.append(BindingSite(
+            sites.append(Hotspot(
                 rank=rank,
                 site_id=int(sd["lbl"]),
                 cosolvent=cosolvent,
@@ -456,12 +456,12 @@ class HotspotDetector:
 
         If ``compute_survival_probability=True``, runs survival probability
         analysis for all detected sites and attaches kinetic metrics to each
-        :class:`BindingSite`.  If ``sp_*`` keys appear in ``score_weights``,
+        :class:`Hotspot`.  If ``sp_*`` keys appear in ``score_weights``,
         the composite score is recomputed after SP metrics are attached.
 
         Returns
         -------
-        dict[str, list[BindingSite]]
+        dict[str, list[Hotspot]]
             ``{cosolvent: [site, ...]}`` sorted by composite score per cosolvent.
         """
         results = {cosolvent: self.detect(cosolvent) for cosolvent in self.cosolvent_names}
@@ -500,7 +500,7 @@ class HotspotDetector:
 
         Parameters
         ----------
-        results : dict[str, list[BindingSite]]
+        results : dict[str, list[Hotspot]]
             Output of :meth:`detect_all`.
         label_map : bool
             If True, export ``hotspot_labels_{cosolvent}.dx`` where voxel
@@ -579,7 +579,7 @@ class HotspotDetector:
         Parameters
         ----------
         cosolvent : str
-        sites : list[BindingSite]
+        sites : list[Hotspot]
             Output of :meth:`detect` for this cosolvent.
         output_path : str, optional
             If given, write an interactive HTML file to this path.
@@ -645,7 +645,7 @@ class HotspotDetector:
 
         Parameters
         ----------
-        results : dict[str, list[BindingSite]]
+        results : dict[str, list[Hotspot]]
             Output of :meth:`detect_all`.
         out_path : str
             Directory where the ``hotspot_checkpoints/`` sub-directory will be
@@ -697,7 +697,7 @@ class HotspotDetector:
     def load_checkpoint(out_path, cosolvent_names):
         """Load hotspot detection results from NPZ checkpoint files.
 
-        Reconstructs :class:`BindingSite` objects (including ``voxel_mask``
+        Reconstructs :class:`Hotspot` objects (including ``voxel_mask``
         and grid metadata) previously saved by :meth:`save_checkpoint`.
 
         Parameters
@@ -710,7 +710,7 @@ class HotspotDetector:
 
         Returns
         -------
-        dict[str, list[BindingSite]]
+        dict[str, list[Hotspot]]
             Same structure as the output of :meth:`detect_all`.
         """
         logger = logging.getLogger(__name__)
@@ -733,7 +733,7 @@ class HotspotDetector:
             grid_delta = data["grid_delta"]
 
             sites = [
-                BindingSite.from_dict(m, voxel_masks[i].astype(bool), grid_origin, grid_delta)
+                Hotspot.from_dict(m, voxel_masks[i].astype(bool), grid_origin, grid_delta)
                 for i, m in enumerate(meta)
             ]
             results[cosolvent] = sites

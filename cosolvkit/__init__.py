@@ -7,7 +7,7 @@
 from .cosolvent_system import CosolventSystem, CosolventMolecule
 from .analysis import (
     Report, AnalysisConfig, MultiReport,
-    GridAnalysis, HotspotDetector, BindingSite,
+    GridAnalysis, HotspotDetector, Hotspot,
     PocketPropertyCalculator, PocketResidue,
     compute_composite_score, set_residue_embeddings,
     CrossProbeConsensusDetector, ConsensusSite,
@@ -17,7 +17,7 @@ from .parametrize import parse_small_molecule_ff, load_molecule_from_file, get_t
 __all__ = [
     "CosolventSystem", "CosolventMolecule",
     "Report", "AnalysisConfig", "MultiReport",
-    "GridAnalysis", "HotspotDetector", "BindingSite",
+    "GridAnalysis", "HotspotDetector", "Hotspot",
     "PocketPropertyCalculator", "PocketResidue",
     "compute_composite_score", "set_residue_embeddings",
     "CrossProbeConsensusDetector", "ConsensusSite",

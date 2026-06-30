@@ -142,7 +142,7 @@ def set_residue_embeddings(site, embeddings: Dict[int, Any], model_name: str = "
 
     Parameters
     ----------
-    site : BindingSite
+    site : Hotspot
         Site whose ``pocket_residues`` list to annotate.
     embeddings : dict[int, array-like]
         Mapping ``{resid: embedding_vector}``.  Resids that do not match any
@@ -168,7 +168,7 @@ def set_residue_embeddings(site, embeddings: Dict[int, Any], model_name: str = "
 # ---------------------------------------------------------------------------
 
 class PocketPropertyCalculator:
-    """Computes and attaches derived properties to :class:`BindingSite` objects.
+    """Computes and attaches derived properties to :class:`Hotspot` objects.
 
     Handles three concerns independently of the hotspot-detection algorithm:
 
@@ -215,11 +215,11 @@ class PocketPropertyCalculator:
 
         Calls ``skimage.measure.regionprops_table`` on *labeled_array* and
         populates each site in *sites* with ``geom_*`` properties via
-        :meth:`BindingSite.add_property`.
+        :meth:`Hotspot.add_property`.
 
         Parameters
         ----------
-        sites : list[BindingSite]
+        sites : list[Hotspot]
             Sites to annotate; each site's ``.site_id`` is used as the label
             key to look up its region in *labeled_array*.
         labeled_array : np.ndarray of int
@@ -377,12 +377,12 @@ class PocketPropertyCalculator:
     # ------------------------------------------------------------------
 
     def fit_survival_probability(self, results, zone_to_site_rank=None):
-        """Fit SP decay curves and store kinetic metrics in each BindingSite.
+        """Fit SP decay curves and store kinetic metrics in each Hotspot.
 
         Reads the ``survival_probability_{cosolvent}.csv`` files written by
         :meth:`run_survival_probability`, fits three decay models to each
         zone's curve, and stores the derived metrics in
-        ``BindingSite.properties`` via :meth:`BindingSite.add_property`.
+        ``Hotspot.properties`` via :meth:`Hotspot.add_property`.
 
         **Stored properties** (prefixed ``sp_``):
 
@@ -398,7 +398,7 @@ class PocketPropertyCalculator:
 
         Parameters
         ----------
-        results : dict[str, list[BindingSite]]
+        results : dict[str, list[Hotspot]]
             Output of :meth:`HotspotDetector.detect_all`.
         zone_to_site_rank : dict[int, int], optional
             Maps zone index (``Group`` column in CSV) to site rank.
@@ -527,7 +527,7 @@ class PocketPropertyCalculator:
 
         Parameters
         ----------
-        site : BindingSite
+        site : Hotspot
             The hotspot to annotate.  Must have ``voxel_mask``, ``grid_origin``,
             and ``grid_delta`` already set (populated by
             :meth:`HotspotDetector.detect`).
@@ -610,7 +610,7 @@ class PocketPropertyCalculator:
 
         Parameters
         ----------
-        site : BindingSite
+        site : Hotspot
             Site whose ``pocket_residues`` to annotate.
         rmsf_by_resid : dict[int, float]
             Mapping ``{resid: rmsf_angstroms}``.  Typically built from the
@@ -667,7 +667,7 @@ class PocketPropertyCalculator:
 
         Parameters
         ----------
-        site : BindingSite
+        site : Hotspot
             Site whose ``pocket_residues`` to annotate.
         cosolvent_names : list[str]
             Residue names of cosolvent species to analyse.

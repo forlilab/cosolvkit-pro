@@ -292,7 +292,7 @@ class Report:
         :param save_checkpoint: if True (default), save a checkpoint under
             ``out_path/hotspot_checkpoints/`` so consensus can be re-run later
             without repeating this step.  Load via :meth:`load_hotspot_checkpoint`.
-        :return: dict {cosolvent: List[BindingSite]} sorted by composite score.
+        :return: dict {cosolvent: List[Hotspot]} sorted by composite score.
         """
         if cosolvent_names is None:
             cosolvent_names = self.cosolvent_names
@@ -330,7 +330,7 @@ class Report:
 
         Reads the NPZ files written by :meth:`generate_hotspot_report` (when
         ``save_checkpoint=True``) and reconstructs the full
-        ``Dict[str, List[BindingSite]]`` structure — including voxel masks and
+        ``Dict[str, List[Hotspot]]`` structure — including voxel masks and
         grid metadata — needed by :meth:`generate_consensus_report`.
 
         Use this to re-run consensus detection with different parameters
@@ -339,7 +339,7 @@ class Report:
 
         :param cosolvent_names: cosolvents to load, defaults to all cosolvents
             known to this :class:`Report`.
-        :return: dict {cosolvent: List[BindingSite]}.
+        :return: dict {cosolvent: List[Hotspot]}.
         :raises FileNotFoundError: if the checkpoint for any requested cosolvent
             is missing.
         """
@@ -367,7 +367,7 @@ class Report:
         - ``consensus_sites_pharmacophore.json`` — nested per-probe/per-atom-type
           AGFE fingerprint
 
-        :param probe_results: ``Dict[str, List[BindingSite]]`` from
+        :param probe_results: ``Dict[str, List[Hotspot]]`` from
             :meth:`generate_hotspot_report`.
         :param jaccard_threshold: minimum voxel-mask Jaccard similarity to link
             two sites (default 0.05).

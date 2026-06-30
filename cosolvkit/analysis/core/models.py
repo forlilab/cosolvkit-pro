@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional
 
 
 # ---------------------------------------------------------------------------
-# PocketResidue — per-residue data attached to a BindingSite
+# PocketResidue — per-residue data attached to a Hotspot
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -166,10 +166,10 @@ class PocketResidue:
 
 
 # ---------------------------------------------------------------------------
-# BindingSite — a detected cosolvent binding hotspot
+# Hotspot — a detected cosolvent binding hotspot
 # ---------------------------------------------------------------------------
 
-class BindingSite:
+class Hotspot:
     """A binding hotspot detected from cosolvent AGFE density maps.
 
     Stores all computed scores and an extensible ``properties`` dict so that
@@ -211,7 +211,7 @@ class BindingSite:
 
     @classmethod
     def from_dict(cls, d, voxel_mask, grid_origin, grid_delta):
-        """Reconstruct a BindingSite from a serialized dict and its voxel mask.
+        """Reconstruct a Hotspot from a serialized dict and its voxel mask.
 
         This is the inverse of the data written by
         :meth:`HotspotDetector.save_checkpoint`.  It is not intended for use
@@ -324,7 +324,7 @@ class BindingSite:
 
     def __repr__(self):
         return (
-            f"BindingSite(rank={self.rank}, cosolvent={self.cosolvent!r}, "
+            f"Hotspot(rank={self.rank}, cosolvent={self.cosolvent!r}, "
             f"n_voxels={self.n_voxels}, agfe_min={self.agfe_min:.3f} kcal/mol, "
             f"composite={self.composite_score:.3f})"
         )
@@ -346,8 +346,8 @@ class ConsensusSite:
         1 = highest consensus_score.
     community_id : int
         Internal community index from the overlap graph.
-    member_sites : list[BindingSite]
-        All per-probe BindingSite objects belonging to this community.
+    member_sites : list[Hotspot]
+        All per-probe Hotspot objects belonging to this community.
     member_cosolvents : list[str]
         Unique cosolvent names that contribute at least one site.
     n_probes : int

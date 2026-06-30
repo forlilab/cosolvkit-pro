@@ -48,11 +48,11 @@ def _make_cosolvent_color_map(cosolvents: List[str]) -> Dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Lightweight BindingSite stand-in (for data loaded from CSV)
+# Lightweight Hotspot stand-in (for data loaded from CSV)
 # ---------------------------------------------------------------------------
 
 class _SiteLike:
-    """Minimal BindingSite replacement constructed from CSV rows."""
+    """Minimal Hotspot replacement constructed from CSV rows."""
 
     def __init__(self, rank, site_id, centroid, composite_score, agfe_min, n_voxels):
         self.rank = rank

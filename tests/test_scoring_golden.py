@@ -52,13 +52,13 @@ def test_detect_scoring_golden(tmp_path):
     assert b.composite_score == pytest.approx(0.2 * (64.0 / 216.0), abs=1e-9)
 
 
-def test_compute_composite_score_golden(make_binding_site):
+def test_compute_composite_score_golden(make_hotspot):
     # favorability_score = [0.2, 0.8, 0.5]; sp_mrt = [10, 20, 35]; equal weights.
     favs = [0.2, 0.8, 0.5]
     mrts = [10.0, 20.0, 35.0]
     sites = []
     for i, (f, m) in enumerate(zip(favs, mrts)):
-        s = make_binding_site(rank=i + 1, site_id=i + 1, favorability_score=f)
+        s = make_hotspot(rank=i + 1, site_id=i + 1, favorability_score=f)
         s.add_property("sp_mrt", m)
         sites.append(s)
 
@@ -74,7 +74,7 @@ def test_compute_composite_score_golden(make_binding_site):
     assert rank == {3: 1, 2: 2, 1: 3}
 
 
-def test_compute_composite_score_none_and_flat_edges(make_binding_site):
+def test_compute_composite_score_none_and_flat_edges(make_hotspot):
     # Key "favorability" is FLAT (all equal) -> component 1.0 for every site.
     # Key "sp_mrt" is finite for 3 sites and MISSING (None) for 1 -> that site's
     # sp_mrt component is 0.0; the others are min-maxed over the finite set.
@@ -84,7 +84,7 @@ def test_compute_composite_score_none_and_flat_edges(make_binding_site):
     mrts = [10.0, 20.0, 30.0, None]      # finite minmax over {10,20,30}: 0.0, 0.5, 1.0; None -> 0.0
     sites = []
     for i, (f, m) in enumerate(zip(favs, mrts)):
-        s = make_binding_site(rank=i + 1, site_id=i + 1, favorability_score=f)
+        s = make_hotspot(rank=i + 1, site_id=i + 1, favorability_score=f)
         if m is not None:
             s.add_property("sp_mrt", m)   # site 4 has NO sp_mrt -> treated as missing/None
         sites.append(s)

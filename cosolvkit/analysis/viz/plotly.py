@@ -61,7 +61,7 @@ def plot_hotspot_clustering_3d(
         Produced by the clustering strategy inside :meth:`HotspotDetector.detect`.
     agfe_array : np.ndarray of float
         3-D AGFE grid values (same shape as *labeled_array*).
-    sites : list[BindingSite]
+    sites : list[Hotspot]
         Ranked binding sites returned by :meth:`HotspotDetector.detect`.
     combined_grid : gridData.Grid
         Grid object used for voxel-to-Angstrom coordinate conversion.
@@ -222,7 +222,7 @@ def plot_sp_fits(cosolvent, sites, df, out_path):
     Parameters
     ----------
     cosolvent : str
-    sites : list[BindingSite]
+    sites : list[Hotspot]
     df : pd.DataFrame
         SP data as written by ``survival_probability()``.
     out_path : str
