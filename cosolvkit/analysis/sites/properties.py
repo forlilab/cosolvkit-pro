@@ -16,9 +16,8 @@ from scipy.optimize import curve_fit
 from scipy.interpolate import interp1d
 from scipy.spatial import cKDTree
 
-from cosolvkit.analysis.core.models import BindingSite, PocketResidue
+from cosolvkit.analysis.core.models import PocketResidue
 from cosolvkit.analysis.core.scoring import compute_composite_score, _get_site_value
-import cosolvkit.analysis.hotspot_visualization as viz
 
 
 # ---------------------------------------------------------------------------
@@ -333,6 +332,7 @@ class PocketPropertyCalculator:
         intermittency : int
             Intermittency for ``waterdynamics.SurvivalProbability`` (default 2).
         """
+        import cosolvkit.analysis.hotspot_visualization as viz
         try:
             from waterdynamics import SurvivalProbability as SP
         except ImportError:
@@ -404,6 +404,7 @@ class PocketPropertyCalculator:
             Maps zone index (``Group`` column in CSV) to site rank.
             If ``None``, zone 0 → rank 1, zone 1 → rank 2, etc.
         """
+        import cosolvkit.analysis.hotspot_visualization as viz
         for cosolvent, sites in results.items():
             csv_path = os.path.join(
                 self.out_path, f"survival_probability_{cosolvent}.csv"
