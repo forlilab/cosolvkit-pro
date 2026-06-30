@@ -94,8 +94,13 @@ engine. Step 1 writes the prepared system in the format you selected
 (`md_engine`): OpenMM (`system.xml` + `system.pdb`), or Amber / GROMACS / CHARMM
 topology and coordinate files. Run the simulation with the engine of your
 choice using those files, then bring the resulting trajectory back for analysis.
+See [`examples/02_equilibration-and-production`](examples/02_equilibration-and-production)
+for a worked equilibration + production setup using [AutoPath](https://github.com/forlilab/autopath).
 
 3. **Analysis**
+See [`examples/03_analysis`](examples/03_analysis) for a YAML-driven analysis run
+(`analyze_cosolvent_simulation -cfg analysis.yaml`) and the interactive hotspot
+dashboard (`visualize_hotspots`).
 
 #### 3.1 centering, imaging, and aligning a trajectory
 To generate meaningful cosolvent densities for visualization, the trajectory

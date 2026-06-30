@@ -1,0 +1,109 @@
+# cosolvkit analysis configuration — example 03
+#
+# Chains off examples 01 (build) and 02 (equilibration + production). It reads the
+# aligned production trajectory from example 02 and the topology (system.pdb) from
+# example 01, builds AGFE density maps, and detects hotspots for the benzene probe.
+#
+# All file paths are resolved relative to THIS config file's directory.
+# Regenerate the full, fully-commented template with:
+#   analyze_cosolvent_simulation --generate-config analysis.yaml
+
+# Output directory for all results (per-sim subdirs + merged maps).
+out_path: "results"
+
+# -----------------------------------------------------------------
+# simulations: MD trajectories to analyse jointly. Here, one benzene replica.
+# Add more entries (different cosolvent probes) to enable multi-probe analysis
+# and cross-probe consensus (see the consensus section below).
+# -----------------------------------------------------------------
+simulations:
+  - trajectory: "../02_equilibration-and-production/6E22_benzene/MD/MD_6E22_benzene_rep1_aligned.dcd"  # aligned production traj from example 02
+    topology:   "../01_build_cosolvent_system/6E22_benzene/system.pdb"  # built in example 01 (system.prmtop also available there)
+    cosolvents: ["BEN"]            # benzene residue name
+    statistics: null              # AutoPath writes no cosolvkit-style statistics.csv
+    label:      "benzene_rep1"     # names the per-sim output subdir
+
+  - trajectory: "../02_equilibration-and-production/6E22_imidazole/MD/MD_6E22_imidazole_rep1_aligned.dcd"  # aligned production traj from example 02
+    topology:   "../01_build_cosolvent_system/6E22_imidazole/system.pdb"  # built in example 01 (system.prmtop also available there)
+    cosolvents: ["IMI"]            # imidazole residue name
+    statistics: null              # AutoPath writes no cosolvkit-style statistics.csv
+    label:      "imidazole_rep1"   # names the per-sim output subdir
+
+# Protein reference for hotspot visualisation. null → averaged_trajectory.pdb
+# (produced because report.rmsf is true below).
+reference_pdb: null
+
+# -----------------------------------------------------------------
+# report: per-simulation structural analysis
+# -----------------------------------------------------------------
+report:
+  equilibration:   false          # no statistics file → keep off
+  rmsf:            true            # writes averaged_trajectory.pdb (the hotspot reference)
+  rdf:             false
+  avg_selection:   "protein"
+  align_selection: "protein and name CA"
+
+# -----------------------------------------------------------------
+# density_maps: AGFE grid generation
+# -----------------------------------------------------------------
+density_maps:
+  use_atomtypes:  false            # split density by pharmacophoric atom type (HBD/HBA/Car/...)
+  atomtypes_file: null            # null → built-in defaults
+  gridsize:       0.5             # voxel edge (Angstrom)
+  temperature:    300.0           # Kelvin (match the production run)
+
+# -----------------------------------------------------------------
+# merge: how per-simulation maps combine (only matters with >1 simulation)
+# -----------------------------------------------------------------
+merge:
+  method:      "mean"
+  resample_to: "smallest"
+
+# -----------------------------------------------------------------
+# hotspots: HotspotDetector settings
+# -----------------------------------------------------------------
+hotspots:
+  agfe_cutoff:        -2.0        # kcal/mol; voxels below this are "favorable"
+                                  # NOTE: pass the same value to visualize_hotspots --agfe-cutoff
+  min_cluster_voxels: 20
+  top_percentile:     10.0
+  score_weights:      null        # null → equal weights {favorability, diversity, volume}
+  export_label_map:   true        # write hotspot_labels_{cosolvent}.dx
+  add_to_pymol:       true
+  gridsize:           0.5         # must match density_maps.gridsize
+  top_n_plot:         10
+  compute_survival_probability: false
+  survival_kwargs:
+    radius:        6.0
+    max_tau:       100
+    intermittency: 2
+  clustering:
+    use_skimage_cleanup: false
+    cleanup_min_size:    1
+    cleanup_hole_size:   2
+
+# -----------------------------------------------------------------
+# consensus: cross-probe consensus sites — needs >= 2 probes, so it is off
+# for this single-benzene example. Add more simulations above and set
+# enabled: true to group sites shared across probes.
+# -----------------------------------------------------------------
+consensus:
+  enabled:           false
+  jaccard_threshold: 0.05
+  community_method:  "connected_components"
+  score_weights:     null
+
+# -----------------------------------------------------------------
+# checkpoint: save hotspot results so consensus can be re-run without
+# redoing detection.
+# -----------------------------------------------------------------
+checkpoint:
+  save_hotspots: true
+  load_hotspots: false
+
+# -----------------------------------------------------------------
+# pymol: PyMol session generation
+# -----------------------------------------------------------------
+pymol:
+  selection_string: null
+  reference_pdb:    null

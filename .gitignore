@@ -4,11 +4,12 @@ __pycache__/
 *$py.class
 
 # test data
-test/
+6E22_*
 results/
-cosolvent_system/
 scratch/
 .micromamba
+*.out
+*.err
 
 # C extensions
 *.so

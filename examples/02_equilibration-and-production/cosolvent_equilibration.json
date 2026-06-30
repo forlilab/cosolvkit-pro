@@ -1,0 +1,35 @@
+{
+  "_comment": "Protein-only restraint protocol for cosolvent-MD equilibration. Adapted from autopath/data/eq_lig-prot_5ns_4fs.json by removing the 'ligand' component (a cosolvent box has no single bound ligand) and the corresponding 3rd value in every 'forces' array. Cosolvents and water are left UNRESTRAINED so they equilibrate freely around the restrained protein. Each 'forces' list is positionally matched to 'components_lookup' (kcal/mol/A^2).",
+
+  "components_lookup": {
+    "protein_BB": "protein and name CA C N O",
+    "protein_SC": "protein and not name CA C N O H*"
+  },
+
+  "minimization": [
+    { "name": "Stage 1", "forces": [50.0, 50.0] },
+    { "name": "Stage 2", "forces": [5.00, 1.00] },
+    { "name": "Stage 3", "forces": [1.00, 0.00] },
+    { "name": "Stage 4", "forces": [0.00, 0.00] }
+  ],
+
+  "warmup": {
+    "T_initial": 50.0,
+    "T_final": 300.0,
+    "T_step": 5.0,
+    "npt_flag": false,
+    "nsteps": 100000,
+    "stepsize": 0.001
+  },
+
+  "equilibration": [
+    { "name": "Stage 1", "forces": [10.0, 5.00], "npt_flag": false, "nsteps": 125000, "stepsize": 0.002 },
+    { "name": "Stage 2", "forces": [5.00, 2.50], "npt_flag": true,  "nsteps": 62500,  "stepsize": 0.004 },
+    { "name": "Stage 3", "forces": [2.50, 1.25], "npt_flag": true,  "nsteps": 62500,  "stepsize": 0.004 },
+    { "name": "Stage 4", "forces": [1.00, 0.75], "npt_flag": true,  "nsteps": 125000, "stepsize": 0.004 },
+    { "name": "Stage 5", "forces": [0.50, 0.50], "npt_flag": true,  "nsteps": 125000, "stepsize": 0.004 },
+    { "name": "Stage 6", "forces": [0.25, 0.00], "npt_flag": true,  "nsteps": 250000, "stepsize": 0.004 },
+    { "name": "Stage 7", "forces": [0.00, 0.00], "npt_flag": true,  "nsteps": 250000, "stepsize": 0.004 },
+    { "name": "Stage 8", "forces": [0.00, 0.00], "npt_flag": true,  "nsteps": 287500, "stepsize": 0.004 }
+  ]
+}
