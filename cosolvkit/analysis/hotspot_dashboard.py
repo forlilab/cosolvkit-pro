@@ -24,7 +24,6 @@ except ImportError:
 try:
     import dash
     from dash import html, dcc, Input, Output
-    import dash_bio
     from dash import dash_table
     _DASH_AVAILABLE = True
 except ImportError:
@@ -158,37 +157,6 @@ def _parse_pdb_for_viewer(pdb_path: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# RMSF → per-atom colour styles
-# ---------------------------------------------------------------------------
-
-def _build_rmsf_styles(model_data: dict) -> list:
-    """Return a list of per-atom style dicts for Molecule3dViewer.
-
-    Colours each atom by its B-factor (RMSF) using the 'coolwarm' colormap:
-    blue = low RMSF (rigid), red = high RMSF (flexible).
-    """
-    import matplotlib.pyplot as plt
-    import matplotlib.colors as mcolors
-
-    bfactors = np.array([a["bfactor"] for a in model_data["atoms"]], dtype=float)
-    vmin, vmax = bfactors.min(), bfactors.max()
-    if vmax - vmin < 1e-6:
-        vmax = vmin + 1.0
-
-    norm = mcolors.Normalize(vmin=vmin, vmax=vmax)
-    cmap = plt.cm.get_cmap("coolwarm")
-
-    styles = []
-    for bf in bfactors:
-        rgba = cmap(norm(bf))
-        hex_color = "#{:02x}{:02x}{:02x}".format(
-            int(rgba[0] * 255), int(rgba[1] * 255), int(rgba[2] * 255)
-        )
-        styles.append({"visualization_type": "cartoon", "color": hex_color})
-    return styles
-
-
-# ---------------------------------------------------------------------------
 # Hotspot data loading helpers
 # ---------------------------------------------------------------------------
 
@@ -238,11 +206,10 @@ def _build_sites_by_cosolvent(df: pd.DataFrame) -> Dict[str, List[_SiteLike]]:
 class HotspotDashboard:
     """Interactive Plotly/Dash dashboard for CoSolvKit hotspot visualization.
 
-    Displays the reference protein structure (via ``dash_bio.Molecule3dViewer``)
-    coloured by RMSF alongside interactive cosolvent pocket overlays.  A
-    separate tab renders the full voxel point-cloud view using the existing
-    :func:`~cosolvkit.hotspot_visualization.plot_hotspot_clustering_3d`
-    function.  A sortable/filterable data table shows all hotspot metrics.
+    Shows a single "Hotspots" view: the reference protein Cα backbone
+    (coloured by RMSF) overlaid with the hotspot centroids detected by the
+    hotspot detector, alongside a sortable/filterable table of all hotspot
+    metrics and per-hotspot visibility toggles.
 
     Parameters
     ----------
@@ -268,8 +235,8 @@ class HotspotDashboard:
     ):
         if not _DASH_AVAILABLE:
             raise ImportError(
-                "dash and dash_bio are required for the dashboard.\n"
-                "Install with: pip install dash dash-bio"
+                "dash is required for the dashboard.\n"
+                "Install with: pip install dash"
             )
         if not _PLOTLY_AVAILABLE:
             raise ImportError("plotly is required. Install with: pip install plotly")
@@ -297,18 +264,16 @@ class HotspotDashboard:
         self._color_map = _make_cosolvent_color_map(self._cosolvents)
         self._sites_by_cosolvent = _build_sites_by_cosolvent(self._df)
 
-        # Parse PDB once at startup
+        # Parse PDB once at startup (used for the Cα backbone trace)
         if self._pdb_path and os.path.exists(self._pdb_path):
             logger.info(f"Parsing reference PDB: {self._pdb_path}")
             self._model_data = _parse_pdb_for_viewer(self._pdb_path)
-            self._styles = _build_rmsf_styles(self._model_data)
         else:
             if self._pdb_path:
                 logger.warning(f"Reference PDB not found: {self._pdb_path}")
             else:
                 logger.warning("No reference PDB detected — protein viewer will be empty.")
             self._model_data = {"atoms": [], "bonds": []}
-            self._styles = []
 
         self._app = self._create_app()
 
@@ -362,49 +327,6 @@ class HotspotDashboard:
                     "opacity": 0.65,
                 })
         return shapes
-
-    def _load_voxel_figure(self, cosolvent: str, top_n: int) -> "go.Figure":
-        """Load DX label/AGFE grids and return a Plotly voxel point-cloud figure.
-
-        Reuses :func:`~cosolvkit.hotspot_visualization.plot_hotspot_clustering_3d`.
-        """
-        from cosolvkit.analysis.hotspot_visualization import plot_hotspot_clustering_3d
-
-        label_dx = os.path.join(self._map_dir, f"hotspot_labels_{cosolvent}.dx")
-        agfe_dx = os.path.join(self._map_dir, f"map_agfe_{cosolvent}.dx")
-
-        if not os.path.exists(label_dx) or not os.path.exists(agfe_dx):
-            fig = go.Figure()
-            fig.update_layout(
-                title=f"No voxel data found for {cosolvent} in {self._map_dir}",
-                scene=dict(xaxis_title="X (Å)", yaxis_title="Y (Å)", zaxis_title="Z (Å)"),
-            )
-            return fig
-
-        try:
-            from gridData import Grid
-        except ImportError:
-            logger.error("gridData is required for voxel visualization.")
-            return go.Figure()
-
-        label_grid = Grid(label_dx)
-        agfe_grid = Grid(agfe_dx)
-        sites = self._sites_by_cosolvent.get(cosolvent, [])[:top_n]
-
-        if not sites:
-            fig = go.Figure()
-            fig.update_layout(title=f"No hotspot sites found for {cosolvent}")
-            return fig
-
-        return plot_hotspot_clustering_3d(
-            labeled_array=label_grid.grid.astype(int),
-            agfe_array=agfe_grid.grid,
-            sites=sites,
-            combined_grid=agfe_grid,
-            cosolvent=cosolvent,
-            agfe_cutoff=self._agfe_cutoff,
-            top_n=top_n,
-        )
 
     # ------------------------------------------------------------------
     # Protein + Pockets Plotly figure
@@ -602,7 +524,7 @@ class HotspotDashboard:
                             ]),
                         ]),
                         html.Div([
-                            html.Div("RMSF coloring (protein):", style=label_style),
+                            html.Div("RMSF", style=label_style),
                             html.Div(style={
                                 "background": "linear-gradient(to right, #3b4cc0, #dddcdc, #b40426)",
                                 "width": "110px", "height": "10px", "borderRadius": "4px",
@@ -624,63 +546,19 @@ class HotspotDashboard:
                             style={"width": "65%", "padding": "10px", "overflow": "hidden"},
                             children=[
                                 dcc.Tabs(
-                                    value="pockets",
+                                    value="hotspots",
                                     style={"fontSize": "0.88em"},
                                     children=[
 
-                                        # ── Tab 1: Protein + Pockets (Plotly) ──────────────
+                                        # ── Hotspots (Plotly): protein + detected hotspots ──
                                         dcc.Tab(
-                                            label="Protein + Pockets",
-                                            value="pockets",
+                                            label="Hotspots",
+                                            value="hotspots",
                                             children=[
                                                 dcc.Graph(
                                                     id="protein-pockets-graph",
                                                     style={"height": "calc(100vh - 220px)"},
                                                     config={"displayModeBar": True},
-                                                ),
-                                            ],
-                                        ),
-
-                                        # ── Tab 2: Pocket voxel cloud ──────────────────────
-                                        dcc.Tab(
-                                            label="Pocket Voxels",
-                                            value="voxels",
-                                            children=[
-                                                html.Div(style={"padding": "8px 12px"}, children=[
-                                                    html.Div([
-                                                        html.Label("Cosolvent:",
-                                                                   style={**label_style, "marginRight": "8px"}),
-                                                        dcc.Dropdown(
-                                                            id="voxel-cosolvent-dd",
-                                                            options=cosolvent_options,
-                                                            value=self._cosolvents[0] if self._cosolvents else None,
-                                                            clearable=False,
-                                                            style={"width": "180px", "display": "inline-block"},
-                                                        ),
-                                                    ], style={"display": "flex", "alignItems": "center",
-                                                               "marginBottom": "6px"}),
-                                                    dcc.Graph(
-                                                        id="voxel-graph",
-                                                        style={"height": "calc(100vh - 280px)"},
-                                                        config={"displayModeBar": True},
-                                                    ),
-                                                ]),
-                                            ],
-                                        ),
-
-                                        # ── Tab 3: Protein Structure (Molecule3dViewer) ────
-                                        dcc.Tab(
-                                            label="Protein Structure",
-                                            value="structure",
-                                            children=[
-                                                dash_bio.Molecule3dViewer(
-                                                    id="mol-viewer",
-                                                    modelData=self._model_data,
-                                                    styles=self._styles,
-                                                    shapes=[],
-                                                    backgroundColor="#111827",
-                                                    backgroundOpacity=1.0,
-                                                    style={"height": "calc(100vh - 220px)", "width": "100%"},
                                                 ),
                                             ],
                                         ),
@@ -877,18 +755,6 @@ class HotspotDashboard:
             summary = f"{len(df_top)} site(s) across {n_cos} cosolvent(s)"
             return df_top.to_dict("records"), summary
 
-        # ── Voxel cloud ───────────────────────────────────────────────────────
-
-        @app.callback(
-            Output("voxel-graph", "figure"),
-            [Input("voxel-cosolvent-dd", "value"),
-             Input("topn-slider", "value")],
-        )
-        def update_voxel_view(cosolvent, top_n):
-            if not cosolvent:
-                return go.Figure()
-            return self._load_voxel_figure(cosolvent, top_n)
-
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -905,7 +771,11 @@ class HotspotDashboard:
             Enable Dash debug mode (hot-reloading, verbose errors).
         """
         _print_startup_banner(self.port, host)
-        self._app.run(host=host, port=self.port, debug=debug)
+        try:
+            self._app.run(host=host, port=self.port, debug=debug)
+        except KeyboardInterrupt:
+            # Ctrl-C: terminate cleanly so the port is released immediately.
+            print(f"\nDashboard stopped; port {self.port} released.")
 
 
 # ---------------------------------------------------------------------------
@@ -937,16 +807,26 @@ def _print_startup_banner(port: int, host: str) -> None:
     print(f"  Port     : {port}")
 
     if is_ssh:
-        tunnel_cmd = f"ssh -L {port}:localhost:{port} {user}@{fqdn} -N"
-        print(f"\n  Detected SSH session — the browser must run on your")
-        print(f"  local machine.  Open a NEW local terminal and run:\n")
-        print(f"    {tunnel_cmd}\n")
+        direct = f"ssh -fNL {port}:localhost:{port} {user}@{fqdn}"
+        proxyjump = (
+            f"ssh -fNL {port}:localhost:{port} "
+            f"-J {user}@<login-node> {user}@{hostname}"
+        )
+        print(f"\n  Detected SSH session — the browser must run on your local")
+        print(f"  machine.  Open a NEW local terminal and run ONE of:\n")
+        print(f"  • If this host is directly reachable from your machine:")
+        print(f"      {direct}\n")
+        print(f"  • If this is an HPC compute node (reachable only via a login")
+        print(f"    node — the usual case), jump through the login node:")
+        print(f"      {proxyjump}")
+        print(f"    (replace <login-node> with the cluster address you ssh into)\n")
         print(f"  Then open your browser at:  {local_url}")
-        print(f"\n  Tip: add -f to the ssh command to background the tunnel:")
-        print(f"    ssh -fNL {port}:localhost:{port} {user}@{fqdn}")
     else:
         print(f"\n  Open your browser at:  {local_url}")
 
+    print(f"\n  Stop with Ctrl-C  (do NOT use Ctrl-Z — that only suspends the")
+    print(f"  server and leaves port {port} busy, so the next launch fails with")
+    print(f"  'Address already in use'). To free a stuck port: fuser -k {port}/tcp")
     print(f"{sep}\n")
 
 
