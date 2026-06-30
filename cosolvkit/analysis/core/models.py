@@ -331,6 +331,101 @@ class Hotspot:
 
 
 # ---------------------------------------------------------------------------
+# BindingSite — a pocket formed by one or more hotspots (any cosolvent)
+# ---------------------------------------------------------------------------
+
+class BindingSite:
+    """A binding pocket formed by one or more :class:`Hotspot` objects.
+
+    Geometry (volume/shape/centroid) is the pocket's own, computed on the
+    union of member hotspot masks; affinity/kinetics/chemistry are roll-ups of
+    the members. ``combined`` and ``rank`` are set by
+    :func:`cosolvkit.analysis.core.scoring.score_binding_sites`.
+    """
+
+    def __init__(self, site_id, member_hotspots, voxel_mask, centroid,
+                 agfe_min, agfe_mean_top_pct, volume,
+                 solidity, extent, axis_major_length, axis_minor_length,
+                 favorable_atomtypes, pharmacophore, residence,
+                 cosolvents, n_total_cosolvents,
+                 pocket_residues=None, grid_origin=None, grid_delta=None):
+        self.site_id = site_id
+        self.member_hotspots = member_hotspots          # list[Hotspot]
+        self.voxel_mask = voxel_mask                    # boolean 3D ndarray on the common grid
+        self.centroid = centroid                        # np.ndarray (3,), Angstroms
+        self.agfe_min = agfe_min                        # best (most-negative) across members
+        self.agfe_mean_top_pct = agfe_mean_top_pct
+        self.volume = volume                            # Angstrom^3, union mask
+        self.solidity = solidity
+        self.extent = extent
+        self.axis_major_length = axis_major_length
+        self.axis_minor_length = axis_minor_length
+        self.favorable_atomtypes = favorable_atomtypes  # list[str], union over members
+        self.pharmacophore = pharmacophore              # {cosolvent: {atomtype: min_agfe}}
+        self.residence = residence                      # max sp_mrt across members, or None
+        self.cosolvents = cosolvents                    # sorted unique list[str]
+        self.n_total_cosolvents = n_total_cosolvents
+        self.pocket_residues = pocket_residues if pocket_residues is not None else []
+        self.grid_origin = grid_origin
+        self.grid_delta = grid_delta
+        self.properties = {}
+        self.combined = None                            # set by score_binding_sites
+        self.rank = None
+
+    @property
+    def n_hotspots(self):
+        return len(self.member_hotspots)
+
+    @property
+    def n_cosolvents(self):
+        return len(self.cosolvents)
+
+    @property
+    def probe_coverage(self):
+        return (self.n_cosolvents / self.n_total_cosolvents
+                if self.n_total_cosolvents else 0.0)
+
+    @property
+    def member_hotspot_ids(self):
+        return [h.site_id for h in self.member_hotspots]
+
+    def to_dict(self):
+        """Flat dict for CSV/JSON export (binding_sites.csv schema)."""
+        d = {
+            "site_id": self.site_id,
+            "rank": self.rank,
+            "combined": (round(float(self.combined), 4)
+                         if self.combined is not None else None),
+            "cosolvents": ",".join(self.cosolvents),
+            "n_cosolvents": self.n_cosolvents,
+            "probe_coverage": round(float(self.probe_coverage), 4),
+            "n_hotspots": self.n_hotspots,
+            "member_hotspot_ids": ",".join(str(i) for i in self.member_hotspot_ids),
+            "centroid_x": round(float(self.centroid[0]), 3),
+            "centroid_y": round(float(self.centroid[1]), 3),
+            "centroid_z": round(float(self.centroid[2]), 3),
+            "agfe_min": round(float(self.agfe_min), 4),
+            "agfe_mean_top_pct": round(float(self.agfe_mean_top_pct), 4),
+            "volume": round(float(self.volume), 3),
+            "solidity": round(float(self.solidity), 4),
+            "extent": round(float(self.extent), 4),
+            "axis_major_length": round(float(self.axis_major_length), 4),
+            "axis_minor_length": round(float(self.axis_minor_length), 4),
+            "favorable_atomtypes": ",".join(self.favorable_atomtypes),
+            "n_chemotypes": len(self.favorable_atomtypes),
+            "residence": (round(float(self.residence), 4)
+                          if self.residence is not None else None),
+        }
+        d.update(self.properties)
+        return d
+
+    def __repr__(self):
+        return (f"BindingSite(site_id={self.site_id}, rank={self.rank}, "
+                f"n_hotspots={self.n_hotspots}, cosolvents={self.cosolvents}, "
+                f"agfe_min={self.agfe_min:.3f})")
+
+
+# ---------------------------------------------------------------------------
 # ConsensusSite — consensus binding site from overlapping multi-probe hotspots
 # ---------------------------------------------------------------------------
 
