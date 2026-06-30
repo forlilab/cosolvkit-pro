@@ -20,7 +20,7 @@ from cosolvkit.analysis.sites.clustering import (
 )
 from cosolvkit.analysis.sites.properties import PocketPropertyCalculator
 from cosolvkit.analysis.core.models import BindingSite
-from cosolvkit.analysis.core.scoring import compute_composite_score
+from cosolvkit.analysis.core.scoring import compute_composite_score, combine_detect_scores
 
 
 class HotspotDetector:
@@ -397,27 +397,11 @@ class HotspotDetector:
                 "per_type_agfe": per_type_agfe,
             })
 
-        # --- Normalise favorability and volume ---
+        # --- Normalise and compute composite score ---
         raw_f = np.array(raw_f)
         raw_v = np.array(raw_v, dtype=float)
 
-        f_min, f_max = raw_f.min(), raw_f.max()
-        if (f_max - f_min) < 1e-20:
-            f_norm = np.ones_like(raw_f)
-        else:
-            # Most negative (f_min) → f_norm = 1 (best); least negative → 0
-            f_norm = (f_max - raw_f) / (f_max - f_min)
-
-        v_max = raw_v.max()
-        v_norm = raw_v / v_max if v_max > 0 else np.zeros_like(raw_v)
-
-        # --- Composite score ---
-        w = self.score_weights
-        composite = (
-            w["favorability"] * f_norm
-            + w["diversity"] * np.array(raw_d)
-            + w["volume"] * v_norm
-        )
+        composite, f_norm, v_norm = combine_detect_scores(raw_f, raw_d, raw_v, self.score_weights)
 
         # --- Sort descending and build BindingSite objects ---
         order = np.argsort(-composite)

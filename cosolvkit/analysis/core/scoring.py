@@ -4,10 +4,55 @@
 # CoSolvKit
 #
 # Composite scoring helpers, moved verbatim from pocket_properties.py.
-# Unification with HotspotDetector's inline scoring happens in Task 11.
+# Unification with HotspotDetector's inline scoring happens in Task 13.
 #
 
 import numpy as np
+
+
+# ---------------------------------------------------------------------------
+# Normalization primitives
+# ---------------------------------------------------------------------------
+
+def _inverted_minmax(arr):
+    """Most-negative -> 1.0, least-negative -> 0.0. Flat -> all ones."""
+    arr = np.asarray(arr, dtype=float)
+    lo, hi = arr.min(), arr.max()
+    if (hi - lo) < 1e-20:
+        return np.ones_like(arr)
+    return (hi - arr) / (hi - lo)
+
+
+def _divide_by_max(arr):
+    """Divide by max; returns zeros when max <= 0."""
+    arr = np.asarray(arr, dtype=float)
+    m = arr.max()
+    return arr / m if m > 0 else np.zeros_like(arr)
+
+
+def _minmax(arr):
+    """Standard min-max normalization. Flat -> all ones."""
+    arr = np.asarray(arr, dtype=float)
+    lo, hi = arr.min(), arr.max()
+    if (hi - lo) < 1e-20:
+        return np.ones_like(arr)
+    return (arr - lo) / (hi - lo)
+
+
+def combine_detect_scores(raw_f, raw_d, raw_v, weights):
+    """Reproduce HotspotDetector.detect() scoring exactly.
+
+    favorability: inverted min-max; diversity: raw; volume: divide-by-max.
+    ``weights`` is the already-sum-1-normalised dict {favorability, diversity, volume}.
+    Returns (composite, f_norm, v_norm) as np.ndarrays.
+    """
+    raw_d = np.asarray(raw_d, dtype=float)
+    f_norm = _inverted_minmax(raw_f)
+    v_norm = _divide_by_max(raw_v)
+    composite = (weights["favorability"] * f_norm
+                 + weights["diversity"] * raw_d
+                 + weights["volume"] * v_norm)
+    return composite, f_norm, v_norm
 
 
 # ---------------------------------------------------------------------------
@@ -93,19 +138,25 @@ def compute_composite_score(sites, score_weights):
     total_w = sum(score_weights[k] for k in active_keys)
     norm_w = {k: score_weights[k] / total_w for k in active_keys}
 
-    # Compute normalised component scores per site
+    # Compute normalised component scores per site.
+    # For each active key, normalise only the finite values via _minmax
+    # (flat key -> ones, matching (hi-lo)<1e-20 -> 1.0); None/non-finite
+    # positions stay 0.0.
+    key_norm = {}
+    for key in active_keys:
+        vals = raw_values[key]
+        finite_indices = [i for i, v in enumerate(vals) if v is not None and np.isfinite(v)]
+        finite_vals = np.array([vals[i] for i in finite_indices], dtype=float)
+        normed = _minmax(finite_vals)
+        full = np.zeros(len(vals))
+        for pos, i in enumerate(finite_indices):
+            full[i] = normed[pos]
+        key_norm[key] = full
+
     for i, site in enumerate(sites):
         composite = 0.0
         for key in active_keys:
-            val = raw_values[key][i]
-            lo, hi = key_mins[key], key_maxs[key]
-            if val is None or not np.isfinite(val):
-                component = 0.0
-            elif (hi - lo) < 1e-20:
-                component = 1.0
-            else:
-                component = (val - lo) / (hi - lo)
-            composite += norm_w[key] * component
+            composite += norm_w[key] * key_norm[key][i]
         site.composite_score = composite
 
     # Re-rank descending
