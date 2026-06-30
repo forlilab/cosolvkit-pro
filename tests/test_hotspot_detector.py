@@ -10,6 +10,7 @@ import json
 import os
 
 import numpy as np
+import pandas as pd
 import pytest
 from gridData import Grid
 
@@ -334,8 +335,6 @@ class TestCheckpoint:
 # CSV schema: geom_* columns go to sidecar
 # ---------------------------------------------------------------------------
 
-import pandas as pd
-
 class TestCsvSlim:
     def test_main_csv_has_no_geom_columns(self, tmp_path):
         # build a detector whose sites carry geom_* via properties
@@ -373,3 +372,7 @@ class TestCsvSlim:
         sidecar = pd.read_csv(tmp_path / "hotspot_sites_geom_BEN.csv")
         assert "site_id" in sidecar.columns
         assert "geom_solidity" in sidecar.columns
+
+        all_df = pd.read_csv(tmp_path / "hotspot_sites_all.tsv", sep="\t")
+        assert not any(c.startswith("geom_") for c in all_df.columns)
+        assert "composite_score" in all_df.columns
