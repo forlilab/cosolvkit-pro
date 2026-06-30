@@ -12,7 +12,7 @@ import logging
 from glob import glob
 from typing import Dict, List, Optional
 
-from .analysis import Report
+from cosolvkit.analysis.report import Report
 from .analysis_config import AnalysisConfig, SimulationEntry
 from .density_analysis import combine_dx_maps_with_resampling, generate_pymol_session
 from .hotspots_detection import HotspotDetector
