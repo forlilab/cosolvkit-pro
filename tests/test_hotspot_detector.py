@@ -328,3 +328,48 @@ class TestCheckpoint:
         HotspotDetector.save_checkpoint({"BEN": []}, str(tmp_path))
         npz = tmp_path / "hotspot_checkpoints" / "hotspot_checkpoint_BEN.npz"
         assert not npz.exists()
+
+
+# ---------------------------------------------------------------------------
+# CSV schema: geom_* columns go to sidecar
+# ---------------------------------------------------------------------------
+
+import pandas as pd
+
+class TestCsvSlim:
+    def test_main_csv_has_no_geom_columns(self, tmp_path):
+        # build a detector whose sites carry geom_* via properties
+        from cosolvkit.analysis.hotspots_detection import HotspotDetector
+        import numpy as np
+        from gridData import Grid
+        arr = np.zeros((20, 20, 20)); arr[5:10, 5:10, 5:10] = -2.0
+        edges = [np.linspace(0, 10, 21)] * 3
+        Grid(arr, edges=edges).export(str(tmp_path / "map_agfe_BEN.dx"))
+        det = HotspotDetector(out_path=str(tmp_path), cosolvent_names=["BEN"], universe=None,
+                              agfe_cutoff=-1.0, min_cluster_voxels=10,
+                              compute_survival_probability=False, score_weights=None)
+        sites = det.detect("BEN")
+        sites[0].add_property("geom_solidity", 0.42)  # simulate a geom_* column
+        det.export_results({"BEN": sites}, label_map=False)
+
+        main = pd.read_csv(tmp_path / "hotspot_sites_BEN.csv")
+        assert not any(c.startswith("geom_") for c in main.columns)
+        assert "composite_score" in main.columns and "agfe_min" in main.columns
+
+    def test_geom_sidecar_written_with_site_id(self, tmp_path):
+        from cosolvkit.analysis.hotspots_detection import HotspotDetector
+        import numpy as np
+        from gridData import Grid
+        arr = np.zeros((20, 20, 20)); arr[5:10, 5:10, 5:10] = -2.0
+        edges = [np.linspace(0, 10, 21)] * 3
+        Grid(arr, edges=edges).export(str(tmp_path / "map_agfe_BEN.dx"))
+        det = HotspotDetector(out_path=str(tmp_path), cosolvent_names=["BEN"], universe=None,
+                              agfe_cutoff=-1.0, min_cluster_voxels=10,
+                              compute_survival_probability=False, score_weights=None)
+        sites = det.detect("BEN")
+        sites[0].add_property("geom_solidity", 0.42)
+        det.export_results({"BEN": sites}, label_map=False)
+
+        sidecar = pd.read_csv(tmp_path / "hotspot_sites_geom_BEN.csv")
+        assert "site_id" in sidecar.columns
+        assert "geom_solidity" in sidecar.columns

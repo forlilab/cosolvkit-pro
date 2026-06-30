@@ -522,6 +522,7 @@ class HotspotDetector:
             If True, export ``hotspot_labels_{cosolvent}.dx`` where voxel
             value equals the site rank (0 = background, 1 = top site).
         """
+        GEOM_PREFIX = "geom_"
         all_rows = []
 
         for cosolvent, sites in results.items():
@@ -532,11 +533,19 @@ class HotspotDetector:
             rows = [s.to_dict() for s in sites]
             df = pd.DataFrame(rows)
 
+            geom_cols = [c for c in df.columns if c.startswith(GEOM_PREFIX)]
+            main_df = df.drop(columns=geom_cols)
+
             csv_path = os.path.join(self.out_path, f"hotspot_sites_{cosolvent}.csv")
             json_path = os.path.join(self.out_path, f"hotspot_sites_{cosolvent}.json")
-            df.to_csv(csv_path, index=False)
+            main_df.to_csv(csv_path, index=False)
             with open(json_path, "w") as fh:
-                json.dump(rows, fh, indent=2)
+                json.dump(rows, fh, indent=2)            # JSON keeps the full record
+
+            if geom_cols:
+                geom_path = os.path.join(self.out_path, f"hotspot_sites_geom_{cosolvent}.csv")
+                df[["site_id"] + geom_cols].to_csv(geom_path, index=False)
+                self.logger.info(f"Exported geometry sidecar: {geom_path}")
 
             self.logger.info(
                 f"Exported {len(sites)} hotspot(s) for '{cosolvent}': "
@@ -548,11 +557,9 @@ class HotspotDetector:
                 self._export_label_map(cosolvent, sites)
 
         if all_rows:
-            all_df = (
-                pd.DataFrame(all_rows)
-                .sort_values("composite_score", ascending=False)
-                .reset_index(drop=True)
-            )
+            all_df = pd.DataFrame(all_rows)
+            all_df = all_df.drop(columns=[c for c in all_df.columns if c.startswith(GEOM_PREFIX)])
+            all_df = all_df.sort_values("composite_score", ascending=False).reset_index(drop=True)
             tsv_path = os.path.join(self.out_path, "hotspot_sites_all.tsv")
             all_df.to_csv(tsv_path, sep="\t", index=False)
             self.logger.info(f"Exported combined hotspot table: {tsv_path}")
