@@ -47,6 +47,7 @@ def test_detect_scoring_golden(tmp_path):
     # Blob B: favorability 0.0; volume 64/216; composite = 0.2 * (64/216)
     assert b.n_voxels == 64
     assert b.favorability_score == pytest.approx(0.0, abs=1e-9)
+    assert b.diversity_score == pytest.approx(0.0, abs=1e-9)
     assert b.volume_score == pytest.approx(64.0 / 216.0, abs=1e-9)
     assert b.composite_score == pytest.approx(0.2 * (64.0 / 216.0), abs=1e-9)
 
@@ -65,7 +66,8 @@ def test_compute_composite_score_golden(make_binding_site):
 
     comp = {s.site_id: s.composite_score for s in sites}
     rank = {s.site_id: s.rank for s in sites}
-    # fav minmax: [0, 1, 0.5]; sp_mrt minmax: [0, 0.4, 1.0]; each weight 0.5
+    # raw weights 1.0 each -> normalized to 0.5 each internally
+    # fav minmax: [0, 1, 0.5]; sp_mrt minmax: [0, 0.4, 1.0]
     assert comp[1] == pytest.approx(0.5 * 0.0 + 0.5 * 0.0, abs=1e-9)   # 0.0
     assert comp[2] == pytest.approx(0.5 * 1.0 + 0.5 * 0.4, abs=1e-9)   # 0.7
     assert comp[3] == pytest.approx(0.5 * 0.5 + 0.5 * 1.0, abs=1e-9)   # 0.75
