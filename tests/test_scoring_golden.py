@@ -72,3 +72,32 @@ def test_compute_composite_score_golden(make_binding_site):
     assert comp[2] == pytest.approx(0.5 * 1.0 + 0.5 * 0.4, abs=1e-9)   # 0.7
     assert comp[3] == pytest.approx(0.5 * 0.5 + 0.5 * 1.0, abs=1e-9)   # 0.75
     assert rank == {3: 1, 2: 2, 1: 3}
+
+
+def test_compute_composite_score_none_and_flat_edges(make_binding_site):
+    # Key "favorability" is FLAT (all equal) -> component 1.0 for every site.
+    # Key "sp_mrt" is finite for 3 sites and MISSING (None) for 1 -> that site's
+    # sp_mrt component is 0.0; the others are min-maxed over the finite set.
+    # Weights {favorability:1.0, sp_mrt:1.0} -> normalized 0.5 each over both
+    # active keys (both keys have >=1 finite value, so neither is dropped).
+    favs = [0.5, 0.5, 0.5, 0.5]          # flat -> all favorability components = 1.0
+    mrts = [10.0, 20.0, 30.0, None]      # finite minmax over {10,20,30}: 0.0, 0.5, 1.0; None -> 0.0
+    sites = []
+    for i, (f, m) in enumerate(zip(favs, mrts)):
+        s = make_binding_site(rank=i + 1, site_id=i + 1, favorability_score=f)
+        if m is not None:
+            s.add_property("sp_mrt", m)   # site 4 has NO sp_mrt -> treated as missing/None
+        sites.append(s)
+
+    compute_composite_score(sites, {"favorability": 1.0, "sp_mrt": 1.0})
+
+    comp = {s.site_id: s.composite_score for s in sites}
+    # composite = 0.5*fav_component + 0.5*sp_component
+    # site1: 0.5*1.0 + 0.5*0.0  = 0.5
+    # site2: 0.5*1.0 + 0.5*0.5  = 0.75
+    # site3: 0.5*1.0 + 0.5*1.0  = 1.0
+    # site4: 0.5*1.0 + 0.5*0.0  = 0.5   (sp_mrt missing -> 0.0 component)
+    assert comp[1] == pytest.approx(0.5, abs=1e-9)
+    assert comp[2] == pytest.approx(0.75, abs=1e-9)
+    assert comp[3] == pytest.approx(1.0, abs=1e-9)
+    assert comp[4] == pytest.approx(0.5, abs=1e-9)
