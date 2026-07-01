@@ -15,6 +15,19 @@ from typing import Optional, List, Dict
 import yaml
 
 
+def resolve_agfe_cutoff(hotspots_cfg, temperature):
+    """Resolve the effective AGFE cutoff (kcal/mol) for hotspot detection.
+
+    When ``cutoff_mode == "kt"`` the cutoff is ``-n_kt * kB * T`` (temperature-aware,
+    physically = an ``e^{n_kt}``-fold enrichment over bulk). Otherwise the absolute
+    ``agfe_cutoff`` is used unchanged.
+    """
+    from cosolvkit.analysis.core.grid import BOLTZMANN_CONSTANT_KB
+    if getattr(hotspots_cfg, "cutoff_mode", "absolute") == "kt":
+        return -float(hotspots_cfg.n_kt) * BOLTZMANN_CONSTANT_KB * float(temperature)
+    return float(hotspots_cfg.agfe_cutoff)
+
+
 # ---------------------------------------------------------------------------
 # Leaf dataclasses — one per YAML section
 # ---------------------------------------------------------------------------
@@ -62,6 +75,8 @@ class ClusteringConfig:
 @dataclass
 class HotspotsConfig:
     agfe_cutoff:        float                = -1.0
+    cutoff_mode:        str                  = "kt"      # "kt" | "absolute"
+    n_kt:               float                = 1.0       # cutoff = -n_kt * kB * T when mode == "kt"
     min_cluster_voxels: int                  = 20
     top_percentile:     float                = 10.0
     score_weights:      Optional[Dict]       = None
