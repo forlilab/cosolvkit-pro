@@ -30,10 +30,16 @@ def _connectivity_structure(connectivity):
     return np.ones((3, 3, 3), dtype=int)  # 26-connectivity
 
 
-def group_hotspots(probe_results, connectivity=26):
+def group_hotspots(probe_results, connectivity=26, merge_tolerance_ang=0.0):
     """Group hotspots across cosolvents into binding sites by mask connectivity.
 
     probe_results : dict[str, list[Hotspot]]
+    merge_tolerance_ang : float
+        Max surface gap (Å) between two hotspots that still merges them. The union
+        is dilated by ``round((merge_tolerance_ang/2)/gridsize)`` voxels (each side
+        grows tol/2) BEFORE connected-components labeling. 0 = literal touch only.
+        Dilation affects grouping only; each group's stored ``union_mask`` is the OR
+        of members' ORIGINAL (undilated) resampled masks.
     Returns list of dicts: {members, union_mask, ref_origin, ref_delta, ref_shape}.
     """
     hotspots = [h for sites in probe_results.values() for h in sites]
@@ -51,10 +57,21 @@ def group_hotspots(probe_results, connectivity=26):
     for m in resampled:
         union |= m
 
-    labels, n = _ndlabel(union, structure=_connectivity_structure(connectivity))
+    # Dilate ONLY for the grouping decision (bridge sub-touch gaps up to the tolerance).
+    gridsize = float(ref_d[0])
+    radius_vox = max(0, int(round((merge_tolerance_ang / 2.0) / gridsize)))
+    if radius_vox > 0:
+        from scipy.ndimage import binary_dilation
+        from skimage.morphology import ball
+        grouping_mask = binary_dilation(union, structure=ball(radius_vox))
+    else:
+        grouping_mask = union
+
+    labels, n = _ndlabel(grouping_mask, structure=_connectivity_structure(connectivity))
 
     groups = {}
     for h, m in zip(hotspots, resampled):
+        # assign by the ORIGINAL mask's voxels' labels in the (dilated) labeling
         lab_counts = np.bincount(labels[m].ravel())
         if len(lab_counts) <= 1:
             continue  # hotspot has no voxels in the union (shouldn't happen)
@@ -157,15 +174,17 @@ def build_binding_site(site_id, group, n_total_cosolvents):
 class BindingSiteDetector:
     """Detect binding sites by grouping hotspots (mask connectivity) and scoring them."""
 
-    def __init__(self, probe_results, connectivity=26, weights=None):
+    def __init__(self, probe_results, connectivity=26, weights=None, merge_tolerance_ang=2.0):
         self.probe_results = probe_results
         self.connectivity = connectivity
         self.weights = weights
+        self.merge_tolerance_ang = merge_tolerance_ang
         self.n_total_cosolvents = len(probe_results)
 
     def detect(self):
         from cosolvkit.analysis.core.scoring import score_binding_sites
-        groups = group_hotspots(self.probe_results, connectivity=self.connectivity)
+        groups = group_hotspots(self.probe_results, connectivity=self.connectivity,
+                                merge_tolerance_ang=self.merge_tolerance_ang)
         sites = [
             build_binding_site(site_id=i + 1, group=g,
                                n_total_cosolvents=self.n_total_cosolvents)
@@ -176,10 +195,10 @@ class BindingSiteDetector:
         return sites
 
 
-def identify_binding_sites(probe_results, connectivity=26, weights=None):
+def identify_binding_sites(probe_results, connectivity=26, weights=None, merge_tolerance_ang=2.0):
     """Group per-cosolvent hotspots into ranked cross-cosolvent binding sites."""
     return BindingSiteDetector(probe_results, connectivity=connectivity,
-                               weights=weights).detect()
+                               weights=weights, merge_tolerance_ang=merge_tolerance_ang).detect()
 
 
 def export_binding_sites(sites, out_path):

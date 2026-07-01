@@ -91,9 +91,10 @@ class HotspotsConfig:
 
 @dataclass
 class BindingSitesConfig:
-    enabled:       bool          = True
-    connectivity:  int           = 26
-    weights:       Optional[Dict] = None
+    enabled:             bool          = True
+    connectivity:        int           = 26
+    weights:             Optional[Dict] = None
+    merge_tolerance_ang: float         = 2.0
 
 
 @dataclass

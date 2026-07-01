@@ -300,7 +300,8 @@ class MultiReport:
                 identify_binding_sites, export_binding_sites,
             )
             binding_sites = identify_binding_sites(
-                results, connectivity=bs_cfg.connectivity, weights=bs_cfg.weights,
+                results, connectivity=bs_cfg.connectivity,
+                weights=bs_cfg.weights, merge_tolerance_ang=bs_cfg.merge_tolerance_ang,
             )
             export_binding_sites(binding_sites, self.out_path)
             self.logger.info(f"Identified {len(binding_sites)} binding site(s).")
