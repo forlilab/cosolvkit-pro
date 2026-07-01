@@ -8,6 +8,7 @@ from .cosolvent_system import CosolventSystem, CosolventMolecule
 from .analysis import (
     Report, AnalysisConfig, MultiReport,
     GridAnalysis, HotspotDetector, Hotspot,
+    BindingSite, score_binding_sites,
     PocketPropertyCalculator, PocketResidue,
     set_residue_embeddings,
     CrossProbeConsensusDetector, ConsensusSite,
@@ -18,6 +19,7 @@ __all__ = [
     "CosolventSystem", "CosolventMolecule",
     "Report", "AnalysisConfig", "MultiReport",
     "GridAnalysis", "HotspotDetector", "Hotspot",
+    "BindingSite", "score_binding_sites",
     "PocketPropertyCalculator", "PocketResidue",
     "set_residue_embeddings",
     "CrossProbeConsensusDetector", "ConsensusSite",
