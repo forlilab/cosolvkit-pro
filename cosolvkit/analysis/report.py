@@ -20,13 +20,8 @@ from MDAnalysis import Universe
 from cosolvkit.analysis.structural import qc
 from cosolvkit.analysis.core.grid import GridAnalysis
 from cosolvkit.analysis.sites.detect import HotspotDetector
-from cosolvkit.analysis.sites.consensus import CrossProbeConsensusDetector
-from cosolvkit.analysis.core.models import ConsensusSite  # noqa: F401
-from cosolvkit.analysis.viz.pymol import (
-    generate_pymol_session,
-    generate_consensus_pockets_session,
-    generate_pharmacophore_session,
-)
+from cosolvkit.analysis.sites.binding_sites import identify_binding_sites, export_binding_sites
+from cosolvkit.analysis.viz.pymol import generate_pymol_session
 from cosolvkit.analysis.viz.vmd import generate_vmd_session
 
 
@@ -290,8 +285,9 @@ class Report:
         :param gridsize: voxel size in Å, must match generate_density_maps (default 0.5).
         :param top_n_plot: maximum number of sites shown in the 3D plot, in rank order (default 10).
         :param save_checkpoint: if True (default), save a checkpoint under
-            ``out_path/hotspot_checkpoints/`` so consensus can be re-run later
-            without repeating this step.  Load via :meth:`load_hotspot_checkpoint`.
+            ``out_path/hotspot_checkpoints/`` so binding-site detection can be
+            re-run later without repeating this step.  Load via
+            :meth:`load_hotspot_checkpoint`.
         :return: dict {cosolvent: List[Hotspot]} sorted by composite score.
         """
         if cosolvent_names is None:
@@ -331,11 +327,11 @@ class Report:
         Reads the NPZ files written by :meth:`generate_hotspot_report` (when
         ``save_checkpoint=True``) and reconstructs the full
         ``Dict[str, List[Hotspot]]`` structure — including voxel masks and
-        grid metadata — needed by :meth:`generate_consensus_report`.
+        grid metadata — needed by :meth:`generate_binding_sites_report`.
 
-        Use this to re-run consensus detection with different parameters
-        (``jaccard_threshold``, ``community_method``, ``score_weights``) without
-        repeating the slow hotspot detection step.
+        Use this to re-run binding-site detection with different parameters
+        (``connectivity``, ``weights``) without repeating the slow hotspot
+        detection step.
 
         :param cosolvent_names: cosolvents to load, defaults to all cosolvents
             known to this :class:`Report`.
@@ -347,59 +343,40 @@ class Report:
             cosolvent_names = self.cosolvent_names
         return HotspotDetector.load_checkpoint(self.out_path, cosolvent_names)
 
-    def generate_consensus_report(self,
-                                  probe_results: dict,
-                                  jaccard_threshold: float = 0.05,
-                                  community_method: str = "connected_components",
-                                  score_weights: dict = None) -> list:
-        """Group per-probe hotspots into cross-probe consensus binding sites.
+    def generate_binding_sites_report(self,
+                                      probe_results: dict,
+                                      connectivity: int = 26,
+                                      weights: dict = None) -> list:
+        """Group per-cosolvent hotspots into ranked cross-cosolvent binding sites.
 
         Must be called after :meth:`generate_hotspot_report` (pass its return
-        value as ``probe_results``).  Sites from different cosolvents that share
-        favorable voxels (Jaccard ≥ ``jaccard_threshold``) are grouped into
-        communities.  Each community becomes a :class:`ConsensusSite` with a
-        pharmacophore profile describing which atom types from which probes are
-        favorable.
+        value as ``probe_results``).  Hotspots from different cosolvents that
+        spatially overlap (voxel connectivity) are grouped into binding sites.
+        Each site becomes a :class:`~cosolvkit.analysis.core.models.BindingSite`
+        with a pharmacophore profile describing which atom types from which
+        cosolvents are favorable.
 
         Writes to ``out_path``:
 
-        - ``consensus_sites.csv`` / ``consensus_sites.json`` — flat ranked table
-        - ``consensus_sites_pharmacophore.json`` — nested per-probe/per-atom-type
+        - ``binding_sites.csv`` / ``binding_sites.json`` — flat ranked table
+        - ``binding_sites_pharmacophore.json`` — nested per-cosolvent/per-atom-type
           AGFE fingerprint
 
         :param probe_results: ``Dict[str, List[Hotspot]]`` from
             :meth:`generate_hotspot_report`.
-        :param jaccard_threshold: minimum voxel-mask Jaccard similarity to link
-            two sites (default 0.05).
-        :param community_method: ``'connected_components'`` (default) or
-            ``'greedy_modularity'`` (requires networkx ≥ 2.6).
-        :param score_weights: dict with keys ``coverage``, ``favorability``,
+        :param connectivity: voxel connectivity used to group hotspots into a
+            binding site (6, 18, or 26; default 26).
+        :param weights: dict with keys ``coverage``, ``favorability``,
             ``volume`` (normalised internally).
-        :return: list of :class:`ConsensusSite` sorted by consensus_score.
+        :return: list of :class:`~cosolvkit.analysis.core.models.BindingSite`
+            sorted by rank.
         """
-        detector = CrossProbeConsensusDetector(
-            probe_results=probe_results,
-            jaccard_threshold=jaccard_threshold,
-            community_method=community_method,
-            score_weights=score_weights,
+        binding_sites = identify_binding_sites(
+            probe_results, connectivity=connectivity, weights=weights,
         )
-        consensus_sites = detector.detect_communities()
-        detector.export_results(consensus_sites, out_path=self.out_path)
+        export_binding_sites(binding_sites, self.out_path)
 
-        reference_pdb = getattr(self, 'avg_pdb_path', None)
-        generate_consensus_pockets_session(
-            consensus_sites=consensus_sites,
-            out_path=self.out_path,
-            reference_pdb=reference_pdb,
-        )
-        generate_pharmacophore_session(
-            consensus_sites=consensus_sites,
-            out_path=self.out_path,
-            reference_pdb=reference_pdb,
-            top_n=3,
-        )
-
-        return consensus_sites
+        return binding_sites
 
     def generate_pymol_session(self,
                                density_files: Union[str, list] = None,

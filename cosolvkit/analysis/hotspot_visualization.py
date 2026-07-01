@@ -5,5 +5,4 @@ from cosolvkit.analysis.viz.plotly import (  # noqa: F401
 )
 from cosolvkit.analysis.viz.pymol import (  # noqa: F401
     visualise_clustering, add_hotspots_to_pymol_session,
-    generate_consensus_pockets_session, generate_pharmacophore_session,
 )

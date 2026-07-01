@@ -11,7 +11,7 @@ from .analysis import (
     BindingSite, score_binding_sites,
     PocketPropertyCalculator, PocketResidue,
     set_residue_embeddings,
-    CrossProbeConsensusDetector, ConsensusSite,
+    BindingSiteDetector, identify_binding_sites,
 )
 from .parametrize import parse_small_molecule_ff, load_molecule_from_file, get_template_generator
 
@@ -22,6 +22,6 @@ __all__ = [
     "BindingSite", "score_binding_sites",
     "PocketPropertyCalculator", "PocketResidue",
     "set_residue_embeddings",
-    "CrossProbeConsensusDetector", "ConsensusSite",
+    "BindingSiteDetector", "identify_binding_sites",
     "parse_small_molecule_ff", "load_molecule_from_file", "get_template_generator",
 ]

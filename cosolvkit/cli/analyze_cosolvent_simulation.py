@@ -57,19 +57,15 @@ Examples:
                         help='Path to a custom atom-types JSON file.')
     legacy.add_argument('-l',  '--statistics_file', dest='statistics_file', default=None,
                         help='Path to the MD log/statistics file.')
-    legacy.add_argument('--consensus', dest='consensus', default=False,
+    legacy.add_argument('--binding-sites', dest='binding_sites', default=False,
                         action='store_true',
-                        help='Run cross-probe consensus detection after hotspot detection.')
-    legacy.add_argument('--jaccard-threshold', dest='jaccard_threshold', default=0.05,
-                        type=float,
-                        help='Minimum Jaccard voxel-mask overlap to link two sites '
-                             'in the consensus graph (default 0.05).')
+                        help='Run cross-cosolvent binding-site detection after hotspot detection.')
     legacy.add_argument('--load-hotspot-checkpoint', dest='load_hotspot_checkpoint',
                         default=False, action='store_true',
                         help='Skip hotspot detection and load results from the '
                              'previously saved checkpoint under '
                              'out_path/hotspot_checkpoints/. '
-                             'Useful to re-run consensus with different parameters.')
+                             'Useful to re-run binding-site detection with different parameters.')
 
     return parser.parse_args()
 
@@ -126,10 +122,9 @@ def _run_legacy(args, logger):
             top_n_plot=10,
         )
 
-    if args.consensus:
-        report.generate_consensus_report(
+    if args.binding_sites:
+        report.generate_binding_sites_report(
             probe_results=hotspot_results,
-            jaccard_threshold=args.jaccard_threshold,
         )
 
 

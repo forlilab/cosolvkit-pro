@@ -195,7 +195,7 @@ class Hotspot:
         self.properties = {}                          # extensible user properties
         self.pocket_residues = []                     # List[PocketResidue], populated on demand
         # Grid spatial metadata — set by HotspotDetector.detect() after construction.
-        # Required by CrossProbeConsensusDetector for cross-grid Jaccard computation.
+        # Required for cross-grid voxel-mask computations (e.g. binding-site grouping).
         self.grid_origin = None                       # np.ndarray (3,), Angstroms
         self.grid_delta = None                        # np.ndarray (3,), Angstroms per voxel
 
@@ -409,102 +409,3 @@ class BindingSite:
         return (f"BindingSite(site_id={self.site_id}, rank={self.rank}, "
                 f"n_hotspots={self.n_hotspots}, cosolvents={self.cosolvents}, "
                 f"agfe_min={self.agfe_min:.3f})")
-
-
-# ---------------------------------------------------------------------------
-# ConsensusSite — consensus binding site from overlapping multi-probe hotspots
-# ---------------------------------------------------------------------------
-
-class ConsensusSite:
-    """A consensus binding site formed by overlapping hotspots from multiple probes.
-
-    Created by :class:`CrossProbeConsensusDetector` from the output of
-    :meth:`HotspotDetector.detect_all`. Do not construct directly.
-
-    Attributes
-    ----------
-    consensus_rank : int
-        1 = highest consensus_score.
-    community_id : int
-        Internal community index from the overlap graph.
-    member_sites : list[Hotspot]
-        All per-probe Hotspot objects belonging to this community.
-    member_cosolvents : list[str]
-        Unique cosolvent names that contribute at least one site.
-    n_probes : int
-        Number of distinct probes in this community.
-    total_probes : int
-        Total number of probes analysed (denominator for probe_coverage).
-    probe_coverage : float
-        ``n_probes / total_probes`` in [0, 1].
-    consensus_centroid : np.ndarray (3,)
-        AGFE-weighted mean of member centroids, in Angstroms.
-    union_voxel_count : int
-        Number of voxels in the union of all member voxel masks.
-    min_agfe : float
-        Most favourable AGFE across all member sites, in kcal/mol.
-    mean_agfe : float
-        Mean of per-member ``agfe_min`` values, in kcal/mol.
-    pharmacophore : dict[str, dict[str, float]]
-        Nested pharmacophore profile: ``{cosolvent: {atomtype: min_agfe}}``.
-        Only contains probes with per-atom-type AGFE maps.
-    favorable_atomtypes_union : set[str]
-        Union of ``favorable_atomtypes`` across all member sites.
-    consensus_score : float
-        Weighted combination of probe_coverage, normalised favourability,
-        and normalised union volume.
-    """
-
-    def __init__(self, consensus_rank, community_id, member_sites,
-                 member_cosolvents, n_probes, total_probes, probe_coverage,
-                 consensus_centroid, union_voxel_count,
-                 min_agfe, mean_agfe,
-                 pharmacophore, favorable_atomtypes_union,
-                 consensus_score):
-        self.consensus_rank = consensus_rank
-        self.community_id = community_id
-        self.member_sites = member_sites
-        self.member_cosolvents = member_cosolvents
-        self.n_probes = n_probes
-        self.total_probes = total_probes
-        self.probe_coverage = probe_coverage
-        self.consensus_centroid = consensus_centroid
-        self.union_voxel_count = union_voxel_count
-        self.min_agfe = min_agfe
-        self.mean_agfe = mean_agfe
-        self.pharmacophore = pharmacophore
-        self.favorable_atomtypes_union = favorable_atomtypes_union
-        self.consensus_score = consensus_score
-
-    def to_dict(self):
-        """Flat dict suitable for CSV/JSON export."""
-        d = {
-            "consensus_rank": self.consensus_rank,
-            "community_id": self.community_id,
-            "n_probes": self.n_probes,
-            "total_probes": self.total_probes,
-            "probe_coverage": round(float(self.probe_coverage), 4),
-            "member_cosolvents": ",".join(self.member_cosolvents),
-            "consensus_centroid_x": round(float(self.consensus_centroid[0]), 3),
-            "consensus_centroid_y": round(float(self.consensus_centroid[1]), 3),
-            "consensus_centroid_z": round(float(self.consensus_centroid[2]), 3),
-            "union_voxel_count": self.union_voxel_count,
-            "min_agfe": round(float(self.min_agfe), 4),
-            "mean_agfe": round(float(self.mean_agfe), 4),
-            "favorable_atomtypes_union": ",".join(sorted(self.favorable_atomtypes_union)),
-            "consensus_score": round(float(self.consensus_score), 4),
-        }
-        for site in self.member_sites:
-            prefix = f"probe_{site.cosolvent}"
-            d[f"{prefix}_rank"] = site.rank
-            d[f"{prefix}_agfe_min"] = round(float(site.agfe_min), 4)
-        return d
-
-    def __repr__(self):
-        return (
-            f"ConsensusSite(rank={self.consensus_rank}, "
-            f"probes={self.member_cosolvents}, "
-            f"coverage={self.probe_coverage:.2f}, "
-            f"min_agfe={self.min_agfe:.3f} kcal/mol, "
-            f"score={self.consensus_score:.3f})"
-        )

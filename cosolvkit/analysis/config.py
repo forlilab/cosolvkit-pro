@@ -69,17 +69,16 @@ class HotspotsConfig:
     add_to_pymol:       bool                 = True
     gridsize:           float                = 0.5
     top_n_plot:         int                  = 10
-    compute_survival_probability: bool       = False
+    compute_survival_probability: bool       = True
     survival_kwargs:    Optional[Dict]       = field(default_factory=dict)
     clustering:         ClusteringConfig     = field(default_factory=ClusteringConfig)
 
 
 @dataclass
-class ConsensusConfig:
-    enabled:          bool          = False
-    jaccard_threshold: float        = 0.05
-    community_method: str           = "connected_components"
-    score_weights:    Optional[Dict] = None
+class BindingSitesConfig:
+    enabled:       bool          = True
+    connectivity:  int           = 26
+    weights:       Optional[Dict] = None
 
 
 @dataclass
@@ -97,7 +96,7 @@ class CheckpointConfig:
 
     Set ``load_hotspots: true`` to skip hotspot detection entirely and reload
     the previously saved checkpoint instead — useful when you only want to
-    re-run consensus with different parameters.
+    re-run binding-site detection with different parameters.
     """
     save_hotspots: bool = True
     load_hotspots: bool = False
@@ -120,7 +119,7 @@ class AnalysisConfig:
     density_maps:  DensityMapsConfig = field(default_factory=DensityMapsConfig)
     merge:         MergeConfig      = field(default_factory=MergeConfig)
     hotspots:      HotspotsConfig   = field(default_factory=HotspotsConfig)
-    consensus:     ConsensusConfig  = field(default_factory=ConsensusConfig)
+    binding_sites: BindingSitesConfig = field(default_factory=BindingSitesConfig)
     pymol:         PyMolConfig      = field(default_factory=PyMolConfig)
     checkpoint:    CheckpointConfig = field(default_factory=CheckpointConfig)
 
@@ -158,7 +157,7 @@ class AnalysisConfig:
 
         # --- validate top-level keys ---
         known_top = {"out_path", "simulations", "reference_pdb",
-                     "report", "density_maps", "merge", "hotspots", "consensus", "pymol",
+                     "report", "density_maps", "merge", "hotspots", "binding_sites", "pymol",
                      "checkpoint"}
         bad = set(raw) - known_top
         if bad:
@@ -215,7 +214,7 @@ class AnalysisConfig:
         dm_raw = dict(raw.get("density_maps", {}))
         mg_raw = dict(raw.get("merge",        {}))
         hs_raw = dict(raw.get("hotspots",     {}))
-        cs_raw = dict(raw.get("consensus",    {}))
+        bs_raw = dict(raw.get("binding_sites", {}))
         pm_raw = dict(raw.get("pymol",        {}))
         ck_raw = dict(raw.get("checkpoint",   {}))
 
@@ -242,7 +241,7 @@ class AnalysisConfig:
             density_maps=_parse(DensityMapsConfig, dm_raw),
             merge=_parse(MergeConfig, mg_raw),
             hotspots=hotspots,
-            consensus=_parse(ConsensusConfig, cs_raw),
+            binding_sites=_parse(BindingSitesConfig, bs_raw),
             pymol=_parse(PyMolConfig, pm_raw),
             checkpoint=_parse(CheckpointConfig, ck_raw),
         )

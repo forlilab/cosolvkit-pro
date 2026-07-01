@@ -98,13 +98,13 @@ class TestFromYamlValid:
         assert cfg.hotspots.clustering.use_skimage_cleanup is True
         assert cfg.hotspots.clustering.cleanup_min_size == 5
 
-    def test_consensus_section_parsed(self, tmp_path):
+    def test_binding_sites_section_parsed(self, tmp_path):
         raw = _minimal_raw()
-        raw["consensus"] = {"enabled": True, "jaccard_threshold": 0.1}
+        raw["binding_sites"] = {"enabled": False, "connectivity": 6}
         path = _write_yaml(tmp_path, raw)
         cfg = AnalysisConfig.from_yaml(path)
-        assert cfg.consensus.enabled is True
-        assert cfg.consensus.jaccard_threshold == 0.1
+        assert cfg.binding_sites.enabled is False
+        assert cfg.binding_sites.connectivity == 6
 
     def test_checkpoint_section_parsed(self, tmp_path):
         raw = _minimal_raw()

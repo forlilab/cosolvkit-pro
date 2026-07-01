@@ -16,11 +16,6 @@ from cosolvkit.analysis.report import Report
 from .analysis_config import AnalysisConfig, SimulationEntry
 from .density_analysis import combine_dx_maps_with_resampling, generate_pymol_session
 from .hotspots_detection import HotspotDetector
-from .consensus_detection import CrossProbeConsensusDetector
-from .hotspot_visualization import (
-    generate_consensus_pockets_session,
-    generate_pharmacophore_session,
-)
 
 
 class MultiReport:
@@ -292,29 +287,16 @@ class MultiReport:
                     top_n=hs.top_n_plot,
                 )
 
-        cs = self.config.consensus
-        if cs.enabled:
-            self.logger.info("Running cross-probe consensus detection...")
-            consensus_detector = CrossProbeConsensusDetector(
-                probe_results=results,
-                jaccard_threshold=cs.jaccard_threshold,
-                community_method=cs.community_method,
-                score_weights=cs.score_weights,
+        bs_cfg = self.config.binding_sites
+        if bs_cfg.enabled:
+            from cosolvkit.analysis.sites.binding_sites import (
+                identify_binding_sites, export_binding_sites,
             )
-            consensus_sites = consensus_detector.detect_communities()
-            consensus_detector.export_results(consensus_sites, out_path=self.out_path)
-
-            generate_consensus_pockets_session(
-                consensus_sites=consensus_sites,
-                out_path=self.out_path,
-                reference_pdb=self._reference_pdb,
+            binding_sites = identify_binding_sites(
+                results, connectivity=bs_cfg.connectivity, weights=bs_cfg.weights,
             )
-            generate_pharmacophore_session(
-                consensus_sites=consensus_sites,
-                out_path=self.out_path,
-                reference_pdb=self._reference_pdb,
-                top_n=3,
-            )
+            export_binding_sites(binding_sites, self.out_path)
+            self.logger.info(f"Identified {len(binding_sites)} binding site(s).")
 
         return results
 

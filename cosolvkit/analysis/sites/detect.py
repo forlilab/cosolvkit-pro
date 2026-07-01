@@ -418,8 +418,8 @@ class HotspotDetector:
                 sites, labeled_array, score_image
             )
 
-        # Attach grid spatial metadata so CrossProbeConsensusDetector can compute
-        # Jaccard in Angstrom space when probes live on different-shaped grids.
+        # Attach grid spatial metadata so binding-site grouping can compute
+        # overlap in Angstrom space when probes live on different-shaped grids.
         grid_origin = np.array(combined_grid.origin)
         grid_delta = np.array(combined_grid.delta)
         for site in sites:
@@ -619,7 +619,7 @@ class HotspotDetector:
         grid spatial metadata, and all scalar/string/list fields as JSON.
 
         The checkpoint can be reloaded with :meth:`load_checkpoint` to skip
-        re-running the full hotspot detection step when only consensus
+        re-running the full hotspot detection step when only binding-site
         parameters need to change.
 
         Parameters

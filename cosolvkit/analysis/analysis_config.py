@@ -3,7 +3,7 @@ from cosolvkit.analysis.config import *  # noqa: F401,F403
 from cosolvkit.analysis.config import (  # noqa: F401
     AnalysisConfig,
     ClusteringConfig,
-    ConsensusConfig,
+    BindingSitesConfig,
     DensityMapsConfig,
     HotspotsConfig,
     MergeConfig,

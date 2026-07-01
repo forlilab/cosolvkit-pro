@@ -77,9 +77,10 @@ hotspots:
   add_to_pymol:       true        # embed hotspot spheres in the PyMol session
   gridsize:           0.5         # must match density_maps.gridsize
   top_n_plot:         10          # max hotspots shown in the interactive 3D plot
-  compute_survival_probability: false   # run survival-probability analysis on detected sites
-                                  # false = disable; when true, each cosolvent is analysed
+  compute_survival_probability: true    # run survival-probability analysis on detected sites
+                                  # (always-on by default); each cosolvent is analysed
                                   # using the universe of its own simulation trajectory
+                                  # set to false to disable
   survival_kwargs:               # extra kwargs forwarded to survival_probability()
     radius:        6.0            # sphere radius around hotspot centroid (Angstroms)
     max_tau:       100            # maximum lag time
@@ -90,35 +91,29 @@ hotspots:
     cleanup_hole_size:   2        # fill holes smaller than this (voxels)
 
 # -----------------------------------------------------------------
-# consensus: cross-probe consensus binding site detection
-# Run after hotspot detection to group sites from different probes
-# that share favorable voxels into consensus communities.
-# Each community gets a pharmacophore profile showing which atom
-# types from which probes are favorable and at what AGFE level.
+# binding_sites: cross-cosolvent binding-site detection
+# Run after hotspot detection to group per-cosolvent hotspots that
+# spatially overlap (voxel connectivity) into ranked binding sites.
+# Each site gets a pharmacophore profile showing which atom
+# types from which cosolvents are favorable and at what AGFE level.
 # -----------------------------------------------------------------
-consensus:
-  enabled:           false        # set to true to run consensus detection
-  jaccard_threshold: 0.05         # minimum voxel-mask Jaccard overlap to link two sites
-                                  # lower → merge sites that barely touch
-                                  # higher → require strong spatial agreement
-  community_method:  "connected_components"
-                                  # connected_components: fast, no extra deps (recommended)
-                                  # greedy_modularity: finer splitting of large communities
-                                  #   (requires networkx >= 2.6, already available)
-  score_weights:     null         # null → default {coverage: 0.4, favorability: 0.4, volume: 0.2}
-                                  # coverage dominates: a pocket seen by many probes ranks higher
+binding_sites:
+  enabled:      true              # set to false to skip binding-site detection
+  connectivity: 26                # voxel connectivity for grouping hotspots: 6, 18, or 26
+                                  # 26 → corner-connected (most permissive, recommended)
+  weights:      null              # null → default scoring weights
                                   # custom example: {coverage: 0.5, favorability: 0.3, volume: 0.2}
 
 # -----------------------------------------------------------------
 # checkpoint: save/load hotspot results to skip re-detection
 # Hotspot detection (clustering + optional survival probability) is
-# the slowest step.  Enabling checkpoints lets you re-run consensus
-# with different parameters without redoing earlier steps.
+# the slowest step.  Enabling checkpoints lets you re-run binding-site
+# detection with different parameters without redoing earlier steps.
 # -----------------------------------------------------------------
 checkpoint:
   save_hotspots: true             # write hotspot_checkpoints/{cosolvent}.npz after detection
   load_hotspots: false            # skip hotspot detection and reload from checkpoint instead
-                                  # set to true when you only want to re-run consensus
+                                  # set to true when you only want to re-run binding-site detection
 
 # -----------------------------------------------------------------
 # pymol: PyMol session generation
