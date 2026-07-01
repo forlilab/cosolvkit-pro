@@ -578,3 +578,43 @@ class GridAnalysis(AnalysisBase):
                 _export(gfe_fname, grid, gridsize, center, box_size)
         else:
             _export(fname, self._agfe_raw, gridsize, center, box_size)
+
+
+from scipy.ndimage import map_coordinates as _map_coordinates
+
+
+def grids_aligned(o1, d1, s1, o2, d2, s2, atol=1e-3):
+    """True if two grids share origin, spacing, and shape (within atol)."""
+    return (tuple(s1) == tuple(s2)
+            and np.allclose(np.asarray(o1), np.asarray(o2), atol=atol)
+            and np.allclose(np.asarray(d1), np.asarray(d2), atol=atol))
+
+
+def resample_mask_to_grid(mask, src_origin, src_delta, ref_origin, ref_delta, ref_shape):
+    """Nearest-neighbour resample a boolean voxel mask onto a reference grid.
+
+    Voxels of the reference grid that fall outside the source volume are False.
+    Returns a boolean ndarray of shape ``ref_shape``. Fast path (identity) when
+    the source and reference grids coincide.
+    """
+    src_origin = np.asarray(src_origin, dtype=float)
+    src_delta = np.asarray(src_delta, dtype=float)
+    ref_origin = np.asarray(ref_origin, dtype=float)
+    ref_delta = np.asarray(ref_delta, dtype=float)
+    ref_shape = tuple(int(s) for s in ref_shape)
+
+    if grids_aligned(src_origin, src_delta, mask.shape, ref_origin, ref_delta, ref_shape):
+        return mask.astype(bool)
+
+    # Reference voxel indices -> Angstrom -> source fractional indices.
+    gi, gj, gk = np.meshgrid(
+        np.arange(ref_shape[0]), np.arange(ref_shape[1]), np.arange(ref_shape[2]),
+        indexing="ij",
+    )
+    pos = (np.stack([gi, gj, gk], axis=0).astype(float)
+           * ref_delta[:, None, None, None] + ref_origin[:, None, None, None])
+    frac = (pos - src_origin[:, None, None, None]) / src_delta[:, None, None, None]
+    coords = frac.reshape(3, -1)
+    sampled = _map_coordinates(mask.astype(np.float32), coords,
+                               order=0, mode="constant", cval=0.0)
+    return (sampled.reshape(ref_shape) >= 0.5)
