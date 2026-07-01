@@ -5,6 +5,9 @@
 # pockets by connectivity of the union of their voxel masks. Replaces the
 # Jaccard-community consensus detector.
 #
+import os
+import json
+
 import numpy as np
 from scipy.ndimage import label as _ndlabel
 
@@ -177,3 +180,39 @@ def identify_binding_sites(probe_results, connectivity=26, weights=None):
     """Group per-cosolvent hotspots into ranked cross-cosolvent binding sites."""
     return BindingSiteDetector(probe_results, connectivity=connectivity,
                                weights=weights).detect()
+
+
+def export_binding_sites(sites, out_path):
+    """Write binding_sites.csv/.json, pharmacophore json, and a rank label .dx."""
+    import pandas as pd
+    os.makedirs(out_path, exist_ok=True)
+
+    rows = [s.to_dict() for s in sites]
+    if rows:
+        pd.DataFrame(rows).to_csv(os.path.join(out_path, "binding_sites.csv"), index=False)
+    with open(os.path.join(out_path, "binding_sites.json"), "w") as fh:
+        json.dump(rows, fh, indent=2)
+
+    pharm = [{"site_id": s.site_id, "rank": s.rank,
+              "cosolvents": s.cosolvents, "pharmacophore": s.pharmacophore}
+             for s in sites]
+    with open(os.path.join(out_path, "binding_sites_pharmacophore.json"), "w") as fh:
+        json.dump(pharm, fh, indent=2)
+
+    # Label map: voxel value = binding-site rank (0 = background). Sites share the
+    # reference grid from grouping (same voxel_mask shape + grid_origin/grid_delta).
+    if sites and sites[0].voxel_mask is not None and sites[0].grid_delta is not None:
+        try:
+            from gridData import Grid
+            shape = sites[0].voxel_mask.shape
+            origin = np.asarray(sites[0].grid_origin, dtype=float)
+            delta = np.asarray(sites[0].grid_delta, dtype=float)
+            rank_arr = np.zeros(shape, dtype=float)
+            # Higher rank number = worse; paint worst first so rank 1 wins overlaps.
+            for s in sorted(sites, key=lambda x: -x.rank):
+                rank_arr[s.voxel_mask] = float(s.rank)
+            edges = [origin[d] + np.arange(shape[d] + 1) * delta[d] for d in range(3)]
+            Grid(rank_arr, edges=edges).export(
+                os.path.join(out_path, "binding_site_labels.dx"))
+        except Exception:
+            pass
