@@ -14,7 +14,7 @@ out_path: "results"
 # -----------------------------------------------------------------
 # simulations: MD trajectories to analyse jointly. Here, one benzene replica.
 # Add more entries (different cosolvent probes) to enable multi-probe analysis
-# and cross-probe consensus (see the consensus section below).
+# and binding-site detection (see the binding_sites section below).
 # -----------------------------------------------------------------
 simulations:
   - trajectory: "../02_equilibration-and-production/6E22_benzene/MD/MD_6E22_benzene_rep1_aligned.dcd"  # aligned production traj from example 02
@@ -83,19 +83,19 @@ hotspots:
     cleanup_hole_size:   2
 
 # -----------------------------------------------------------------
-# consensus: cross-probe consensus sites — needs >= 2 probes, so it is off
-# for this single-benzene example. Add more simulations above and set
-# enabled: true to group sites shared across probes.
+# binding_sites: connected-component grouping of hotspots into binding
+# sites — most useful with >= 2 probes, so it is off for this
+# single-benzene example. Add more simulations above and set
+# enabled: true to merge overlapping/touching hotspots across probes.
 # -----------------------------------------------------------------
-consensus:
-  enabled:           false
-  jaccard_threshold: 0.05
-  community_method:  "connected_components"
-  score_weights:     null
+binding_sites:
+  enabled:      false
+  connectivity: 26      # 6 (face-sharing) or 26 (also diagonal-touching voxels)
+  weights:      null    # null → default binding-site weights (affinity 3, probe_coverage 2, others 1)
 
 # -----------------------------------------------------------------
-# checkpoint: save hotspot results so consensus can be re-run without
-# redoing detection.
+# checkpoint: save hotspot results so binding-site detection can be
+# re-run without redoing hotspot detection.
 # -----------------------------------------------------------------
 checkpoint:
   save_hotspots: true
