@@ -113,7 +113,7 @@ def plot_hotspot_clustering_3d(
             f"Rank {site.rank}<br>"
             f"Cluster ID: {site.site_id}<br>"
             f"AGFE: %{{customdata:.3f}} kcal/mol<br>"
-            f"Composite score: {site.composite_score:.3f}<br>"
+            f"AGFE min: {site.agfe_min:.3f} kcal/mol<br>"
             f"Voxels: {site.n_voxels}"
         )
 
@@ -146,7 +146,7 @@ def plot_hotspot_clustering_3d(
                 f"<b>Rank {site.rank}</b><br>"
                 f"Centroid: ({cx:.2f}, {cy:.2f}, {cz:.2f}) Å<br>"
                 f"AGFE min: {site.agfe_min:.3f} kcal/mol<br>"
-                f"Composite score: {site.composite_score:.3f}<br>"
+                f"AGFE mean (top pct): {site.agfe_mean_top_pct:.3f} kcal/mol<br>"
                 f"Voxels: {site.n_voxels}"
                 "<extra></extra>"
             ),

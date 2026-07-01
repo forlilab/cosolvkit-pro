@@ -313,7 +313,7 @@ def visualise_clustering(
         x, y, z = float(centroid[0]), float(centroid[1]), float(centroid[2])
 
         site = site_by_id.get(lbl)
-        label_text = f"rank{site.rank} s={site.composite_score:.2f}" if site else f"lbl{lbl}"
+        label_text = f"rank{site.rank} agfe={site.agfe_min:.2f}" if site else f"lbl{lbl}"
 
         pa_name = f'site_{cosolvent}_lbl{lbl}'
         _pymol_cmd.pseudoatom(pa_name, pos=[x, y, z], label=label_text)
