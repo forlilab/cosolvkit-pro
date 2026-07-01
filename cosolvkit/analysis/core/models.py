@@ -181,10 +181,8 @@ class Hotspot:
 
     def __init__(self, rank, site_id, cosolvent, n_voxels, centroid,
                  agfe_min, agfe_mean_top_pct, voxel_mask,
-                 favorability_score, diversity_score,
-                 volume_score, composite_score,
                  favorable_atomtypes, per_type_agfe):
-        self.rank = rank                            # int; 1 = highest composite score
+        self.rank = rank                            # int; 1 = most-negative agfe_min
         self.site_id = site_id                      # label from scipy.ndimage.label
         self.cosolvent = cosolvent                  # str residue name
         self.n_voxels = n_voxels                    # int
@@ -192,10 +190,6 @@ class Hotspot:
         self.agfe_min = agfe_min                    # float, kcal/mol
         self.agfe_mean_top_pct = agfe_mean_top_pct  # float, kcal/mol
         self.voxel_mask = voxel_mask                # boolean 3D ndarray, same shape as AGFE grid
-        self.favorability_score = favorability_score  # float [0, 1]
-        self.diversity_score = diversity_score        # float [0, 1]
-        self.volume_score = volume_score              # float [0, 1]
-        self.composite_score = composite_score        # float, weighted sum
         self.favorable_atomtypes = favorable_atomtypes  # List[str]
         self.per_type_agfe = per_type_agfe            # Dict[str, float]: min AGFE per type
         self.properties = {}                          # extensible user properties
@@ -249,10 +243,6 @@ class Hotspot:
             agfe_min=float(d["agfe_min"]),
             agfe_mean_top_pct=float(d["agfe_mean_top_pct"]),
             voxel_mask=voxel_mask,
-            favorability_score=float(d["favorability_score"]),
-            diversity_score=float(d["diversity_score"]),
-            volume_score=float(d["volume_score"]),
-            composite_score=float(d["composite_score"]),
             favorable_atomtypes=favorable_atomtypes,
             per_type_agfe=per_type_agfe,
         )
@@ -276,10 +266,6 @@ class Hotspot:
             "centroid_z": round(float(self.centroid[2]), 3),
             "agfe_min": round(float(self.agfe_min), 4),
             "agfe_mean_top_pct": round(float(self.agfe_mean_top_pct), 4),
-            "favorability_score": round(float(self.favorability_score), 4),
-            "diversity_score": round(float(self.diversity_score), 4),
-            "volume_score": round(float(self.volume_score), 4),
-            "composite_score": round(float(self.composite_score), 4),
             "favorable_atomtypes": ",".join(self.favorable_atomtypes),
         }
         d.update({f"agfe_{k}": round(float(v), 4) for k, v in self.per_type_agfe.items()})
@@ -326,7 +312,7 @@ class Hotspot:
         return (
             f"Hotspot(rank={self.rank}, cosolvent={self.cosolvent!r}, "
             f"n_voxels={self.n_voxels}, agfe_min={self.agfe_min:.3f} kcal/mol, "
-            f"composite={self.composite_score:.3f})"
+            f"agfe_mean_top_pct={self.agfe_mean_top_pct:.3f})"
         )
 
 
@@ -512,7 +498,6 @@ class ConsensusSite:
             prefix = f"probe_{site.cosolvent}"
             d[f"{prefix}_rank"] = site.rank
             d[f"{prefix}_agfe_min"] = round(float(site.agfe_min), 4)
-            d[f"{prefix}_composite_score"] = round(float(site.composite_score), 4)
         return d
 
     def __repr__(self):

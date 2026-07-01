@@ -121,79 +121,18 @@ class TestDetect:
         sites = _make_detector(tmp_path).detect("BEN")
         assert sites[0].cosolvent == "BEN"
 
-
-# ---------------------------------------------------------------------------
-# Scoring invariants
-# ---------------------------------------------------------------------------
-
-class TestScoring:
-
-    def test_scores_in_unit_interval(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        sites = _make_detector(tmp_path).detect("BEN")
-        for site in sites:
-            assert 0.0 <= site.favorability_score <= 1.0
-            assert 0.0 <= site.diversity_score <= 1.0
-            assert 0.0 <= site.volume_score <= 1.0
-
-    def test_single_cluster_has_max_scores(self, tmp_path):
-        # Only one cluster → normalization collapses → favorability == 1, volume == 1
-        _make_agfe_grid(tmp_path, "BEN")
-        d = _make_detector(tmp_path, min_cluster_voxels=1)
-        sites = d.detect("BEN")
-        # If only 1 cluster survives after filtering:
-        if len(sites) == 1:
-            assert sites[0].favorability_score == 1.0
-            assert sites[0].volume_score == 1.0
-
-    def test_equal_favorability_gives_ones(self, tmp_path):
-        """When f_max == f_min, normalization must not divide by zero."""
-        # Two identical-depth blobs: all agfe_mean_top_pct identical
-        arr = np.zeros((20, 20, 20), dtype=float)
-        arr[2:5, 2:5, 2:5] = -2.0   # blob A
-        arr[14:17, 14:17, 14:17] = -2.0  # blob B, same depth
+    def test_rank_by_agfe_min(self, tmp_path):
+        # two blobs, different depths -> deeper (more negative) ranks first
+        import numpy as np
+        from gridData import Grid
+        arr = np.zeros((20, 20, 20)); arr[3:9, 3:9, 3:9] = -3.0; arr[12:16, 12:16, 12:16] = -2.0
         edges = [np.linspace(0, 10, 21)] * 3
         Grid(arr, edges=edges).export(str(tmp_path / "map_agfe_BEN.dx"))
-        sites = _make_detector(tmp_path, min_cluster_voxels=5).detect("BEN")
-        # Both should have favorability_score == 1.0 (equal → ones)
-        for s in sites:
-            assert s.favorability_score == pytest.approx(1.0, abs=1e-6)
-
-    def test_per_atomtype_diversity_score(self, tmp_path):
-        """One favorable type out of two → diversity_score between 0 and 1."""
-        _make_per_type_grids(tmp_path, "BEN", hbd_hotspot=True, hba_hotspot=False)
-        d = _make_detector(tmp_path, agfe_cutoff=-1.0)
+        d = _make_detector(tmp_path, min_cluster_voxels=10)
         sites = d.detect("BEN")
-        assert len(sites) >= 1
-        # 1 out of 2 atom types favorable → diversity in (0, 1)
-        assert 0.0 < sites[0].diversity_score < 1.0
-
-    def test_both_atomtypes_favorable_gives_max_diversity(self, tmp_path):
-        _make_per_type_grids(tmp_path, "BEN", hbd_hotspot=True, hba_hotspot=True)
-        d = _make_detector(tmp_path, agfe_cutoff=-1.0)
-        sites = d.detect("BEN")
-        assert sites[0].diversity_score == pytest.approx(1.0, abs=1e-6)
-
-    def test_no_atomtype_map_gives_zero_diversity(self, tmp_path):
-        """Single combined map (no per-type files) → diversity = 0."""
-        _make_agfe_grid(tmp_path, "BEN")
-        sites = _make_detector(tmp_path).detect("BEN")
-        assert sites[0].diversity_score == 0.0
-
-    def test_custom_score_weights_accepted(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        d = _make_detector(tmp_path, score_weights={"favorability": 1.0, "diversity": 0.0, "volume": 0.0})
-        sites = d.detect("BEN")
-        assert len(sites) >= 1
-        # Weights are normalized internally; composite should be non-negative
-        assert sites[0].composite_score >= 0.0
-
-    def test_composite_score_is_finite_and_nonnegative(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        sites = _make_detector(tmp_path).detect("BEN")
-        for s in sites:
-            assert np.isfinite(s.composite_score)
-            assert s.composite_score >= 0.0
+        assert len(sites) == 2
+        assert sites[0].rank == 1 and sites[0].agfe_min == pytest.approx(-3.0)
+        assert sites[1].rank == 2 and sites[1].agfe_min == pytest.approx(-2.0)
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +171,7 @@ class TestExportResults:
         df = pd.read_csv(tmp_path / "hotspot_sites_BEN.csv")
         for col in ("rank", "site_id", "cosolvent", "n_voxels",
                     "centroid_x", "centroid_y", "centroid_z",
-                    "agfe_min", "favorability_score", "composite_score"):
+                    "agfe_min", "agfe_mean_top_pct"):
             assert col in df.columns, f"Missing column: {col}"
 
     def test_json_is_valid(self, tmp_path):
@@ -353,7 +292,7 @@ class TestCsvSlim:
 
         main = pd.read_csv(tmp_path / "hotspot_sites_BEN.csv")
         assert not any(c.startswith("geom_") for c in main.columns)
-        assert "composite_score" in main.columns and "agfe_min" in main.columns
+        assert "agfe_min" in main.columns
 
     def test_geom_sidecar_written_with_site_id(self, tmp_path):
         from cosolvkit.analysis.hotspots_detection import HotspotDetector
@@ -375,4 +314,4 @@ class TestCsvSlim:
 
         all_df = pd.read_csv(tmp_path / "hotspot_sites_all.tsv", sep="\t")
         assert not any(c.startswith("geom_") for c in all_df.columns)
-        assert "composite_score" in all_df.columns
+        assert "agfe_min" in all_df.columns

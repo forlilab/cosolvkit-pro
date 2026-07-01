@@ -20,17 +20,16 @@ from cosolvkit.analysis.sites.clustering import (
 )
 from cosolvkit.analysis.sites.properties import PocketPropertyCalculator
 from cosolvkit.analysis.core.models import Hotspot
-from cosolvkit.analysis.core.scoring import compute_composite_score, combine_detect_scores
 
 
 class HotspotDetector:
     """Detect and rank binding hotspots from cosolvent AGFE density maps.
 
     Reads the AGFE ``.dx`` maps produced by :meth:`Report.generate_density_maps`,
-    clusters favorable voxels using a pluggable clustering strategy, scores each
-    cluster on four independent axes, and exports ranked results.
-
-    **Composite score** = w_fav × favorability + w_div × diversity + w_vol × volume
+    clusters favorable voxels using a pluggable clustering strategy, computes raw
+    per-site features (AGFE affinity, atom-type diversity, volume, ...), and
+    ranks the resulting :class:`Hotspot` objects by ``agfe_min`` ascending
+    (most-negative = rank 1).
 
     Parameters
     ----------
@@ -50,8 +49,8 @@ class HotspotDetector:
         Top percentage of most-favorable voxels used for favorability scoring
         (default 10.0).
     score_weights : dict, optional
-        Weights for composite score components.  Keys: ``favorability``,
-        ``diversity``, ``volume``.  Will be normalised to sum 1.0.
+        Accepted for backward compatibility; no longer used by ``detect()``
+        (hotspots are ranked by ``agfe_min``, not a composite score).
     gridsize : float
         Voxel size in Angstroms (default 0.5).  Should match the value used
         in :meth:`Report.generate_density_maps`.
@@ -296,8 +295,8 @@ class HotspotDetector:
     def detect(self, cosolvent):
         """Detect and score hotspots for one cosolvent.
 
-        Returns a list of :class:`Hotspot` objects sorted by composite
-        score (rank 1 = highest score).
+        Returns a list of :class:`Hotspot` objects ranked by ``agfe_min``
+        ascending (rank 1 = most-negative / most favorable).
         """
         self.logger.info(f"Detecting hotspots for {cosolvent}...")
 
@@ -348,8 +347,7 @@ class HotspotDetector:
         # center_of_mass with a list index always returns a list of tuples
         coms = center_of_mass(np.abs(agfe_array), labeled_array, site_labels)
 
-        # --- Compute raw scores ---
-        raw_f, raw_d, raw_v = [], [], []
+        # --- Compute raw site features ---
         site_data = []
 
         for lbl, com_vox in zip(site_labels, coms):
@@ -382,9 +380,6 @@ class HotspotDetector:
             }
             favorable_atomtypes = sorted(per_type_agfe.keys())
 
-            raw_f.append(f_raw)
-            raw_d.append(d_raw)
-            raw_v.append(n_vox)
             site_data.append({
                 "lbl": lbl,
                 "n_voxels": n_vox,
@@ -397,14 +392,9 @@ class HotspotDetector:
                 "per_type_agfe": per_type_agfe,
             })
 
-        # --- Normalise and compute composite score ---
-        raw_f = np.array(raw_f)
-        raw_v = np.array(raw_v, dtype=float)
-
-        composite, f_norm, v_norm = combine_detect_scores(raw_f, raw_d, raw_v, self.score_weights)
-
-        # --- Sort descending and build Hotspot objects ---
-        order = np.argsort(-composite)
+        # --- Rank hotspots by affinity (most-negative agfe_min first) ---
+        agfe_mins = np.array([sd["agfe_min"] for sd in site_data], dtype=float)
+        order = np.argsort(agfe_mins)  # ascending: most-negative -> rank 1
         sites = []
         for rank, idx in enumerate(order, start=1):
             sd = site_data[idx]
@@ -417,10 +407,6 @@ class HotspotDetector:
                 agfe_min=sd["agfe_min"],
                 agfe_mean_top_pct=sd["agfe_mean_top_pct"],
                 voxel_mask=sd["voxel_mask"],
-                favorability_score=float(f_norm[idx]),
-                diversity_score=float(raw_d[idx]),
-                volume_score=float(v_norm[idx]),
-                composite_score=float(composite[idx]),
                 favorable_atomtypes=sd["favorable_atomtypes"],
                 per_type_agfe=sd["per_type_agfe"],
             ))
@@ -446,8 +432,7 @@ class HotspotDetector:
 
         self.logger.info(
             f"Found {len(sites)} hotspot(s) for '{cosolvent}'. "
-            f"Top site: agfe_min={sites[0].agfe_min:.3f} kcal/mol, "
-            f"composite={sites[0].composite_score:.3f}."
+            f"Top site: agfe_min={sites[0].agfe_min:.3f} kcal/mol."
         )
         return sites
 
@@ -456,13 +441,12 @@ class HotspotDetector:
 
         If ``compute_survival_probability=True``, runs survival probability
         analysis for all detected sites and attaches kinetic metrics to each
-        :class:`Hotspot`.  If ``sp_*`` keys appear in ``score_weights``,
-        the composite score is recomputed after SP metrics are attached.
+        :class:`Hotspot`.
 
         Returns
         -------
         dict[str, list[Hotspot]]
-            ``{cosolvent: [site, ...]}`` sorted by composite score per cosolvent.
+            ``{cosolvent: [site, ...]}`` ranked by ``agfe_min`` per cosolvent.
         """
         results = {cosolvent: self.detect(cosolvent) for cosolvent in self.cosolvent_names}
 
@@ -483,11 +467,6 @@ class HotspotDetector:
                     **self.survival_kwargs,
                 )
             self.property_calculator.fit_survival_probability(results)
-
-            if any(k.startswith("sp_") for k in self.score_weights):
-                for cosolvent_sites in results.values():
-                    if cosolvent_sites:
-                        compute_composite_score(cosolvent_sites, self.score_weights)
 
         return results
 
@@ -543,7 +522,7 @@ class HotspotDetector:
         if all_rows:
             all_df = pd.DataFrame(all_rows)
             all_df = all_df.drop(columns=[c for c in all_df.columns if c.startswith(GEOM_PREFIX)])
-            all_df = all_df.sort_values("composite_score", ascending=False).reset_index(drop=True)
+            all_df = all_df.sort_values("agfe_min", ascending=True).reset_index(drop=True)
             tsv_path = os.path.join(self.out_path, "hotspot_sites_all.tsv")
             all_df.to_csv(tsv_path, sep="\t", index=False)
             self.logger.info(f"Exported combined hotspot table: {tsv_path}")

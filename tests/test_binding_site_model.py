@@ -8,8 +8,7 @@ def _hotspot(cosolvent, site_id, agfe_min, atomtypes):
     return Hotspot(
         rank=1, site_id=site_id, cosolvent=cosolvent, n_voxels=int(mask.sum()),
         centroid=np.array([1.0, 1.0, 1.0]), agfe_min=agfe_min, agfe_mean_top_pct=agfe_min + 0.5,
-        voxel_mask=mask, favorability_score=1.0, diversity_score=0.0, volume_score=1.0,
-        composite_score=0.7, favorable_atomtypes=atomtypes, per_type_agfe={a: agfe_min for a in atomtypes},
+        voxel_mask=mask, favorable_atomtypes=atomtypes, per_type_agfe={a: agfe_min for a in atomtypes},
     )
 
 

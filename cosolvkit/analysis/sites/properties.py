@@ -17,7 +17,6 @@ from scipy.interpolate import interp1d
 from scipy.spatial import cKDTree
 
 from cosolvkit.analysis.core.models import PocketResidue
-from cosolvkit.analysis.core.scoring import compute_composite_score, _get_site_value
 
 
 # ---------------------------------------------------------------------------
