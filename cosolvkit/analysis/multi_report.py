@@ -13,6 +13,7 @@ from glob import glob
 from typing import Dict, List, Optional
 
 from cosolvkit.analysis.report import Report
+from cosolvkit.analysis.config import resolve_agfe_cutoff
 from .analysis_config import AnalysisConfig, SimulationEntry
 from .density_analysis import combine_dx_maps_with_resampling, generate_pymol_session
 from .hotspots_detection import HotspotDetector
@@ -195,13 +196,19 @@ class MultiReport:
         cl = hs.clustering
         all_cosolvents = _collect_all_cosolvents(self.config.simulations)
 
+        effective_cutoff = resolve_agfe_cutoff(hs, self.config.density_maps.temperature)
+        self.logger.info(
+            f"Hotspot AGFE cutoff: {effective_cutoff:.3f} kcal/mol "
+            f"(mode={hs.cutoff_mode}, n_kt={hs.n_kt}, T={self.config.density_maps.temperature} K)."
+        )
+
         # Always disable auto-survival inside detect_all so we can run it
         # per-cosolvent with the correct universe below.
         detector = HotspotDetector(
             out_path=self._merged_dir,
             cosolvent_names=all_cosolvents,
             universe=self._reports[0].universe,
-            agfe_cutoff=hs.agfe_cutoff,
+            agfe_cutoff=effective_cutoff,
             min_cluster_voxels=hs.min_cluster_voxels,
             top_percentile=hs.top_percentile,
             score_weights=hs.score_weights,

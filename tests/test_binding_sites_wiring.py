@@ -11,3 +11,9 @@ def test_public_exports_binding_site_api():
     from cosolvkit import identify_binding_sites, BindingSiteDetector, BindingSite
     assert "identify_binding_sites" in cosolvkit.__all__
     assert "ConsensusSite" not in cosolvkit.__all__
+
+
+def test_hotspots_config_kt_defaults():
+    from cosolvkit.analysis.config import HotspotsConfig
+    assert HotspotsConfig().cutoff_mode == "kt"
+    assert HotspotsConfig().n_kt == 1.0
