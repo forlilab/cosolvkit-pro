@@ -149,3 +149,31 @@ def build_binding_site(site_id, group, n_total_cosolvents):
         n_total_cosolvents=n_total_cosolvents,
         grid_origin=ref_o, grid_delta=ref_d,
     )
+
+
+class BindingSiteDetector:
+    """Detect binding sites by grouping hotspots (mask connectivity) and scoring them."""
+
+    def __init__(self, probe_results, connectivity=26, weights=None):
+        self.probe_results = probe_results
+        self.connectivity = connectivity
+        self.weights = weights
+        self.n_total_cosolvents = len(probe_results)
+
+    def detect(self):
+        from cosolvkit.analysis.core.scoring import score_binding_sites
+        groups = group_hotspots(self.probe_results, connectivity=self.connectivity)
+        sites = [
+            build_binding_site(site_id=i + 1, group=g,
+                               n_total_cosolvents=self.n_total_cosolvents)
+            for i, g in enumerate(groups)
+        ]
+        score_binding_sites(sites, self.weights)   # sets .combined and .rank
+        sites.sort(key=lambda s: s.rank)
+        return sites
+
+
+def identify_binding_sites(probe_results, connectivity=26, weights=None):
+    """Group per-cosolvent hotspots into ranked cross-cosolvent binding sites."""
+    return BindingSiteDetector(probe_results, connectivity=connectivity,
+                               weights=weights).detect()

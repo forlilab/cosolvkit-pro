@@ -29,3 +29,18 @@ def test_build_binding_site_aggregates_members():
     # union volume = |union| * 0.5^3; union of two 4^3 blobs overlapping in [7:9]^3
     assert bs.volume > 0.0
     assert 0.0 <= bs.solidity <= 1.0
+
+
+def test_identify_binding_sites_ranks_and_ids():
+    from cosolvkit.analysis.sites.binding_sites import identify_binding_sites
+    # site A: strong (agfe -3), 2 cosolvents overlapping; site B: weak (agfe -1), 1 cosolvent
+    a1 = _hs("BEN", 1, np.s_[5:9, 5:9, 5:9], -3.0, ["Car"], sp_mrt=20.0)
+    a2 = _hs("IMI", 2, np.s_[7:11, 7:11, 7:11], -3.0, ["HBA"], sp_mrt=15.0)
+    b1 = _hs("BEN", 3, np.s_[15:18, 15:18, 15:18], -1.0, ["Car"], sp_mrt=5.0)
+    sites = identify_binding_sites({"BEN": [a1, b1], "IMI": [a2]})
+    assert len(sites) == 2
+    # each BindingSite gets a unique site_id and a rank; ranked by combined desc
+    assert {s.rank for s in sites} == {1, 2}
+    top = next(s for s in sites if s.rank == 1)
+    assert top.n_cosolvents == 2 and top.agfe_min == -3.0  # strong multi-probe site wins
+    assert top.combined is not None
