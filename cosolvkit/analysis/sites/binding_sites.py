@@ -72,3 +72,80 @@ def group_hotspots(probe_results, connectivity=26):
             "ref_origin": ref_o, "ref_delta": ref_d, "ref_shape": ref_shape,
         })
     return result
+
+
+def _union_shape_features(union_mask):
+    """solidity/extent/axis lengths of the single union region (0.0 if degenerate)."""
+    try:
+        from skimage.measure import regionprops
+    except ImportError:
+        return {"solidity": 0.0, "extent": 0.0,
+                "axis_major_length": 0.0, "axis_minor_length": 0.0}
+    labeled = union_mask.astype(int)
+    props = regionprops(labeled)
+    if not props:
+        return {"solidity": 0.0, "extent": 0.0,
+                "axis_major_length": 0.0, "axis_minor_length": 0.0}
+    p = props[0]
+    def _safe(name):
+        try:
+            return float(getattr(p, name))
+        except Exception:
+            return 0.0
+    return {
+        "solidity": _safe("solidity"),
+        "extent": _safe("extent"),
+        "axis_major_length": _safe("axis_major_length"),
+        "axis_minor_length": _safe("axis_minor_length"),
+    }
+
+
+def build_binding_site(site_id, group, n_total_cosolvents):
+    """Aggregate a group of member hotspots into a BindingSite."""
+    from cosolvkit.analysis.core.models import BindingSite
+
+    members = group["members"]
+    ref_o = np.asarray(group["ref_origin"], dtype=float)
+    ref_d = np.asarray(group["ref_delta"], dtype=float)
+    union = group["union_mask"]
+
+    # Affinity-weighted centroid of member centroids (weight |agfe_min|).
+    cents = np.array([m.centroid for m in members], dtype=float)
+    w = np.array([abs(m.agfe_min) for m in members], dtype=float)
+    centroid = (cents.T @ w) / w.sum() if w.sum() > 0 else cents.mean(axis=0)
+
+    agfe_min = min(m.agfe_min for m in members)
+    agfe_mean_top_pct = min(m.agfe_mean_top_pct for m in members)
+    gridsize = float(ref_d[0])
+    volume = float(union.sum()) * (gridsize ** 3)
+
+    shape = _union_shape_features(union)
+
+    favorable_atomtypes = sorted({a for m in members for a in m.favorable_atomtypes})
+
+    pharmacophore = {}
+    for m in members:
+        d = pharmacophore.setdefault(m.cosolvent, {})
+        for atype, val in m.per_type_agfe.items():
+            v = float(val)
+            if atype not in d or v < d[atype]:
+                d[atype] = round(v, 4)
+
+    sp_vals = [m.properties.get("sp_mrt") for m in members
+               if m.properties.get("sp_mrt") is not None
+               and np.isfinite(m.properties.get("sp_mrt"))]
+    residence = max(sp_vals) if sp_vals else None
+
+    cosolvents = sorted({m.cosolvent for m in members})
+
+    return BindingSite(
+        site_id=site_id, member_hotspots=members, voxel_mask=union, centroid=centroid,
+        agfe_min=agfe_min, agfe_mean_top_pct=agfe_mean_top_pct, volume=volume,
+        solidity=shape["solidity"], extent=shape["extent"],
+        axis_major_length=shape["axis_major_length"],
+        axis_minor_length=shape["axis_minor_length"],
+        favorable_atomtypes=favorable_atomtypes, pharmacophore=pharmacophore,
+        residence=residence, cosolvents=cosolvents,
+        n_total_cosolvents=n_total_cosolvents,
+        grid_origin=ref_o, grid_delta=ref_d,
+    )
