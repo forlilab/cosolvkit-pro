@@ -772,13 +772,17 @@ class HotspotDashboard:
 
         @app.callback(
             Output("bs-detail", "children"),
-            Input("bs-table", "active_cell"), State("bs-table", "data"),
+            Input("bs-table", "active_cell"),
+            Input("bs-table", "derived_virtual_data"),
         )
-        def _detail(active_cell, data):
-            if not active_cell or not data:
+        def _detail(active_cell, rows):
+            if not active_cell or not rows:
                 return "Select a row to see member hotspots + pharmacophore."
-            row = data[active_cell["row"]]
-            sid = int(row["site_id"]) if "site_id" in row and row["site_id"] is not None else None
+            idx = active_cell.get("row")
+            if idx is None or idx >= len(rows):
+                return "Select a row to see member hotspots + pharmacophore."
+            row = rows[idx]
+            sid = int(row["site_id"]) if row.get("site_id") is not None else None
             pharm = self._pharmacophore.get(sid, {}) if sid is not None else {}
             lines = [
                 html.Div(f"Binding site {row.get('rank')} — cosolvents {row.get('cosolvents')}"),
@@ -786,7 +790,7 @@ class HotspotDashboard:
             ]
             for cos, atypes in pharm.items():
                 lines.append(html.Div(
-                    f"{cos}: " + ", ".join(f"{a} {v:.2f}" for a, v in atypes.items())
+                    f"{cos}: " + ", ".join(f"{a} {float(v):.2f}" for a, v in atypes.items())
                 ))
             return lines
 

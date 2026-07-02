@@ -114,3 +114,44 @@ def test_ranked_topn_weight_order_and_truncation(tmp_path):
     assert len(top) == 1
     assert int(top.iloc[0]["rank"]) == 1
     assert int(top.iloc[0]["site_id"]) == 1  # site 1 is best on every feature in the fixture
+
+
+def _asymmetric_bs_df():
+    """Two sites tied on every feature except volume.
+
+    ``_bs_df`` has site 1 dominate every single feature, so a negative
+    weight placed on *any* slider slot flips the ranking toward site 2 --
+    that fixture can't tell a correct slider->weight mapping from a
+    scrambled (transposed) one. Here only volume differs (site 1 = 100,
+    larger; site 2 = 50, smaller), so only a weight placed at the "volume"
+    position (index 2 in ``_WEIGHT_SPECS`` order) can move the ranking.
+    """
+    df = _bs_df()
+    tied_cols = ["agfe_min", "probe_coverage", "residence", "solidity", "favorable_atomtypes"]
+    site1_vals = df.loc[df["site_id"] == 1, tied_cols].iloc[0]
+    for col in tied_cols:
+        df.loc[df["site_id"] == 2, col] = site1_vals[col]
+    return df
+
+
+def test_ranked_topn_weight_position_discriminates_transposition(tmp_path):
+    # Guards against a scrambled slider->weight mapping (e.g. the value
+    # meant for the "volume" slider landing on "affinity" instead): with a
+    # fixture where only volume differs between sites, a -1 weight must land
+    # on the volume slot (index 2) to change the ranking; the same -1 value
+    # placed on a tied feature (affinity, index 0) must leave it unchanged.
+    df = _asymmetric_bs_df()
+    df.to_csv(tmp_path / "binding_sites.csv", index=False)
+    pytest.importorskip("dash")
+    from cosolvkit.analysis.hotspot_dashboard import HotspotDashboard
+    d = HotspotDashboard(out_path=str(tmp_path), pdb_path=None, port=8058)
+
+    # Correct mapping: -1 on volume (position 2) -> smaller-volume site (2) wins.
+    top_volume = d._ranked_topn((0, 0, -1, 0, 0, 0), 2)
+    assert int(top_volume.iloc[0]["site_id"]) == 2
+
+    # Transposed mapping: same -1 value shifted to affinity (position 0),
+    # a feature that is tied between the two sites -> must NOT flip the
+    # ranking (site 1, listed first with the larger volume, stays on top).
+    top_affinity = d._ranked_topn((-1, 0, 0, 0, 0, 0), 2)
+    assert int(top_affinity.iloc[0]["site_id"]) == 1
