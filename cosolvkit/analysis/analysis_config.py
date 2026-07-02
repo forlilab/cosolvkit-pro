@@ -6,7 +6,7 @@ from cosolvkit.analysis.config import (  # noqa: F401
     BindingSitesConfig,
     DensityMapsConfig,
     HotspotsConfig,
-    MergeConfig,
+    MiscConfig,
     PyMolConfig,
     ReportConfig,
     SimulationEntry,

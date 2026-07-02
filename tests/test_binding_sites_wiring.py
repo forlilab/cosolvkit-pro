@@ -1,9 +1,8 @@
 # tests/test_binding_sites_wiring.py
 def test_config_has_binding_sites_defaults():
-    from cosolvkit.analysis.config import AnalysisConfig, BindingSitesConfig, HotspotsConfig
+    from cosolvkit.analysis.config import BindingSitesConfig
     assert BindingSitesConfig().enabled is True
     assert BindingSitesConfig().connectivity == 26
-    assert HotspotsConfig().compute_survival_probability is True
 
 
 def test_public_exports_binding_site_api():
@@ -13,7 +12,9 @@ def test_public_exports_binding_site_api():
     assert "ConsensusSite" not in cosolvkit.__all__
 
 
-def test_hotspots_config_kt_defaults():
+def test_hotspots_config_defaults():
     from cosolvkit.analysis.config import HotspotsConfig
-    assert HotspotsConfig().cutoff_mode == "kt"
     assert HotspotsConfig().n_kt == 1.0
+    assert HotspotsConfig().clustering.strategy == "skimage_watershed"
+    assert HotspotsConfig().clustering.min_cluster_voxels == 20
+    assert HotspotsConfig().survival_kwargs == {}

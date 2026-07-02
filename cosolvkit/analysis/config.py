@@ -18,19 +18,11 @@ import yaml
 def resolve_agfe_cutoff(hotspots_cfg, temperature):
     """Resolve the effective AGFE cutoff (kcal/mol) for hotspot detection.
 
-    When ``cutoff_mode == "kt"`` the cutoff is ``-n_kt * kB * T`` (temperature-aware,
-    physically = an ``e^{n_kt}``-fold enrichment over bulk). Otherwise the absolute
-    ``agfe_cutoff`` is used unchanged.
+    The cutoff is always ``-n_kt * kB * T`` (temperature-aware; physically an
+    ``e^{n_kt}``-fold enrichment over bulk).
     """
     from cosolvkit.analysis.core.grid import BOLTZMANN_CONSTANT_KB
-    mode = getattr(hotspots_cfg, "cutoff_mode", "absolute")
-    if mode not in ("kt", "absolute"):
-        raise ValueError(
-            f"Invalid cutoff_mode {mode!r}; expected 'kt' or 'absolute'."
-        )
-    if mode == "kt":
-        return -float(hotspots_cfg.n_kt) * BOLTZMANN_CONSTANT_KB * float(temperature)
-    return float(hotspots_cfg.agfe_cutoff)
+    return -float(hotspots_cfg.n_kt) * BOLTZMANN_CONSTANT_KB * float(temperature)
 
 
 # ---------------------------------------------------------------------------
@@ -43,17 +35,16 @@ class SimulationEntry:
     trajectory:  str
     topology:    str
     cosolvents:  List[str]
-    statistics:  Optional[str] = None
     label:       Optional[str] = None
 
 
 @dataclass
 class ReportConfig:
-    equilibration:   bool = False
-    rmsf:            bool = True
-    rdf:             bool = False
-    avg_selection:   str  = "protein"
-    align_selection: str  = "protein and name CA"
+    rmsf:            bool          = True
+    rdf:             bool          = False
+    rmsf_avg_selec:  str           = "protein"
+    align_selection: str           = "protein and name CA"
+    reference_pdb:   Optional[str] = None
 
 
 @dataclass
@@ -65,13 +56,16 @@ class DensityMapsConfig:
 
 
 @dataclass
-class MergeConfig:
-    method:      str = "mean"   # mean | min | max | sum | median
-    resample_to: str = "first"  # first | largest | smallest
+class MiscConfig:
+    merge_method:        str = "mean"   # mean | min | max | sum | median
+    merge_resampling_to: str = "first"  # first | largest | smallest
 
 
 @dataclass
 class ClusteringConfig:
+    strategy:            str  = "skimage_watershed"  # skimage_watershed | connected_components | watershed | dbscan
+    strategy_kwargs:     Dict = field(default_factory=dict)
+    min_cluster_voxels:  int  = 20
     use_skimage_cleanup: bool = False
     cleanup_min_size:    int  = 1
     cleanup_hole_size:   int  = 2
@@ -79,19 +73,10 @@ class ClusteringConfig:
 
 @dataclass
 class HotspotsConfig:
-    agfe_cutoff:        float                = -1.0
-    cutoff_mode:        str                  = "kt"      # "kt" | "absolute"
-    n_kt:               float                = 1.0       # cutoff = -n_kt * kB * T when mode == "kt"
-    min_cluster_voxels: int                  = 20
-    top_percentile:     float                = 10.0
-    score_weights:      Optional[Dict]       = None
-    export_label_map:   bool                 = True
-    add_to_pymol:       bool                 = True
-    gridsize:           float                = 0.5
-    top_n_plot:         int                  = 10
-    compute_survival_probability: bool       = True
-    survival_kwargs:    Optional[Dict]       = field(default_factory=dict)
-    clustering:         ClusteringConfig     = field(default_factory=ClusteringConfig)
+    n_kt:            float            = 1.0   # cutoff = -n_kt * kB * T
+    top_percentile:  float            = 10.0
+    survival_kwargs: Dict             = field(default_factory=dict)
+    clustering:      ClusteringConfig = field(default_factory=ClusteringConfig)
 
 
 @dataclass
@@ -104,8 +89,8 @@ class BindingSitesConfig:
 
 @dataclass
 class PyMolConfig:
-    selection_string: Optional[str] = None
-    reference_pdb:    Optional[str] = None
+    enabled:     bool = True
+    top_n_sites: int  = 0   # 0 = all sites
 
 
 @dataclass
@@ -135,10 +120,9 @@ class AnalysisConfig:
     """
     out_path:      str
     simulations:   List[SimulationEntry]
-    reference_pdb: Optional[str]    = None
     report:        ReportConfig     = field(default_factory=ReportConfig)
     density_maps:  DensityMapsConfig = field(default_factory=DensityMapsConfig)
-    merge:         MergeConfig      = field(default_factory=MergeConfig)
+    misc:          MiscConfig       = field(default_factory=MiscConfig)
     hotspots:      HotspotsConfig   = field(default_factory=HotspotsConfig)
     binding_sites: BindingSitesConfig = field(default_factory=BindingSitesConfig)
     pymol:         PyMolConfig      = field(default_factory=PyMolConfig)
@@ -177,9 +161,9 @@ class AnalysisConfig:
             raw = {}
 
         # --- validate top-level keys ---
-        known_top = {"out_path", "simulations", "reference_pdb",
-                     "report", "density_maps", "merge", "hotspots", "binding_sites", "pymol",
-                     "checkpoint"}
+        known_top = {"out_path", "simulations",
+                     "report", "density_maps", "misc", "hotspots",
+                     "binding_sites", "pymol", "checkpoint"}
         bad = set(raw) - known_top
         if bad:
             raise ValueError(
@@ -207,7 +191,7 @@ class AnalysisConfig:
                 raise ValueError(
                     f"simulations[{i}] is missing required keys: {missing}"
                 )
-            unknown_sim = set(s) - {"trajectory", "topology", "cosolvents", "statistics", "label"}
+            unknown_sim = set(s) - {"trajectory", "topology", "cosolvents", "label"}
             if unknown_sim:
                 raise ValueError(
                     f"simulations[{i}] has unknown keys: {sorted(unknown_sim)}"
@@ -216,7 +200,6 @@ class AnalysisConfig:
                 trajectory=resolve(s["trajectory"]),
                 topology=resolve(s["topology"]),
                 cosolvents=list(s["cosolvents"]),
-                statistics=resolve(s.get("statistics")),
                 label=s.get("label"),
             ))
 
@@ -233,7 +216,7 @@ class AnalysisConfig:
 
         r_raw  = dict(raw.get("report",       {}))
         dm_raw = dict(raw.get("density_maps", {}))
-        mg_raw = dict(raw.get("merge",        {}))
+        mg_raw = dict(raw.get("misc",         {}))
         hs_raw = dict(raw.get("hotspots",     {}))
         bs_raw = dict(raw.get("binding_sites", {}))
         pm_raw = dict(raw.get("pymol",        {}))
@@ -250,17 +233,16 @@ class AnalysisConfig:
         if dm_raw.get("atomtypes_file"):
             dm_raw["atomtypes_file"] = resolve(dm_raw["atomtypes_file"])
 
-        # resolve paths inside pymol
-        if pm_raw.get("reference_pdb"):
-            pm_raw["reference_pdb"] = resolve(pm_raw["reference_pdb"])
+        # resolve the report's reference_pdb relative to the YAML dir
+        if r_raw.get("reference_pdb"):
+            r_raw["reference_pdb"] = resolve(r_raw["reference_pdb"])
 
         return cls(
             out_path=resolve(raw["out_path"]),
             simulations=sims,
-            reference_pdb=resolve(raw.get("reference_pdb")),
             report=_parse(ReportConfig, r_raw),
             density_maps=_parse(DensityMapsConfig, dm_raw),
-            merge=_parse(MergeConfig, mg_raw),
+            misc=_parse(MiscConfig, mg_raw),
             hotspots=hotspots,
             binding_sites=_parse(BindingSitesConfig, bs_raw),
             pymol=_parse(PyMolConfig, pm_raw),

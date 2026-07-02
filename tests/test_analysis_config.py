@@ -9,7 +9,7 @@ from cosolvkit.analysis.analysis_config import (
     ClusteringConfig,
     DensityMapsConfig,
     HotspotsConfig,
-    MergeConfig,
+    MiscConfig,
     SimulationEntry,
 )
 
@@ -47,12 +47,12 @@ class TestFromYamlValid:
         path = _write_yaml(tmp_path, _minimal_raw())
         cfg = AnalysisConfig.from_yaml(path)
         assert cfg.report.rmsf is True
+        assert cfg.report.rmsf_avg_selec == "protein"
         assert cfg.density_maps.gridsize == 0.5
         assert cfg.density_maps.temperature == 300.0
-        # NOTE: MergeConfig dataclass default is "first" (differs from YAML template "smallest")
-        assert cfg.merge.method == "mean"
-        assert cfg.merge.resample_to == "first"
-        assert cfg.hotspots.agfe_cutoff == -1.0
+        assert cfg.misc.merge_method == "mean"
+        assert cfg.misc.merge_resampling_to == "first"
+        assert cfg.hotspots.n_kt == 1.0
 
     def test_relative_paths_resolved(self, tmp_path):
         raw = _minimal_raw(traj="sim/traj.xtc", top="sim/top.prmtop")
@@ -66,15 +66,12 @@ class TestFromYamlValid:
         cfg = AnalysisConfig.from_yaml(path)
         assert os.path.isabs(cfg.out_path)
 
-    def test_optional_sim_fields(self, tmp_path):
+    def test_optional_sim_field_label(self, tmp_path):
         raw = _minimal_raw()
-        raw["simulations"][0]["statistics"] = "sim/stats.csv"
         raw["simulations"][0]["label"] = "my_sim"
         path = _write_yaml(tmp_path, raw)
         cfg = AnalysisConfig.from_yaml(path)
-        sim = cfg.simulations[0]
-        assert sim.label == "my_sim"
-        assert sim.statistics == str(tmp_path / "sim/stats.csv")
+        assert cfg.simulations[0].label == "my_sim"
 
     def test_multiple_simulations(self, tmp_path):
         raw = {
@@ -121,12 +118,30 @@ class TestFromYamlValid:
         cfg = AnalysisConfig.from_yaml(path)
         assert cfg.density_maps.atomtypes_file == str(tmp_path / "my_types.json")
 
-    def test_reference_pdb_resolved(self, tmp_path):
+    def test_report_reference_pdb_resolved(self, tmp_path):
         raw = _minimal_raw()
-        raw["reference_pdb"] = "protein.pdb"
+        raw["report"] = {"reference_pdb": "protein.pdb"}
         path = _write_yaml(tmp_path, raw)
         cfg = AnalysisConfig.from_yaml(path)
-        assert cfg.reference_pdb == str(tmp_path / "protein.pdb")
+        assert cfg.report.reference_pdb == str(tmp_path / "protein.pdb")
+
+    def test_clustering_strategy_parsed(self, tmp_path):
+        raw = _minimal_raw()
+        raw["hotspots"] = {"clustering": {"strategy": "dbscan",
+                                          "strategy_kwargs": {"eps_angstrom": 2.0},
+                                          "min_cluster_voxels": 15}}
+        path = _write_yaml(tmp_path, raw)
+        cfg = AnalysisConfig.from_yaml(path)
+        assert cfg.hotspots.clustering.strategy == "dbscan"
+        assert cfg.hotspots.clustering.strategy_kwargs == {"eps_angstrom": 2.0}
+        assert cfg.hotspots.clustering.min_cluster_voxels == 15
+
+    def test_survival_kwargs_sp_top_n_parsed(self, tmp_path):
+        raw = _minimal_raw()
+        raw["hotspots"] = {"survival_kwargs": {"sp_top_n": 3, "radius": 6.0}}
+        path = _write_yaml(tmp_path, raw)
+        cfg = AnalysisConfig.from_yaml(path)
+        assert cfg.hotspots.survival_kwargs["sp_top_n"] == 3
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +202,49 @@ class TestFromYamlErrors:
         raw["hotspots"] = {"clustering": {"unknown_cleanup": True}}
         path = _write_yaml(tmp_path, raw)
         with pytest.raises(ValueError, match="unknown_cleanup"):
+            AnalysisConfig.from_yaml(path)
+
+    @pytest.mark.parametrize("section,key", [
+        ("hotspots", "agfe_cutoff"),
+        ("hotspots", "cutoff_mode"),
+        ("hotspots", "score_weights"),
+        ("hotspots", "export_label_map"),
+        ("hotspots", "add_to_pymol"),
+        ("hotspots", "gridsize"),
+        ("hotspots", "top_n_plot"),
+        ("hotspots", "compute_survival_probability"),
+        ("hotspots", "min_cluster_voxels"),
+        ("report", "equilibration"),
+        ("report", "avg_selection"),
+        ("pymol", "selection_string"),
+        ("pymol", "reference_pdb"),
+    ])
+    def test_removed_section_keys_raise(self, tmp_path, section, key):
+        raw = _minimal_raw()
+        raw[section] = {key: 1}
+        path = _write_yaml(tmp_path, raw)
+        with pytest.raises(ValueError, match=key):
+            AnalysisConfig.from_yaml(path)
+
+    def test_removed_top_level_reference_pdb_raises(self, tmp_path):
+        raw = _minimal_raw()
+        raw["reference_pdb"] = "protein.pdb"
+        path = _write_yaml(tmp_path, raw)
+        with pytest.raises(ValueError, match="reference_pdb"):
+            AnalysisConfig.from_yaml(path)
+
+    def test_removed_top_level_merge_raises(self, tmp_path):
+        raw = _minimal_raw()
+        raw["merge"] = {"merge_method": "mean"}
+        path = _write_yaml(tmp_path, raw)
+        with pytest.raises(ValueError, match="merge"):
+            AnalysisConfig.from_yaml(path)
+
+    def test_removed_simulation_statistics_key_raises(self, tmp_path):
+        raw = _minimal_raw()
+        raw["simulations"][0]["statistics"] = "s.csv"
+        path = _write_yaml(tmp_path, raw)
+        with pytest.raises(ValueError, match="statistics"):
             AnalysisConfig.from_yaml(path)
 
 
