@@ -2,7 +2,8 @@
 #
 # Chains off examples 01 (build) and 02 (equilibration + production). It reads the
 # aligned production trajectory from example 02 and the topology (system.pdb) from
-# example 01, builds AGFE density maps, and detects hotspots for the benzene probe.
+# example 01, builds AGFE density maps, and detects hotspots for the benzene +
+# imidazole probes.
 #
 # All file paths are resolved relative to THIS config file's directory.
 # Regenerate the full, fully-commented template with:
@@ -12,86 +13,72 @@
 out_path: "results"
 
 # -----------------------------------------------------------------
-# simulations: MD trajectories to analyse jointly. Here, one benzene replica.
-# Add more entries (different cosolvent probes) to enable multi-probe analysis
-# and binding-site detection (see the binding_sites section below).
+# simulations: MD trajectories to analyse jointly (benzene + imidazole replicas).
 # -----------------------------------------------------------------
 simulations:
-  - trajectory: "../02_equilibration-and-production/6E22_benzene/MD/MD_6E22_benzene_rep1_aligned.dcd"  # aligned production traj from example 02
-    topology:   "../01_build_cosolvent_system/6E22_benzene/system.pdb"  # built in example 01 (system.prmtop also available there)
+  - trajectory: "../02_equilibration-and-production/6E22_benzene/MD/MD_6E22_benzene_rep1_aligned.dcd"
+    topology:   "../01_build_cosolvent_system/6E22_benzene/system.pdb"
     cosolvents: ["BEN"]            # benzene residue name
-    statistics: null              # AutoPath writes no cosolvkit-style statistics.csv
     label:      "benzene_rep1"     # names the per-sim output subdir
 
-  - trajectory: "../02_equilibration-and-production/6E22_imidazole/MD/MD_6E22_imidazole_rep1_aligned.dcd"  # aligned production traj from example 02
-    topology:   "../01_build_cosolvent_system/6E22_imidazole/system.pdb"  # built in example 01 (system.prmtop also available there)
+  - trajectory: "../02_equilibration-and-production/6E22_imidazole/MD/MD_6E22_imidazole_rep1_aligned.dcd"
+    topology:   "../01_build_cosolvent_system/6E22_imidazole/system.pdb"
     cosolvents: ["IMI"]            # imidazole residue name
-    statistics: null              # AutoPath writes no cosolvkit-style statistics.csv
     label:      "imidazole_rep1"   # names the per-sim output subdir
-
-# Protein reference for hotspot visualisation. null → averaged_trajectory.pdb
-# (produced because report.rmsf is true below).
-reference_pdb: null
 
 # -----------------------------------------------------------------
 # report: per-simulation structural analysis
 # -----------------------------------------------------------------
 report:
-  equilibration:   false          # no statistics file → keep off
   rmsf:            true            # writes averaged_trajectory.pdb (the hotspot reference)
   rdf:             false
-  avg_selection:   "protein"
+  rmsf_avg_selec:  "protein"
   align_selection: "protein and name CA"
+  reference_pdb:   ../01_build_cosolvent_system/6E22.pdb  # explicit protein reference
 
 # -----------------------------------------------------------------
 # density_maps: AGFE grid generation
 # -----------------------------------------------------------------
 density_maps:
-  use_atomtypes:  false            # split density by pharmacophoric atom type (HBD/HBA/Car/...)
+  use_atomtypes:  false           # split density by pharmacophoric atom type (HBD/HBA/Car/...)
   atomtypes_file: null            # null → built-in defaults
-  gridsize:       0.5             # voxel edge (Angstrom)
+  gridsize:       0.5             # voxel edge (Angstrom); also used by hotspots
   temperature:    300.0           # Kelvin (match the production run)
 
 # -----------------------------------------------------------------
-# merge: how per-simulation maps combine (only matters with >1 simulation)
+# misc: how per-simulation maps combine (only matters with >1 simulation)
 # -----------------------------------------------------------------
-merge:
-  method:      "mean"
-  resample_to: "smallest"
+misc:
+  merge_method:        "mean"
+  merge_resampling_to: "smallest"
 
 # -----------------------------------------------------------------
 # hotspots: HotspotDetector settings
 # -----------------------------------------------------------------
 hotspots:
-  agfe_cutoff:        -2.0        # kcal/mol; voxels below this are "favorable"
-                                  # NOTE: pass the same value to visualize_hotspots --agfe-cutoff
-  min_cluster_voxels: 20
-  top_percentile:     10.0
-  score_weights:      null        # null → equal weights {favorability, diversity, volume}
-  export_label_map:   true        # write hotspot_labels_{cosolvent}.dx
-  add_to_pymol:       true
-  gridsize:           0.5         # must match density_maps.gridsize
-  top_n_plot:         10
-  compute_survival_probability: false
+  n_kt:           1.0             # AGFE cutoff = -1 kT (~ -0.60 kcal/mol at 300 K)
+  top_percentile: 10.0
   survival_kwargs:
+    sp_top_n:      0              # 0 = disable survival probability for this example
     radius:        6.0
     max_tau:       100
     intermittency: 2
   clustering:
-    use_skimage_cleanup: false
+    strategy:            "skimage_watershed"
+    strategy_kwargs:     {}
+    min_cluster_voxels:  20
+    use_skimage_cleanup: true
     cleanup_min_size:    1
     cleanup_hole_size:   2
 
 # -----------------------------------------------------------------
-# binding_sites: connected-component grouping of hotspots into binding
-# sites — most useful with >= 2 probes, so it is off for this
-# single-benzene example. Add more simulations above and set
-# enabled: true to merge overlapping/touching hotspots across probes.
+# binding_sites: connected-component grouping of hotspots into sites
+# (most useful with >= 2 probes, which this example now has).
 # -----------------------------------------------------------------
 binding_sites:
-  enabled:      false
+  enabled:      true
   connectivity: 26      # 6 (face-sharing) or 26 (also diagonal-touching voxels)
-  weights:      null    # null → default binding-site weights (affinity 3, probe_coverage 2, others 1)
+  weights:      null    # null → default binding-site weights
 
 # -----------------------------------------------------------------
 # checkpoint: save hotspot results so binding-site detection can be
@@ -102,8 +89,8 @@ checkpoint:
   load_hotspots: false
 
 # -----------------------------------------------------------------
-# pymol: PyMol session generation
+# pymol: binding-site PyMol session generation
 # -----------------------------------------------------------------
 pymol:
-  selection_string: null
-  reference_pdb:    null
+  enabled:     true
+  top_n_sites: 0

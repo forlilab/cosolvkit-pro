@@ -262,3 +262,20 @@ class TestGenerateTemplate:
         with open(out) as f:
             data = yaml.safe_load(f)
         assert data is not None
+
+    def test_generated_template_parses_under_new_schema(self, tmp_path):
+        out = str(tmp_path / "template.yaml")
+        AnalysisConfig.generate_template(out)
+        # add the required non-default fields the template leaves as placeholders
+        with open(out) as f:
+            data = yaml.safe_load(f)
+        data["out_path"] = "results"
+        data["simulations"] = [
+            {"trajectory": "t.xtc", "topology": "t.prmtop", "cosolvents": ["BEN"]}
+        ]
+        path2 = str(tmp_path / "filled.yaml")
+        with open(path2, "w") as f:
+            yaml.dump(data, f)
+        cfg = AnalysisConfig.from_yaml(path2)   # must not raise
+        assert cfg.hotspots.n_kt == 1.0
+        assert cfg.misc.merge_method == "mean"

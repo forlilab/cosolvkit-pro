@@ -16,7 +16,6 @@ simulations:
   - trajectory: "sim1/traj.xtc"          # MDAnalysis-readable trajectory
     topology:   "sim1/system.prmtop"      # topology (prmtop, psf, tpr, gro, ...)
     cosolvents: ["BEN", "ACE"]            # residue names of cosolvents in this topology
-    statistics: "sim1/statistics.csv"     # optional: MD log for equilibration plots
     label:      "BEN_ACE_probe"           # optional: names the per-sim output subdir
                                           # defaults to sim_0, sim_1, ...
 
@@ -24,23 +23,18 @@ simulations:
   # - trajectory: "sim2/traj.xtc"
   #   topology:   "sim2/system.prmtop"
   #   cosolvents: ["IPA"]
-  #   statistics: null
   #   label:      "IPA_probe"
-
-# Optional: explicit PDB to use as the protein reference in hotspot
-# visualisation. Defaults to the averaged structure from simulations[0].
-reference_pdb: null
 
 # -----------------------------------------------------------------
 # report: per-simulation structural analysis
 # -----------------------------------------------------------------
 report:
-  equilibration:   false          # plot potential energy / temperature / volume
-                                  # requires 'statistics' file per simulation
   rmsf:            true           # compute RMSF and write averaged_trajectory.pdb
   rdf:             false          # compute radial distribution functions (slow)
-  avg_selection:   "protein"      # MDAnalysis selection for averaging
+  rmsf_avg_selec:  "protein"      # MDAnalysis selection averaged into averaged_trajectory.pdb
   align_selection: "protein and name CA"  # selection for RMSD alignment
+  reference_pdb:   null           # explicit protein reference for hotspot/binding-site
+                                  # visualisation; null → averaged_trajectory.pdb from sim[0]
 
 # -----------------------------------------------------------------
 # density_maps: controls AGFE grid generation
@@ -49,75 +43,63 @@ density_maps:
   use_atomtypes:  true            # split density by pharmacophoric atom type
                                   # (HBD, HBA, Car, Cal, Hal) using SMARTS patterns
   atomtypes_file: null            # path to custom atomtypes JSON; null → built-in default
-  gridsize:       0.5             # voxel edge length in Angstroms
+  gridsize:       0.5             # voxel edge length in Angstroms (also used by hotspots)
   temperature:    300.0           # simulation temperature in Kelvin
 
 # -----------------------------------------------------------------
-# merge: how per-simulation AGFE maps are combined
+# misc: how per-simulation AGFE maps are combined
 # Only relevant when the same cosolvent appears in multiple simulations.
 # -----------------------------------------------------------------
-merge:
-  method:      "mean"             # aggregation: mean | min | max | sum | median
-  resample_to: "smallest"            # reference grid for resampling when box sizes differ
+misc:
+  merge_method:        "mean"     # aggregation: mean | min | max | sum | median
+  merge_resampling_to: "first"    # reference grid for resampling when box sizes differ
                                   # first     → use simulations[0]'s grid extents (fastest)
                                   # largest   → use the grid covering the most voxels
                                   # smallest  → use the most conservative (smallest) grid
 
 # -----------------------------------------------------------------
-# hotspots: HotspotDetector settings
-# Must be run after density_maps.
+# hotspots: HotspotDetector settings. Must be run after density_maps.
 # -----------------------------------------------------------------
 hotspots:
-  agfe_cutoff:        -2.0        # kcal/mol; voxels below this are "favorable"
-  min_cluster_voxels: 20          # discard clusters smaller than this
-  top_percentile:     10.0        # top N% of voxels used for favorability score
-  score_weights:      null        # null → equal weights {favorability, diversity, volume}
-                                  # custom example: {favorability: 0.5, diversity: 0.3, volume: 0.2}
-  export_label_map:   true        # write hotspot_labels_{cosolvent}.dx
-  add_to_pymol:       true        # embed hotspot spheres in the PyMol session
-  gridsize:           0.5         # must match density_maps.gridsize
-  top_n_plot:         10          # max hotspots shown in the interactive 3D plot
-  compute_survival_probability: true    # run survival-probability analysis on detected sites
-                                  # (always-on by default); each cosolvent is analysed
-                                  # using the universe of its own simulation trajectory
-                                  # set to false to disable
-  survival_kwargs:               # extra kwargs forwarded to survival_probability()
-    radius:        6.0            # sphere radius around hotspot centroid (Angstroms)
-    max_tau:       100            # maximum lag time
-    intermittency: 2              # allowed gaps in occupancy (frames)
+  n_kt:           1.0             # AGFE cutoff = -n_kt * kB * T (temperature-aware).
+                                  # 1.0 → -1 kT (~ -0.60 kcal/mol at 300 K). Larger = stricter.
+  top_percentile: 10.0           # top N% of voxels used for favorability metrics
+  survival_kwargs:               # kwargs forwarded to survival_probability()
+    sp_top_n:      5             # per cosolvent: how many top hotspots get SP analysis
+                                  # (0 disables survival probability entirely)
+    radius:        6.0           # sphere radius around hotspot centroid (Angstroms)
+    max_tau:       100           # maximum lag time
+    intermittency: 2             # allowed gaps in occupancy (frames)
   clustering:
+    strategy:            "skimage_watershed"  # skimage_watershed | connected_components | watershed | dbscan
+    strategy_kwargs:     {}       # extra kwargs for the chosen strategy
+                                  # e.g. skimage_watershed: {h: 0.5, watershed_mode: score}
+                                  #      dbscan:            {eps_angstrom: 1.5}
+    min_cluster_voxels:  20       # discard clusters smaller than this
     use_skimage_cleanup: false    # apply scikit-image morphology cleanup before clustering
     cleanup_min_size:    1        # remove objects smaller than this (voxels)
     cleanup_hole_size:   2        # fill holes smaller than this (voxels)
 
 # -----------------------------------------------------------------
-# binding_sites: cross-cosolvent binding-site detection
-# Run after hotspot detection to group per-cosolvent hotspots that
-# spatially overlap (voxel connectivity) into ranked binding sites.
-# Each site gets a pharmacophore profile showing which atom
-# types from which cosolvents are favorable and at what AGFE level.
+# binding_sites: cross-cosolvent binding-site detection.
+# Groups per-cosolvent hotspots that spatially overlap (voxel
+# connectivity) into ranked binding sites.
 # -----------------------------------------------------------------
 binding_sites:
   enabled:      true              # set to false to skip binding-site detection
-  connectivity: 26                # voxel connectivity for grouping hotspots: 6, 18, or 26
-                                  # 26 → corner-connected (most permissive, recommended)
-  weights:      null              # null → default scoring weights
-                                  # custom example: {coverage: 0.5, favorability: 0.3, volume: 0.2}
+  connectivity: 26                # voxel connectivity for grouping: 6, 18, or 26
+  weights:      null              # null → default binding-site scoring weights
 
 # -----------------------------------------------------------------
 # checkpoint: save/load hotspot results to skip re-detection
-# Hotspot detection (clustering + optional survival probability) is
-# the slowest step.  Enabling checkpoints lets you re-run binding-site
-# detection with different parameters without redoing earlier steps.
 # -----------------------------------------------------------------
 checkpoint:
   save_hotspots: true             # write hotspot_checkpoints/{cosolvent}.npz after detection
   load_hotspots: false            # skip hotspot detection and reload from checkpoint instead
-                                  # set to true when you only want to re-run binding-site detection
 
 # -----------------------------------------------------------------
-# pymol: PyMol session generation
+# pymol: binding-site PyMol session generation
 # -----------------------------------------------------------------
 pymol:
-  selection_string: null          # MDAnalysis/PyMol selection to highlight in session
-  reference_pdb:    null          # additional PDB to load (overrides top-level reference_pdb)
+  enabled:     true               # generate binding_sites_session.pse
+  top_n_sites: 0                  # 0 = all sites; otherwise the top-N by rank
