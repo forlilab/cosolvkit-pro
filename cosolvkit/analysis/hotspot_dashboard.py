@@ -840,7 +840,7 @@ def _print_startup_banner(port: int, host: str) -> None:
 
     sep = "─" * 60
     print(f"\n{sep}")
-    print(f"  CoSolvKit Hotspot Dashboard")
+    print(f"  CoSolvKit Binding-Site Dashboard")
     print(f"{sep}")
     print(f"  Server   : {fqdn}  (host flag: {host})")
     print(f"  Port     : {port}")

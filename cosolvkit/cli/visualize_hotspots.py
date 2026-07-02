@@ -3,7 +3,7 @@
 #
 # CoSolvKit
 #
-# CLI entry point for the interactive hotspot dashboard
+# CLI entry point for the interactive binding-site dashboard
 #
 
 import sys
@@ -12,7 +12,7 @@ import argparse
 
 def cmd_lineparser():
     parser = argparse.ArgumentParser(
-        description="Launch the CoSolvKit interactive hotspot dashboard.",
+        description="Launch the CoSolvKit interactive binding-site dashboard.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
