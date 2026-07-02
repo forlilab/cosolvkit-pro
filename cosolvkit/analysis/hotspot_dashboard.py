@@ -447,13 +447,15 @@ class HotspotDashboard:
                 rank = int(row["rank"])
                 vol = float(row.get("volume", 1.0))
                 msize = int(np.clip(vol ** (1.0 / 3.0) * 1.8, 12, 40))
-                # rank -> sequential "hot" color (rank 1 = hottest)
+                # rank -> color matching the "Best -> Worst" legend gradient:
+                # rank 1 (frac 0) = deep red (#b40426), rank N (frac 1) = pale (#ffffcc).
                 frac = 0.0 if n <= 1 else (rank - 1) / (n - 1)
                 traces.append(go.Scatter3d(
                     x=[row["centroid_x"]], y=[row["centroid_y"]], z=[row["centroid_z"]],
                     mode="markers+text", name=f"Site {rank}", text=[f"{rank}"],
                     textposition="top center", textfont=dict(color="white", size=11),
-                    marker=dict(size=msize, color=[frac], colorscale="Hot_r",
+                    marker=dict(size=msize, color=[frac],
+                                colorscale=[[0.0, "#b40426"], [0.5, "#ffcc66"], [1.0, "#ffffcc"]],
                                 cmin=0.0, cmax=1.0, opacity=0.85,
                                 line=dict(width=1, color="white")),
                     visible=(sid in visible_ids),
