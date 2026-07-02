@@ -7,6 +7,7 @@
 #
 
 import os
+import json
 import socket
 import logging
 from glob import glob
@@ -55,6 +56,17 @@ DEFAULT_DASHBOARD_WEIGHTS = {
     "affinity": 3.0, "probe_coverage": 2.0, "volume": 1.0,
     "kinetics": 1.0, "shape": 1.0, "diversity": 1.0,
 }
+
+# (weight key, slider id, display label, default value) — drives both the
+# controls-bar layout and the label-echo callbacks.
+_WEIGHT_SPECS = [
+    ("affinity", "weight-affinity", "Affinity", 3),
+    ("probe_coverage", "weight-probe_coverage", "Probe cov.", 2),
+    ("volume", "weight-volume", "Volume", 1),
+    ("kinetics", "weight-kinetics", "Kinetics", 1),
+    ("shape", "weight-shape", "Shape", 1),
+    ("diversity", "weight-diversity", "Chem. diversity", 1),
+]
 
 
 def _load_binding_sites_csv(search_dir):
@@ -263,19 +275,20 @@ def _build_sites_by_cosolvent(df: pd.DataFrame) -> Dict[str, List[_SiteLike]]:
 # ---------------------------------------------------------------------------
 
 class HotspotDashboard:
-    """Interactive Plotly/Dash dashboard for CoSolvKit hotspot visualization.
+    """Interactive Plotly/Dash dashboard for CoSolvKit binding-site visualization.
 
-    Shows a single "Hotspots" view: the reference protein Cα backbone
-    (coloured by RMSF) overlaid with the hotspot centroids detected by the
-    hotspot detector, alongside a sortable/filterable table of all hotspot
-    metrics and per-hotspot visibility toggles.
+    Shows a single "Binding Sites" view: the reference protein Cα backbone
+    (coloured by RMSF) overlaid with cross-cosolvent binding-site centroids,
+    colour-ranked by a re-rankable combined score (six weighted features),
+    alongside a sortable/filterable table of binding-site metrics and
+    per-site visibility toggles.
 
     Parameters
     ----------
     out_path : str
         Analysis output directory.  If a ``merged/`` subdirectory exists,
-        hotspot CSVs and DX maps are loaded from there; otherwise *out_path*
-        itself is searched.
+        ``binding_sites.csv``/DX maps are loaded from there; otherwise
+        *out_path* itself is searched.
     pdb_path : str, optional
         Path to the reference PDB file.  Auto-detected as
         ``averaged_trajectory.pdb`` in *out_path* or its parent when not given.
@@ -304,24 +317,21 @@ class HotspotDashboard:
         self.port = port
         self._agfe_cutoff = agfe_cutoff
 
-        # Prefer merged/ subdirectory for maps and hotspot CSVs
+        # Prefer merged/ subdirectory for maps and binding-site CSVs
         merged = os.path.join(self.out_path, "merged")
         self._map_dir = merged if os.path.isdir(merged) else self.out_path
 
         # Resolve PDB path
         self._pdb_path = pdb_path or self._find_pdb()
 
-        # Load hotspot data
-        self._df = _load_hotspot_csvs(self._map_dir)
-        if self._df.empty:
-            self._df = _load_hotspot_csvs(self.out_path)
+        # Load binding-site data
+        self._bs_df = _load_binding_sites_csv(self._map_dir)
+        if self._bs_df.empty:
+            self._bs_df = _load_binding_sites_csv(self.out_path)
 
-        self._cosolvents: List[str] = (
-            sorted(self._df["cosolvent"].unique().tolist())
-            if not self._df.empty else []
-        )
-        self._color_map = _make_cosolvent_color_map(self._cosolvents)
-        self._sites_by_cosolvent = _build_sites_by_cosolvent(self._df)
+        # Optional per-site pharmacophore breakdown (site_id -> {cosolvent: {atype: agfe}}),
+        # used by the drill-down panel (Task 3). Guarded: file may not exist.
+        self._pharmacophore: Dict[int, Dict[str, Dict[str, float]]] = self._load_pharmacophore()
 
         # Parse PDB once at startup (used for the Cα backbone trace)
         if self._pdb_path and os.path.exists(self._pdb_path):
@@ -335,6 +345,24 @@ class HotspotDashboard:
             self._model_data = {"atoms": [], "bonds": []}
 
         self._app = self._create_app()
+
+    def _load_pharmacophore(self) -> Dict[int, Dict[str, Dict[str, float]]]:
+        """Load ``binding_sites_pharmacophore.json`` (if present) into a
+        ``{site_id: {cosolvent: {atomtype: agfe}}}`` mapping."""
+        for search_dir in (self._map_dir, self.out_path):
+            path = os.path.join(search_dir, "binding_sites_pharmacophore.json")
+            if os.path.exists(path):
+                try:
+                    with open(path) as fh:
+                        records = json.load(fh)
+                    return {
+                        int(rec["site_id"]): rec.get("pharmacophore", {})
+                        for rec in records
+                    }
+                except Exception as exc:
+                    logger.warning(f"Could not read {path}: {exc}")
+                    return {}
+        return {}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -354,41 +382,8 @@ class HotspotDashboard:
                 return p
         return None
 
-    def _build_shapes(
-        self, cosolvents: List[str], top_n: int, min_score: float
-    ) -> list:
-        """Build sphere shapes for Molecule3dViewer from hotspot centroids.
-
-        Sphere radius is scaled by pocket volume (∝ n_voxels^(1/3)).
-        """
-        if self._df.empty:
-            return []
-
-        df = self._df.copy()
-        if cosolvents:
-            df = df[df["cosolvent"].isin(cosolvents)]
-        if "composite_score" in df.columns:
-            df = df[df["composite_score"] >= min_score]
-
-        shapes = []
-        for cosolvent, group in df.groupby("cosolvent"):
-            color = self._color_map.get(cosolvent, "#888888")
-            for _, row in group.nsmallest(top_n, "rank").iterrows():
-                n_vox = max(1, float(row.get("n_voxels", 64)))
-                radius = max(2.0, (n_vox ** (1.0 / 3.0)) * 0.4)
-                shapes.append({
-                    "type": "Sphere",
-                    "x": float(row["centroid_x"]),
-                    "y": float(row["centroid_y"]),
-                    "z": float(row["centroid_z"]),
-                    "color": color,
-                    "radius": radius,
-                    "opacity": 0.65,
-                })
-        return shapes
-
     # ------------------------------------------------------------------
-    # Protein + Pockets Plotly figure
+    # Protein + Binding-sites Plotly figure
     # ------------------------------------------------------------------
 
     def _build_ca_traces(self) -> list:
@@ -431,56 +426,45 @@ class HotspotDashboard:
             ))
         return traces
 
-    def _build_protein_pockets_figure(
+    def _build_binding_sites_figure(
         self,
-        df_filtered: pd.DataFrame,
-        visible_site_ids: set,
+        df: pd.DataFrame,
+        visible_ids: set,
     ) -> "go.Figure":
-        """Plotly figure: protein Cα backbone + hotspot centroid spheres.
+        """Plotly figure: protein Cα backbone + binding-site centroid markers.
 
-        Each hotspot is its own trace so it can be hidden independently via
-        the ``visible`` flag driven by the checklist.
+        Each binding site is its own trace so it can be hidden independently
+        via the ``visible`` flag driven by the checklist. Marker colour maps
+        rank (1 = best) onto a sequential "hot" colourscale; marker size is
+        proportional to pocket volume.
         """
         traces = self._build_ca_traces()
 
-        if not df_filtered.empty:
-            first = True
-            for _, row in df_filtered.iterrows():
-                site_id = f"{row['cosolvent']}_rank{int(row['rank'])}"
-                color = self._color_map.get(row["cosolvent"], "#888888")
-                n_vox = max(1.0, float(row.get("n_voxels", 64)))
-                # Pixel size scaled by volume; clamped to sensible range
-                msize = int(np.clip(n_vox ** (1.0 / 3.0) * 1.8, 12, 40))
-                cx = float(row["centroid_x"])
-                cy = float(row["centroid_y"])
-                cz = float(row["centroid_z"])
+        if not df.empty:
+            n = len(df)
+            for _, row in df.iterrows():
+                sid = int(row["site_id"])
+                rank = int(row["rank"])
+                vol = float(row.get("volume", 1.0))
+                msize = int(np.clip(vol ** (1.0 / 3.0) * 1.8, 12, 40))
+                # rank -> sequential "hot" color (rank 1 = hottest)
+                frac = 0.0 if n <= 1 else (rank - 1) / (n - 1)
                 traces.append(go.Scatter3d(
-                    x=[cx], y=[cy], z=[cz],
-                    mode="markers+text",
-                    name=f"[{row['cosolvent']}] Rank {int(row['rank'])}",
-                    text=[f"R{int(row['rank'])}"],
-                    textposition="top center",
-                    textfont=dict(color="white", size=11),
-                    marker=dict(
-                        size=msize,
-                        color=color,
-                        opacity=0.75,
-                        symbol="circle",
-                        line=dict(width=1, color="white"),
-                    ),
-                    visible=True if site_id in visible_site_ids else False,
+                    x=[row["centroid_x"]], y=[row["centroid_y"]], z=[row["centroid_z"]],
+                    mode="markers+text", name=f"Site {rank}", text=[f"{rank}"],
+                    textposition="top center", textfont=dict(color="white", size=11),
+                    marker=dict(size=msize, color=[frac], colorscale="Hot_r",
+                                cmin=0.0, cmax=1.0, opacity=0.85,
+                                line=dict(width=1, color="white")),
+                    visible=(sid in visible_ids),
                     hovertemplate=(
-                        f"<b>[{row['cosolvent']}] Rank {int(row['rank'])}</b><br>"
-                        f"AGFE min: {float(row.get('agfe_min', 0)):.3f} kcal/mol<br>"
-                        f"Score: {float(row.get('composite_score', 0)):.3f}<br>"
-                        f"Voxels: {int(row.get('n_voxels', 0))}<br>"
-                        f"({cx:.1f}, {cy:.1f}, {cz:.1f}) Å"
-                        "<extra></extra>"
-                    ),
-                    legendgroup="hotspots",
-                    legendgrouptitle_text="Hotspots" if first else None,
+                        f"<b>Binding site {rank}</b><br>"
+                        f"cosolvents: {row['cosolvents']}<br>"
+                        f"combined: {float(row['combined']):.3f}<br>"
+                        f"AGFE min: {float(row['agfe_min']):.3f} kcal/mol<br>"
+                        f"volume: {vol:.1f} A^3<br>probes: {int(row['n_cosolvents'])}"
+                        "<extra></extra>"),
                 ))
-                first = False
 
         fig = go.Figure(data=traces)
         fig.update_layout(
@@ -507,16 +491,15 @@ class HotspotDashboard:
         )
         return fig
 
-    def _get_table_columns(self) -> list:
+    def _get_bs_table_columns(self) -> list:
         desired = [
-            "rank", "cosolvent", "composite_score", "agfe_min",
-            "favorability_score", "diversity_score", "volume_score",
-            "n_voxels", "favorable_atomtypes",
-            "centroid_x", "centroid_y", "centroid_z",
+            "site_id", "rank", "combined", "cosolvents", "n_cosolvents",
+            "probe_coverage", "agfe_min", "volume", "solidity",
+            "residence", "n_chemotypes",
         ]
-        if self._df.empty:
+        if self._bs_df.empty:
             return [{"name": c, "id": c} for c in desired]
-        available = [c for c in desired if c in self._df.columns]
+        available = [c for c in desired if c in self._bs_df.columns]
         return [{"name": c, "id": c} for c in available]
 
     # ------------------------------------------------------------------
@@ -524,10 +507,7 @@ class HotspotDashboard:
     # ------------------------------------------------------------------
 
     def _create_app(self) -> "dash.Dash":
-        app = dash.Dash(__name__, title="CoSolvKit Hotspot Dashboard")
-
-        cosolvent_options = [{"label": c, "value": c} for c in self._cosolvents]
-        default_cosolvents = self._cosolvents[:1] if self._cosolvents else []
+        app = dash.Dash(__name__, title="CoSolvKit Binding-Site Dashboard")
 
         label_style = {"fontWeight": "bold", "fontSize": "0.82em", "marginBottom": "4px"}
         btn_style = {
@@ -535,6 +515,19 @@ class HotspotDashboard:
             "border": "1px solid #cbd5e0", "borderRadius": "4px",
             "backgroundColor": "#edf2f7", "cursor": "pointer",
         }
+
+        def _weight_slider(wid, label, default):
+            return html.Div([
+                html.Div(f"{label}: {default:+d}", id=f"{wid}-label", style=label_style),
+                dcc.Slider(id=wid, min=-5, max=5, step=1, value=default,
+                           marks={-5: "-5", 0: "0", 5: "+5"},
+                           tooltip={"placement": "bottom", "always_visible": False}),
+            ], style={"width": "150px"})
+
+        weight_sliders = [
+            _weight_slider(wid, label, default)
+            for _, wid, label, default in _WEIGHT_SPECS
+        ]
 
         app.layout = html.Div(
             style={"fontFamily": "Arial, sans-serif", "backgroundColor": "#f0f3f7", "minHeight": "100vh"},
@@ -544,7 +537,7 @@ class HotspotDashboard:
                 html.Div(
                     style={"backgroundColor": "#1a3a5c", "color": "white", "padding": "12px 24px"},
                     children=[
-                        html.H1("CoSolvKit Hotspot Dashboard", style={"margin": "0", "fontSize": "1.5em"}),
+                        html.H1("CoSolvKit Binding-Site Dashboard", style={"margin": "0", "fontSize": "1.5em"}),
                         html.P(f"Results: {self.out_path}",
                                style={"margin": "4px 0 0", "fontSize": "0.8em", "opacity": "0.75"}),
                     ],
@@ -554,43 +547,27 @@ class HotspotDashboard:
                 html.Div(
                     style={
                         "backgroundColor": "white", "padding": "10px 24px",
-                        "display": "flex", "alignItems": "center", "gap": "32px",
+                        "display": "flex", "alignItems": "center", "gap": "24px",
                         "boxShadow": "0 2px 4px rgba(0,0,0,0.1)", "flexWrap": "wrap",
                     },
-                    children=[
+                    children=weight_sliders + [
                         html.Div([
-                            html.Div("Cosolvents", style=label_style),
-                            dcc.Dropdown(
-                                id="cosolvent-dd", options=cosolvent_options,
-                                value=default_cosolvents, multi=True, clearable=False,
-                                style={"minWidth": "200px"},
-                            ),
-                        ]),
-                        html.Div([
-                            html.Div(id="topn-label", style=label_style, children="Top N sites: 5"),
-                            html.Div(style={"width": "180px"}, children=[
-                                dcc.Slider(id="topn-slider", min=1, max=20, step=1, value=5,
-                                           marks={i: str(i) for i in range(1, 21, 4)},
+                            html.Div(id="topn-label", style=label_style, children="Top N sites: 3"),
+                            html.Div(style={"width": "150px"}, children=[
+                                dcc.Slider(id="topn-slider", min=1, max=10, step=1, value=3,
+                                           marks={i: str(i) for i in range(1, 11)},
                                            tooltip={"placement": "bottom", "always_visible": False}),
                             ]),
                         ]),
                         html.Div([
-                            html.Div(id="score-label", style=label_style, children="Min score: 0.00"),
-                            html.Div(style={"width": "180px"}, children=[
-                                dcc.Slider(id="score-slider", min=0.0, max=1.0, step=0.05, value=0.0,
-                                           marks={v: f"{v:.1f}" for v in [0.0, 0.25, 0.5, 0.75, 1.0]},
-                                           tooltip={"placement": "bottom", "always_visible": False}),
-                            ]),
-                        ]),
-                        html.Div([
-                            html.Div("RMSF", style=label_style),
+                            html.Div("Rank", style=label_style),
                             html.Div(style={
-                                "background": "linear-gradient(to right, #3b4cc0, #dddcdc, #b40426)",
+                                "background": "linear-gradient(to right, #b40426, #ffcc66, #ffffcc)",
                                 "width": "110px", "height": "10px", "borderRadius": "4px",
                             }),
                             html.Div(style={"display": "flex", "justifyContent": "space-between",
                                             "width": "110px", "fontSize": "0.72em", "color": "#555"},
-                                     children=[html.Span("Low"), html.Span("High")]),
+                                     children=[html.Span("Best"), html.Span("Worst")]),
                         ]),
                     ],
                 ),
@@ -605,17 +582,17 @@ class HotspotDashboard:
                             style={"width": "65%", "padding": "10px", "overflow": "hidden"},
                             children=[
                                 dcc.Tabs(
-                                    value="hotspots",
+                                    value="binding_sites",
                                     style={"fontSize": "0.88em"},
                                     children=[
 
-                                        # ── Hotspots (Plotly): protein + detected hotspots ──
+                                        # ── Binding Sites (Plotly): protein + ranked binding sites ──
                                         dcc.Tab(
-                                            label="Hotspots",
-                                            value="hotspots",
+                                            label="Binding Sites",
+                                            value="binding_sites",
                                             children=[
                                                 dcc.Graph(
-                                                    id="protein-pockets-graph",
+                                                    id="binding-sites-graph",
                                                     style={"height": "calc(100vh - 220px)"},
                                                     config={"displayModeBar": True},
                                                 ),
@@ -635,13 +612,13 @@ class HotspotDashboard:
                             },
                             children=[
 
-                                # Per-hotspot visibility checkboxes
+                                # Per-binding-site visibility checkboxes
                                 html.Div([
                                     html.Div(
                                         style={"display": "flex", "alignItems": "center",
                                                "justifyContent": "space-between", "marginBottom": "6px"},
                                         children=[
-                                            html.H3("Hotspot Visibility",
+                                            html.H3("Binding-Site Visibility",
                                                     style={"margin": "0", "fontSize": "0.92em", "color": "#1a3a5c"}),
                                             html.Div([
                                                 html.Button("All", id="check-all-btn", n_clicks=0, style=btn_style),
@@ -650,7 +627,7 @@ class HotspotDashboard:
                                         ],
                                     ),
                                     dcc.Checklist(
-                                        id="site-checklist",
+                                        id="bs-checklist",
                                         options=[],
                                         value=[],
                                         labelStyle={"display": "flex", "alignItems": "center",
@@ -663,13 +640,13 @@ class HotspotDashboard:
                                 html.Hr(style={"margin": "10px 0", "borderColor": "#e2e8f0"}),
 
                                 # Metrics table
-                                html.H3("Hotspot Sites",
+                                html.H3("Binding Sites",
                                         style={"margin": "0 0 4px", "fontSize": "0.92em", "color": "#1a3a5c"}),
                                 html.P(id="table-summary",
                                        style={"fontSize": "0.78em", "color": "#666", "margin": "0 0 8px"}),
                                 dash_table.DataTable(
-                                    id="hotspot-table",
-                                    columns=self._get_table_columns(),
+                                    id="bs-table",
+                                    columns=self._get_bs_table_columns(),
                                     data=[],
                                     sort_action="native",
                                     filter_action="native",
@@ -689,6 +666,11 @@ class HotspotDashboard:
                                     ],
                                     tooltip_duration=None,
                                 ),
+
+                                html.Hr(style={"margin": "10px 0", "borderColor": "#e2e8f0"}),
+
+                                # Drill-down detail panel (populated in Task 3)
+                                html.Div(id="bs-detail"),
                             ],
                         ),
                     ],
@@ -704,115 +686,25 @@ class HotspotDashboard:
     # ------------------------------------------------------------------
 
     def _register_callbacks(self, app: "dash.Dash"):
-        from dash import ctx, State
-
         # ── Slider labels ─────────────────────────────────────────────────────
+        # NOTE: the figure/table/checklist-driving callbacks (rerank_binding_sites,
+        # top-N truncation, visibility toggling) are added in Task 3. Only the
+        # weight/top-N label echoes are wired here so the app already constructs
+        # with a valid, self-consistent layout.
 
         @app.callback(Output("topn-label", "children"), Input("topn-slider", "value"))
         def update_topn_label(value):
             return f"Top N sites: {value}"
 
-        @app.callback(Output("score-label", "children"), Input("score-slider", "value"))
-        def update_score_label(value):
-            return f"Min score: {value:.2f}"
+        for _key, wid, label, _default in _WEIGHT_SPECS:
+            def _make_update_weight_label(label=label):
+                def update_weight_label(value):
+                    return f"{label}: {value:+d}"
+                return update_weight_label
 
-        # ── Helper: filter DataFrame ──────────────────────────────────────────
-
-        def _filtered_df(cosolvents, top_n, min_score):
-            if self._df.empty:
-                return pd.DataFrame()
-            df = self._df.copy()
-            if cosolvents:
-                df = df[df["cosolvent"].isin(cosolvents)]
-            if "composite_score" in df.columns:
-                df = df[df["composite_score"] >= min_score]
-            return (
-                df.groupby("cosolvent", group_keys=False)
-                .apply(lambda g: g.nsmallest(top_n, "rank"))
-                .reset_index(drop=True)
-            )
-
-        # ── Checklist options + value ─────────────────────────────────────────
-        # Rebuilds on filter changes; All/None buttons also drive the value.
-
-        @app.callback(
-            [Output("site-checklist", "options"),
-             Output("site-checklist", "value")],
-            [Input("cosolvent-dd", "value"),
-             Input("topn-slider", "value"),
-             Input("score-slider", "value"),
-             Input("check-all-btn", "n_clicks"),
-             Input("check-none-btn", "n_clicks")],
-        )
-        def update_checklist(cosolvents, top_n, min_score, _all, _none):
-            cosolvents = cosolvents or self._cosolvents
-            df_top = _filtered_df(cosolvents, top_n, min_score)
-
-            options = []
-            for _, row in df_top.iterrows():
-                cosolvent = row["cosolvent"]
-                rank = int(row["rank"])
-                score = float(row.get("composite_score", 0.0))
-                color = self._color_map.get(cosolvent, "#888")
-                site_id = f"{cosolvent}_rank{rank}"
-                options.append({
-                    "label": html.Span([
-                        html.Span(style={
-                            "backgroundColor": color,
-                            "width": "10px", "height": "10px",
-                            "borderRadius": "50%", "display": "inline-block",
-                            "marginRight": "6px", "flexShrink": "0",
-                        }),
-                        f"[{cosolvent}] Rank {rank}  score={score:.2f}",
-                    ], style={"display": "flex", "alignItems": "center"}),
-                    "value": site_id,
-                })
-
-            all_values = [o["value"] for o in options]
-            triggered = ctx.triggered_id
-            if triggered == "check-none-btn":
-                return options, []
-            # Default (filter change or All button): all checked
-            return options, all_values
-
-        # ── Protein + Pockets figure ──────────────────────────────────────────
-
-        @app.callback(
-            Output("protein-pockets-graph", "figure"),
-            [Input("cosolvent-dd", "value"),
-             Input("topn-slider", "value"),
-             Input("score-slider", "value"),
-             Input("site-checklist", "value")],
-        )
-        def update_protein_pockets(cosolvents, top_n, min_score, visible_ids):
-            cosolvents = cosolvents or self._cosolvents
-            df_top = _filtered_df(cosolvents, top_n, min_score)
-            visible = set(visible_ids or [])
-            return self._build_protein_pockets_figure(df_top, visible)
-
-        # ── Table ─────────────────────────────────────────────────────────────
-
-        @app.callback(
-            [Output("hotspot-table", "data"),
-             Output("table-summary", "children")],
-            [Input("cosolvent-dd", "value"),
-             Input("topn-slider", "value"),
-             Input("score-slider", "value")],
-        )
-        def update_table(cosolvents, top_n, min_score):
-            cosolvents = cosolvents or self._cosolvents
-            df_top = _filtered_df(cosolvents, top_n, min_score)
-            float_cols = [
-                "composite_score", "agfe_min", "agfe_mean_top_pct",
-                "favorability_score", "diversity_score", "volume_score",
-                "centroid_x", "centroid_y", "centroid_z",
-            ]
-            for col in float_cols:
-                if col in df_top.columns:
-                    df_top[col] = df_top[col].round(3)
-            n_cos = df_top["cosolvent"].nunique() if not df_top.empty else 0
-            summary = f"{len(df_top)} site(s) across {n_cos} cosolvent(s)"
-            return df_top.to_dict("records"), summary
+            app.callback(
+                Output(f"{wid}-label", "children"), Input(wid, "value")
+            )(_make_update_weight_label())
 
     # ------------------------------------------------------------------
     # Public API

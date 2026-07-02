@@ -67,3 +67,24 @@ def test_load_reads_binding_sites_csv(tmp_path):
     _bs_df().to_csv(tmp_path / "binding_sites.csv", index=False)
     df = _load_binding_sites_csv(str(tmp_path))
     assert len(df) == 2 and "combined" in df.columns
+
+
+def _write_example(tmp_path):
+    _bs_df().to_csv(tmp_path / "binding_sites.csv", index=False)
+
+
+def test_dashboard_constructs_on_binding_sites(tmp_path):
+    _write_example(tmp_path)
+    from cosolvkit.analysis.hotspot_dashboard import HotspotDashboard
+    dash_ok = pytest.importorskip("dash")  # skip if dash missing
+    dboard = HotspotDashboard(out_path=str(tmp_path), pdb_path=None, port=8055)
+    layout_str = str(dboard._app.layout)
+    # six weight sliders present; cosolvent dropdown gone
+    for wid in ("weight-affinity", "weight-probe_coverage", "weight-volume",
+                "weight-kinetics", "weight-shape", "weight-diversity"):
+        assert wid in layout_str
+    assert "cosolvent-dd" not in layout_str
+    assert "score-slider" not in layout_str
+    assert "Binding Sites" in layout_str          # tab renamed
+    # the class holds the binding-sites df
+    assert not dboard._bs_df.empty and "combined" in dboard._bs_df.columns
