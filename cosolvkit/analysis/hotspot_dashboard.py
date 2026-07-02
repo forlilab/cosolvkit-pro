@@ -169,9 +169,18 @@ def _load_hotspot_csvs(search_dir: str) -> pd.DataFrame:
     dfs = []
     for f in csv_files:
         try:
-            dfs.append(pd.read_csv(f))
+            df = pd.read_csv(f)
         except Exception as exc:
             logger.warning(f"Could not read {f}: {exc}")
+            continue
+        # Auxiliary tables such as hotspot_sites_geom_*.csv (per-site geometric
+        # descriptors) share the hotspot_sites_ prefix but are not sites tables:
+        # they lack the 'cosolvent' column. Skip them so their rows don't pollute
+        # the DataFrame with NaN cosolvent/rank/centroid values.
+        if "cosolvent" not in df.columns:
+            logger.debug(f"Skipping {f}: no 'cosolvent' column (not a hotspot-sites table).")
+            continue
+        dfs.append(df)
 
     return pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
 
