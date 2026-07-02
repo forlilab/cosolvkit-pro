@@ -48,6 +48,56 @@ def _make_cosolvent_color_map(cosolvents: List[str]) -> Dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
+# Binding-site loading + reranking
+# ---------------------------------------------------------------------------
+
+DEFAULT_DASHBOARD_WEIGHTS = {
+    "affinity": 3.0, "probe_coverage": 2.0, "volume": 1.0,
+    "kinetics": 1.0, "shape": 1.0, "diversity": 1.0,
+}
+
+
+def _load_binding_sites_csv(search_dir):
+    """Load binding_sites.csv from search_dir (empty DataFrame if absent)."""
+    path = os.path.join(search_dir, "binding_sites.csv")
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path)
+    except Exception as exc:
+        logger.warning(f"Could not read {path}: {exc}")
+        return pd.DataFrame()
+
+
+class _BindingSiteRow:
+    """Lightweight stand-in exposing the attributes score_binding_sites reads."""
+    def __init__(self, row):
+        self.site_id = int(row["site_id"])
+        self.agfe_min = float(row["agfe_min"])
+        self.probe_coverage = float(row["probe_coverage"])
+        self.volume = float(row["volume"])
+        self.solidity = float(row["solidity"])
+        res = row.get("residence", None)
+        self.residence = None if res is None or (isinstance(res, float) and not np.isfinite(res)) else float(res)
+        fa = row.get("favorable_atomtypes", "")
+        self.favorable_atomtypes = [a for a in str(fa).split(",") if a] if pd.notna(fa) else []
+
+
+def rerank_binding_sites(df, weights):
+    """Return a copy of df with combined/rank recomputed via score_binding_sites, sorted by rank."""
+    from cosolvkit.analysis.core.scoring import score_binding_sites
+    if df is None or df.empty:
+        return df
+    objs = [_BindingSiteRow(row) for _, row in df.iterrows()]
+    score_binding_sites(objs, weights)          # sets .combined and .rank in place
+    by_id = {o.site_id: (o.combined, o.rank) for o in objs}
+    out = df.copy()
+    out["combined"] = out["site_id"].map(lambda s: by_id[int(s)][0])
+    out["rank"] = out["site_id"].map(lambda s: by_id[int(s)][1])
+    return out.sort_values("rank").reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
 # Lightweight Hotspot stand-in (for data loaded from CSV)
 # ---------------------------------------------------------------------------
 
