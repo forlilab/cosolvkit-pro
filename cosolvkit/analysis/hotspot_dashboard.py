@@ -344,7 +344,28 @@ class HotspotDashboard:
                 logger.warning("No reference PDB detected — protein viewer will be empty.")
             self._model_data = {"atoms": [], "bonds": []}
 
+        # Surface missing-input problems loudly (a blank dashboard is confusing).
+        for _w in self._data_warnings():
+            logger.warning(_w)
+
         self._app = self._create_app()
+
+    def _data_warnings(self) -> List[str]:
+        """User-facing warnings about missing inputs (no binding sites / no PDB)."""
+        msgs: List[str] = []
+        if self._bs_df is None or self._bs_df.empty:
+            msgs.append(
+                f"No binding_sites.csv found in '{self._map_dir}' (or '{self.out_path}'). "
+                "There are no binding sites to show — run the analysis "
+                "(identify_binding_sites / MultiReport) to generate binding_sites.csv."
+            )
+        if not self._model_data.get("atoms"):
+            msgs.append(
+                "No protein structure (averaged_trajectory.pdb) found near "
+                f"'{self.out_path}' — the protein backbone will be empty. "
+                "Pass pdb_path=... or place averaged_trajectory.pdb in the results tree."
+            )
+        return msgs
 
     def _load_pharmacophore(self) -> Dict[int, Dict[str, Dict[str, float]]]:
         """Load ``binding_sites_pharmacophore.json`` (if present) into a
@@ -369,14 +390,22 @@ class HotspotDashboard:
     # ------------------------------------------------------------------
 
     def _find_pdb(self) -> Optional[str]:
-        """Locate ``averaged_trajectory.pdb`` in common output locations."""
+        """Locate ``averaged_trajectory.pdb`` in common output locations.
+
+        Also searches per-simulation sibling subdirectories: when the dashboard
+        is pointed at a ``merged/`` directory, the averaged structure typically
+        lives in the individual simulation folders (e.g.
+        ``results/<sim>/averaged_trajectory.pdb``), not in ``merged/`` itself.
+        Any per-simulation averaged structure works as the reference backbone.
+        """
+        parent = os.path.dirname(self.out_path)
         candidates = [
             os.path.join(self.out_path, "averaged_trajectory.pdb"),
-            os.path.join(os.path.dirname(self.out_path), "averaged_trajectory.pdb"),
+            os.path.join(parent, "averaged_trajectory.pdb"),
         ]
-        candidates += sorted(
-            glob(os.path.join(self.out_path, "*/averaged_trajectory.pdb"))
-        )
+        # child subdirs of out_path, then sibling subdirs (parent's children)
+        candidates += sorted(glob(os.path.join(self.out_path, "*/averaged_trajectory.pdb")))
+        candidates += sorted(glob(os.path.join(parent, "*/averaged_trajectory.pdb")))
         for p in candidates:
             if p and os.path.exists(p):
                 return p
@@ -543,6 +572,18 @@ class HotspotDashboard:
                         html.P(f"Results: {self.out_path}",
                                style={"margin": "4px 0 0", "fontSize": "0.8em", "opacity": "0.75"}),
                     ],
+                ),
+
+                # ---- Data-warning banner (empty binding sites / missing PDB) ----
+                html.Div(
+                    id="data-warning-banner",
+                    style=({
+                        "backgroundColor": "#fff3cd", "color": "#7a5b00",
+                        "borderBottom": "1px solid #ffe08a", "padding": "10px 24px",
+                        "fontSize": "0.85em",
+                    } if self._data_warnings() else {"display": "none"}),
+                    children=[html.Div("⚠ " + w, style={"margin": "2px 0"})
+                              for w in self._data_warnings()],
                 ),
 
                 # ---- Controls bar ----

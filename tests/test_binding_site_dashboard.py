@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import pandas as pd
 import pytest
@@ -155,3 +156,37 @@ def test_ranked_topn_weight_position_discriminates_transposition(tmp_path):
     # ranking (site 1, listed first with the larger volume, stays on top).
     top_affinity = d._ranked_topn((-1, 0, 0, 0, 0, 0), 2)
     assert int(top_affinity.iloc[0]["site_id"]) == 1
+
+
+def test_find_pdb_searches_sibling_sim_dirs(tmp_path):
+    # Layout: results/merged (dashboard target) + results/<sim>/averaged_trajectory.pdb
+    pytest.importorskip("dash")
+    from cosolvkit.analysis.hotspot_dashboard import HotspotDashboard
+    results = tmp_path / "results"
+    merged = results / "merged"
+    sim = results / "benzene_rep1"
+    merged.mkdir(parents=True)
+    sim.mkdir(parents=True)
+    _bs_df().to_csv(merged / "binding_sites.csv", index=False)
+    # No PDB anywhere yet -> constructs cleanly, _find_pdb returns None.
+    d = HotspotDashboard(out_path=str(merged), pdb_path=None, port=8064)
+    assert d._find_pdb() is None
+    # Now a per-sim averaged structure exists in a SIBLING dir of merged/.
+    (sim / "averaged_trajectory.pdb").write_text("REMARK placeholder\n")
+    found = d._find_pdb()
+    assert found is not None
+    assert found.endswith(os.path.join("benzene_rep1", "averaged_trajectory.pdb"))
+
+
+def test_empty_binding_sites_warns_and_shows_banner(tmp_path):
+    # No binding_sites.csv, no PDB -> loud warnings + visible banner, not a blank page.
+    pytest.importorskip("dash")
+    from cosolvkit.analysis.hotspot_dashboard import HotspotDashboard
+    d = HotspotDashboard(out_path=str(tmp_path), pdb_path=None, port=8066)
+    assert d._bs_df.empty
+    warns = d._data_warnings()
+    assert any("binding_sites.csv" in w for w in warns)
+    assert any("averaged_trajectory.pdb" in w for w in warns)
+    layout_str = str(d._app.layout)
+    assert "data-warning-banner" in layout_str
+    assert "binding_sites.csv" in layout_str  # banner text rendered
