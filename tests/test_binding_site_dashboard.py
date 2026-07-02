@@ -88,3 +88,29 @@ def test_dashboard_constructs_on_binding_sites(tmp_path):
     assert "Binding Sites" in layout_str          # tab renamed
     # the class holds the binding-sites df
     assert not dboard._bs_df.empty and "combined" in dboard._bs_df.columns
+
+
+def test_dashboard_has_expected_callbacks(tmp_path):
+    _write_example(tmp_path)
+    pytest.importorskip("dash")
+    from cosolvkit.analysis.hotspot_dashboard import HotspotDashboard
+    d = HotspotDashboard(out_path=str(tmp_path), pdb_path=None, port=8056)
+    # at least the figure + table outputs are wired
+    layout = str(d._app.layout)
+    assert "binding-sites-graph" in layout and "bs-table" in layout and "bs-detail" in layout
+    assert len(d._app.callback_map) >= 3
+
+
+def test_ranked_topn_weight_order_and_truncation(tmp_path):
+    # Headless check of the weights-order mapping + top-N truncation that
+    # the checklist/figure/table callbacks all delegate to.
+    _write_example(tmp_path)
+    pytest.importorskip("dash")
+    from cosolvkit.analysis.hotspot_dashboard import HotspotDashboard
+    d = HotspotDashboard(out_path=str(tmp_path), pdb_path=None, port=8057)
+    # slider values in _WEIGHT_SPECS order: affinity, probe_coverage, volume,
+    # kinetics, shape, diversity -- matches DEFAULT_DASHBOARD_WEIGHTS.
+    top = d._ranked_topn((3, 2, 1, 1, 1, 1), 1)
+    assert len(top) == 1
+    assert int(top.iloc[0]["rank"]) == 1
+    assert int(top.iloc[0]["site_id"]) == 1  # site 1 is best on every feature in the fixture

@@ -24,7 +24,7 @@ except ImportError:
 
 try:
     import dash
-    from dash import html, dcc, Input, Output
+    from dash import html, dcc, Input, Output, State, ctx
     from dash import dash_table
     _DASH_AVAILABLE = True
 except ImportError:
@@ -685,13 +685,22 @@ class HotspotDashboard:
     # Callbacks
     # ------------------------------------------------------------------
 
+    def _ranked_topn(self, weight_values, top_n):
+        """Map the six slider values (in ``_WEIGHT_SPECS`` order) to a weights
+        dict, re-rank ``self._bs_df`` via ``rerank_binding_sites``, and return
+        the top ``top_n`` rows (or an empty/None-ish frame if there's no data).
+        """
+        weights = {
+            key: float(v)
+            for (key, _wid, _label, _default), v in zip(_WEIGHT_SPECS, weight_values)
+        }
+        ranked = rerank_binding_sites(self._bs_df, weights)
+        if ranked is None or ranked.empty:
+            return ranked
+        return ranked.head(int(top_n))
+
     def _register_callbacks(self, app: "dash.Dash"):
         # ── Slider labels ─────────────────────────────────────────────────────
-        # NOTE: the figure/table/checklist-driving callbacks (rerank_binding_sites,
-        # top-N truncation, visibility toggling) are added in Task 3. Only the
-        # weight/top-N label echoes are wired here so the app already constructs
-        # with a valid, self-consistent layout.
-
         @app.callback(Output("topn-label", "children"), Input("topn-slider", "value"))
         def update_topn_label(value):
             return f"Top N sites: {value}"
@@ -705,6 +714,81 @@ class HotspotDashboard:
             app.callback(
                 Output(f"{wid}-label", "children"), Input(wid, "value")
             )(_make_update_weight_label())
+
+        # ── Live re-rank → figure / table / checklist ───────────────────────────
+        _weight_inputs = [Input(wid, "value") for _key, wid, _label, _default in _WEIGHT_SPECS]
+
+        @app.callback(
+            [Output("bs-checklist", "options"), Output("bs-checklist", "value")],
+            _weight_inputs + [
+                Input("topn-slider", "value"),
+                Input("check-all-btn", "n_clicks"),
+                Input("check-none-btn", "n_clicks"),
+            ],
+        )
+        def _update_checklist(*args):
+            weight_values, top_n = args[:6], args[6]
+            top = self._ranked_topn(weight_values, top_n)
+            options, values = [], []
+            if top is not None and not top.empty:
+                for _, r in top.iterrows():
+                    sid = int(r["site_id"])
+                    options.append({
+                        "label": (f"Site {int(r['rank'])}  [{r['cosolvents']}]  "
+                                  f"score={float(r['combined']):.2f}"),
+                        "value": sid,
+                    })
+                    values.append(sid)
+            if ctx.triggered_id == "check-none-btn":
+                values = []
+            return options, values
+
+        @app.callback(
+            Output("binding-sites-graph", "figure"),
+            _weight_inputs + [Input("topn-slider", "value"), Input("bs-checklist", "value")],
+        )
+        def _update_figure(*args):
+            weight_values, top_n, visible = args[:6], args[6], set(args[7] or [])
+            top = self._ranked_topn(weight_values, top_n)
+            return self._build_binding_sites_figure(
+                top if top is not None else pd.DataFrame(), visible
+            )
+
+        @app.callback(
+            [Output("bs-table", "data"), Output("table-summary", "children")],
+            _weight_inputs + [Input("topn-slider", "value")],
+        )
+        def _update_table(*args):
+            weight_values, top_n = args[:6], args[6]
+            top = self._ranked_topn(weight_values, top_n)
+            if top is None or top.empty:
+                return [], "0 binding site(s) shown"
+            cols = ["combined", "probe_coverage", "agfe_min", "volume", "solidity", "residence"]
+            t = top.copy()
+            for c in cols:
+                if c in t.columns:
+                    t[c] = t[c].round(3)
+            return t.to_dict("records"), f"{len(top)} binding site(s) shown"
+
+        @app.callback(
+            Output("bs-detail", "children"),
+            Input("bs-table", "active_cell"), State("bs-table", "data"),
+        )
+        def _detail(active_cell, data):
+            if not active_cell or not data:
+                return "Select a row to see member hotspots + pharmacophore."
+            row = data[active_cell["row"]]
+            sid = int(row["site_id"]) if "site_id" in row and row["site_id"] is not None else None
+            pharm = self._pharmacophore.get(sid, {}) if sid is not None else {}
+            lines = [
+                html.Div(f"Binding site {row.get('rank')} — cosolvents {row.get('cosolvents')}"),
+                html.Div(f"member hotspots: {row.get('member_hotspot_ids', '')}"),
+            ]
+            for cos, atypes in pharm.items():
+                lines.append(html.Div(
+                    f"{cos}: " + ", ".join(f"{a} {v:.2f}" for a, v in atypes.items())
+                ))
+            return lines
 
     # ------------------------------------------------------------------
     # Public API
