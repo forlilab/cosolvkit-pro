@@ -234,3 +234,33 @@ class DBSCANClustering:
             if int((labeled_array == lbl).sum()) >= self.min_cluster_voxels
         ]
         return labeled_array, site_labels
+
+
+def build_clustering_strategy(clustering_cfg):
+    """Build a clustering-strategy instance from a ``ClusteringConfig``.
+
+    Maps ``clustering_cfg.strategy`` to the matching class and constructs it
+    with ``min_cluster_voxels=clustering_cfg.min_cluster_voxels`` plus any
+    ``clustering_cfg.strategy_kwargs``.
+
+    Raises
+    ------
+    ValueError
+        If ``clustering_cfg.strategy`` is not a known strategy name.
+    """
+    registry = {
+        "skimage_watershed": SkimageWatershedClustering,
+        "connected_components": ConnectedComponentsClustering,
+        "watershed": WatershedClustering,
+        "dbscan": DBSCANClustering,
+    }
+    strategy = clustering_cfg.strategy
+    if strategy not in registry:
+        raise ValueError(
+            f"Unknown clustering strategy {strategy!r}; "
+            f"valid options: {sorted(registry)}"
+        )
+    kwargs = dict(clustering_cfg.strategy_kwargs or {})
+    return registry[strategy](
+        min_cluster_voxels=clustering_cfg.min_cluster_voxels, **kwargs
+    )
