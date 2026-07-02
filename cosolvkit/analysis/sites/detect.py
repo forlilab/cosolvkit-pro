@@ -48,9 +48,6 @@ class HotspotDetector:
     top_percentile : float
         Top percentage of most-favorable voxels used for favorability scoring
         (default 10.0).
-    score_weights : dict, optional
-        Accepted for backward compatibility; no longer used by ``detect()``
-        (hotspots are ranked by ``agfe_min``, not a composite score).
     gridsize : float
         Voxel size in Angstroms (default 0.5).  Should match the value used
         in :meth:`Report.generate_density_maps`.
@@ -69,17 +66,11 @@ class HotspotDetector:
         (e.g. ``radius``, ``max_tau``, ``intermittency``).
     """
 
-    _DEFAULT_WEIGHTS = {
-        "favorability": 0.5,
-        "diversity": 0.3,
-        "volume": 0.2,
-    }
-
     def __init__(self, out_path, cosolvent_names, universe,
                  agfe_cutoff=-0.5,
                  min_cluster_voxels=1,
                  top_percentile=10.0,
-                 score_weights=None, gridsize=0.5,
+                 gridsize=0.5,
                  clustering_strategy=None,
                  compute_survival_probability=False, survival_kwargs=None,
                  use_skimage_cleanup=False,
@@ -116,12 +107,6 @@ class HotspotDetector:
         self.compute_regionprops = compute_regionprops
         self.regionprops_properties = regionprops_properties
         self.regionprops_extra_properties = regionprops_extra_properties
-
-        weights = dict(self._DEFAULT_WEIGHTS)
-        if score_weights is not None:
-            weights.update(score_weights)
-        total = sum(weights.values())
-        self.score_weights = {k: v / total for k, v in weights.items()}
 
         # Caches populated during detect() for use in export_results()
         self._labeled_arrays = {}

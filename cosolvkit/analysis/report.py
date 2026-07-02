@@ -256,7 +256,6 @@ class Report:
                                agfe_cutoff:float=-1.0,
                                min_cluster_voxels:int=20,
                                top_percentile:float=10.0,
-                               score_weights:dict=None,
                                export_label_map:bool=True,
                                gridsize:float=0.5,
                                top_n_plot:int=10,
@@ -279,7 +278,6 @@ class Report:
         :param agfe_cutoff: AGFE threshold in kcal/mol (default -1.0).
         :param min_cluster_voxels: minimum cluster size to retain (default 20).
         :param top_percentile: top-N% voxels used for favorability score (default 10.0).
-        :param score_weights: dict with keys favorability/diversity/volume.
         :param export_label_map: write hotspot_labels_{cosolvent}.dx (default True).
         :param add_to_pymol: add hotspot spheres to existing .pse session (default True).
         :param gridsize: voxel size in Å, must match generate_density_maps (default 0.5).
@@ -300,7 +298,6 @@ class Report:
             agfe_cutoff=agfe_cutoff,
             min_cluster_voxels=min_cluster_voxels,
             top_percentile=top_percentile,
-            score_weights=score_weights,
             gridsize=gridsize,
         )
         results = detector.detect_all()

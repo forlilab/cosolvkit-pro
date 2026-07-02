@@ -50,8 +50,7 @@ def _make_per_type_grids(out_dir, cosolvent, hbd_hotspot=True, hba_hotspot=False
     Grid(hba, edges=edges).export(str(out_dir / f"map_agfe_HBA_{cosolvent}.dx"))
 
 
-def _make_detector(tmp_path, cosolvent="BEN", agfe_cutoff=-1.0, min_cluster_voxels=10,
-                   score_weights=None):
+def _make_detector(tmp_path, cosolvent="BEN", agfe_cutoff=-1.0, min_cluster_voxels=10):
     return HotspotDetector(
         out_path=str(tmp_path),
         cosolvent_names=[cosolvent],
@@ -59,7 +58,6 @@ def _make_detector(tmp_path, cosolvent="BEN", agfe_cutoff=-1.0, min_cluster_voxe
         agfe_cutoff=agfe_cutoff,
         min_cluster_voxels=min_cluster_voxels,
         compute_survival_probability=False,
-        score_weights=score_weights,
     )
 
 
@@ -285,7 +283,7 @@ class TestCsvSlim:
         Grid(arr, edges=edges).export(str(tmp_path / "map_agfe_BEN.dx"))
         det = HotspotDetector(out_path=str(tmp_path), cosolvent_names=["BEN"], universe=None,
                               agfe_cutoff=-1.0, min_cluster_voxels=10,
-                              compute_survival_probability=False, score_weights=None)
+                              compute_survival_probability=False)
         sites = det.detect("BEN")
         sites[0].add_property("geom_solidity", 0.42)  # simulate a geom_* column
         det.export_results({"BEN": sites}, label_map=False)
@@ -303,7 +301,7 @@ class TestCsvSlim:
         Grid(arr, edges=edges).export(str(tmp_path / "map_agfe_BEN.dx"))
         det = HotspotDetector(out_path=str(tmp_path), cosolvent_names=["BEN"], universe=None,
                               agfe_cutoff=-1.0, min_cluster_voxels=10,
-                              compute_survival_probability=False, score_weights=None)
+                              compute_survival_probability=False)
         sites = det.detect("BEN")
         sites[0].add_property("geom_solidity", 0.42)
         det.export_results({"BEN": sites}, label_map=False)
