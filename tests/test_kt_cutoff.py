@@ -19,3 +19,10 @@ def test_kt_mode_scales_with_temperature_and_nkt():
 def test_absolute_mode_uses_agfe_cutoff_unchanged():
     cfg = HotspotsConfig(cutoff_mode="absolute", agfe_cutoff=-1.0)
     assert resolve_agfe_cutoff(cfg, temperature=300.0) == -1.0
+
+
+def test_invalid_cutoff_mode_raises():
+    # A typo must fail loudly, not silently fall back to the absolute cutoff.
+    cfg = HotspotsConfig(cutoff_mode="KT")  # wrong case
+    with pytest.raises(ValueError):
+        resolve_agfe_cutoff(cfg, temperature=300.0)

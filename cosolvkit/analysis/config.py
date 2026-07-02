@@ -23,7 +23,12 @@ def resolve_agfe_cutoff(hotspots_cfg, temperature):
     ``agfe_cutoff`` is used unchanged.
     """
     from cosolvkit.analysis.core.grid import BOLTZMANN_CONSTANT_KB
-    if getattr(hotspots_cfg, "cutoff_mode", "absolute") == "kt":
+    mode = getattr(hotspots_cfg, "cutoff_mode", "absolute")
+    if mode not in ("kt", "absolute"):
+        raise ValueError(
+            f"Invalid cutoff_mode {mode!r}; expected 'kt' or 'absolute'."
+        )
+    if mode == "kt":
         return -float(hotspots_cfg.n_kt) * BOLTZMANN_CONSTANT_KB * float(temperature)
     return float(hotspots_cfg.agfe_cutoff)
 
