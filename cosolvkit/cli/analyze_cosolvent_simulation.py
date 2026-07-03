@@ -55,8 +55,6 @@ Examples:
                         help='Enable atom-type-based density analysis.')
     legacy.add_argument('-atfname', '--atomtypes_file', dest='atomtypes_file', default=None,
                         help='Path to a custom atom-types JSON file.')
-    legacy.add_argument('-l',  '--statistics_file', dest='statistics_file', default=None,
-                        help='Path to the MD log/statistics file.')
     legacy.add_argument('--binding-sites', dest='binding_sites', default=False,
                         action='store_true',
                         help='Run cross-cosolvent binding-site detection after hotspot detection.')
@@ -94,14 +92,13 @@ def _run_legacy(args, logger):
     os.makedirs(out_path, exist_ok=True)
 
     report = Report(
-        statistics_file=args.statistics_file,
         traj_file=args.traj_file,
         top_file=args.top_file,
         cosolvent_names=args.cosolvents.split(','),
         out_path=out_path,
     )
 
-    report.generate_report(equilibration=False, rmsf=True, rdf=False)
+    report.generate_report(rmsf=True, rdf=False)
 
     report.generate_density_maps(
         use_atomtypes=args.use_atomtypes,
