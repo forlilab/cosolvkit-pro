@@ -14,9 +14,18 @@ from typing import Dict, List, Optional
 
 from cosolvkit.analysis.report import Report
 from cosolvkit.analysis.config import resolve_agfe_cutoff
+from cosolvkit.analysis.sites.clustering import build_clustering_strategy
 from .analysis_config import AnalysisConfig, SimulationEntry
-from .density_analysis import combine_dx_maps_with_resampling, generate_pymol_session
+from .density_analysis import combine_dx_maps_with_resampling
 from .hotspots_detection import HotspotDetector
+
+
+DEFAULT_PLOT_TOP_N = 10
+
+
+def _sp_candidate_zones(sites, sp_top_n):
+    """Return ``[[x, y, z], ...]`` centroids for the top ``sp_top_n`` sites."""
+    return [[float(v) for v in site.centroid] for site in sites[:sp_top_n]]
 
 
 class MultiReport:
@@ -50,6 +59,7 @@ class MultiReport:
         self._reports: List[Report] = []
         self._merged_dir: Optional[str] = None
         self._reference_pdb: Optional[str] = None
+        self._binding_sites: List = []
 
     # ------------------------------------------------------------------
     # Step 1 — per-simulation processing
@@ -68,7 +78,6 @@ class MultiReport:
             self.logger.info(f"Processing simulation '{label}' → {sim_out}")
 
             report = Report(
-                statistics_file=sim.statistics,
                 traj_file=sim.trajectory,
                 top_file=sim.topology,
                 cosolvent_names=sim.cosolvents,
@@ -76,10 +85,9 @@ class MultiReport:
             )
 
             report.generate_report(
-                equilibration=cfg.report.equilibration,
                 rmsf=cfg.report.rmsf,
                 rdf=cfg.report.rdf,
-                avg_selection=cfg.report.avg_selection,
+                rmsf_avg_selec=cfg.report.rmsf_avg_selec,
                 align_selection=cfg.report.align_selection,
             )
 
@@ -96,14 +104,15 @@ class MultiReport:
         # Determine protein reference for hotspot detection
         if self._reports:
             self._reference_pdb = (
-                cfg.reference_pdb
+                cfg.report.reference_pdb
                 or self._reports[0].avg_pdb_path
             )
             if not os.path.exists(self._reference_pdb):
                 self.logger.warning(
                     f"Reference PDB not found at '{self._reference_pdb}'. "
                     "Hotspot visualisation may be incomplete. "
-                    "Set 'rmsf: true' in report config or provide an explicit 'reference_pdb'."
+                    "Set 'rmsf: true' in report config or provide an explicit "
+                    "'report.reference_pdb'."
                 )
 
     # ------------------------------------------------------------------
@@ -123,7 +132,7 @@ class MultiReport:
         self._merged_dir = merged_dir
 
         cfg = self.config
-        merge_cfg = cfg.merge
+        merge_cfg = cfg.misc
 
         all_cosolvents = _collect_all_cosolvents(cfg.simulations)
 
@@ -158,13 +167,13 @@ class MultiReport:
                 else:
                     self.logger.info(
                         f"Merging {len(paths)} maps for '{cosolvent}' ({group_key}) "
-                        f"using method='{merge_cfg.method}', "
-                        f"resample_to='{merge_cfg.resample_to}' → {out_fname}"
+                        f"using method='{merge_cfg.merge_method}', "
+                        f"resample_to='{merge_cfg.merge_resampling_to}' → {out_fname}"
                     )
                     combine_dx_maps_with_resampling(
                         filepaths=paths,
-                        method=merge_cfg.method,
-                        resample_to=merge_cfg.resample_to,
+                        method=merge_cfg.merge_method,
+                        resample_to=merge_cfg.merge_resampling_to,
                         out_fname=out_fname,
                     )
 
@@ -199,7 +208,7 @@ class MultiReport:
         effective_cutoff = resolve_agfe_cutoff(hs, self.config.density_maps.temperature)
         self.logger.info(
             f"Hotspot AGFE cutoff: {effective_cutoff:.3f} kcal/mol "
-            f"(mode={hs.cutoff_mode}, n_kt={hs.n_kt}, T={self.config.density_maps.temperature} K)."
+            f"(n_kt={hs.n_kt}, T={self.config.density_maps.temperature} K)."
         )
 
         # Always disable auto-survival inside detect_all so we can run it
@@ -209,10 +218,9 @@ class MultiReport:
             cosolvent_names=all_cosolvents,
             universe=self._reports[0].universe,
             agfe_cutoff=effective_cutoff,
-            min_cluster_voxels=hs.min_cluster_voxels,
             top_percentile=hs.top_percentile,
-            score_weights=hs.score_weights,
-            gridsize=hs.gridsize,
+            gridsize=self.config.density_maps.gridsize,
+            clustering_strategy=build_clustering_strategy(cl),
             compute_survival_probability=False,
             use_skimage_cleanup=cl.use_skimage_cleanup,
             cleanup_min_size=cl.cleanup_min_size,
@@ -230,21 +238,22 @@ class MultiReport:
             )
         else:
             results = detector.detect_all()
-            detector.export_results(results, label_map=hs.export_label_map)
+            detector.export_results(results, label_map=True)
             if ck.save_hotspots:
                 HotspotDetector.save_checkpoint(results, self._merged_dir)
 
         # Run survival probability per-cosolvent using the simulation universe
         # that actually contains each probe.  Outputs (CSV + PNG) are written
         # to the probe's own simulation subfolder, not the merged directory.
-        if hs.compute_survival_probability:
+        survival_kwargs = dict(hs.survival_kwargs or {})
+        sp_top_n = int(survival_kwargs.pop("sp_top_n", 5))
+        if sp_top_n > 0:
             cosolvent_to_universe = _build_cosolvent_universe_map(
                 self.config.simulations, self._reports
             )
             cosolvent_to_out_path = _build_cosolvent_out_path_map(
                 self.config.simulations, self._reports
             )
-            survival_kwargs = hs.survival_kwargs or {}
             ran_any = False
             for cosolvent, sites in results.items():
                 if not sites:
@@ -255,13 +264,11 @@ class MultiReport:
                         "skipping survival probability."
                     )
                     continue
-                candidate_zones = [
-                    [float(v) for v in site.centroid] for site in sites
-                ]
+                candidate_zones = _sp_candidate_zones(sites, sp_top_n)
                 sim_out = cosolvent_to_out_path[cosolvent]
                 self.logger.info(
-                    f"Running survival probability for {len(sites)} "
-                    f"site(s) of '{cosolvent}' → {sim_out}"
+                    f"Running survival probability for {len(candidate_zones)} "
+                    f"site(s) of '{cosolvent}' (sp_top_n={sp_top_n}) → {sim_out}"
                 )
                 detector.universe = cosolvent_to_universe[cosolvent]
                 detector.out_path = sim_out
@@ -291,7 +298,7 @@ class MultiReport:
                     output_path=os.path.join(
                         self.out_path, f"clustering_3d_{cosolvent}.html"
                     ),
-                    top_n=hs.top_n_plot,
+                    top_n=DEFAULT_PLOT_TOP_N,
                 )
 
         bs_cfg = self.config.binding_sites
@@ -304,6 +311,7 @@ class MultiReport:
                 weights=bs_cfg.weights, merge_tolerance_ang=bs_cfg.merge_tolerance_ang,
             )
             export_binding_sites(binding_sites, self.out_path)
+            self._binding_sites = binding_sites
             self.logger.info(f"Identified {len(binding_sites)} binding site(s).")
 
         return results
