@@ -321,18 +321,23 @@ class MultiReport:
     # ------------------------------------------------------------------
 
     def generate_sessions(self):
-        """Generate a PyMol session pointing at merged density maps."""
+        """Generate a binding-site PyMol session from the detected sites."""
         pm = self.config.pymol
-        all_cosolvents = _collect_all_cosolvents(self.config.simulations)
-        merged_dir = self._merged_dir or self.out_path
+        if not pm.enabled:
+            self.logger.info("pymol.enabled is false — skipping PyMol session.")
+            return
+        if not self._binding_sites:
+            self.logger.info("No binding sites available — skipping PyMol session.")
+            return
 
-        generate_pymol_session(
+        from cosolvkit.analysis.viz.pymol import generate_binding_site_session
+
+        generate_binding_site_session(
+            binding_sites=self._binding_sites,
+            reference_pdb=self._reference_pdb,
+            density_dir=self._merged_dir or self.out_path,
             out_path=self.out_path,
-            cosolvent_names=all_cosolvents,
-            avg_pdb_path=self._reference_pdb,
-            density_files=merged_dir,
-            selection_string=pm.selection_string,
-            reference_pdb=pm.reference_pdb or self.config.reference_pdb,
+            top_n_sites=pm.top_n_sites,
         )
 
     # ------------------------------------------------------------------
@@ -345,7 +350,7 @@ class MultiReport:
         self.run_per_simulation()
         self.merge_density_maps()
         self.run_joint_hotspot_detection()
-        # self.generate_sessions()
+        self.generate_sessions()
 
 
 # ---------------------------------------------------------------------------
