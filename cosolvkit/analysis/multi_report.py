@@ -185,7 +185,7 @@ class MultiReport:
         """Run :class:`HotspotDetector` on merged maps.
 
         Uses the protein reference from the first simulation unless
-        ``config.reference_pdb`` is specified.
+        ``config.report.reference_pdb`` is specified.
 
         Returns
         -------

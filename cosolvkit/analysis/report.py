@@ -225,7 +225,6 @@ class Report:
                                agfe_cutoff:float=-1.0,
                                min_cluster_voxels:int=20,
                                top_percentile:float=10.0,
-                               export_label_map:bool=True,
                                gridsize:float=0.5,
                                top_n_plot:int=10,
                                save_checkpoint:bool=True) -> dict:
@@ -247,8 +246,6 @@ class Report:
         :param agfe_cutoff: AGFE threshold in kcal/mol (default -1.0).
         :param min_cluster_voxels: minimum cluster size to retain (default 20).
         :param top_percentile: top-N% voxels used for favorability score (default 10.0).
-        :param export_label_map: write hotspot_labels_{cosolvent}.dx (default True).
-        :param add_to_pymol: add hotspot spheres to existing .pse session (default True).
         :param gridsize: voxel size in Å, must match generate_density_maps (default 0.5).
         :param top_n_plot: maximum number of sites shown in the 3D plot, in rank order (default 10).
         :param save_checkpoint: if True (default), save a checkpoint under
@@ -270,7 +267,7 @@ class Report:
             gridsize=gridsize,
         )
         results = detector.detect_all()
-        detector.export_results(results, label_map=export_label_map)
+        detector.export_results(results, label_map=True)
         if save_checkpoint:
             HotspotDetector.save_checkpoint(results, self.out_path)
 

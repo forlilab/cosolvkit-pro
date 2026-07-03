@@ -476,7 +476,7 @@ def generate_binding_site_session(binding_sites, reference_pdb, density_dir,
         cmd.load(pocket_dx, pocket_map)
         cmd.isomesh(pocket_mesh, pocket_map, 0.5)
         cmd.color("grey50", pocket_mesh)
-        members += [pocket_mesh]
+        members += [pocket_mesh, pocket_map]
         lines.append(f"cmd.load('{pocket_dx}', '{pocket_map}')\n")
         lines.append(f"cmd.isomesh('{pocket_mesh}', '{pocket_map}', 0.5)\n")
         lines.append(f"cmd.color('grey50', '{pocket_mesh}')\n")
@@ -506,7 +506,7 @@ def generate_binding_site_session(binding_sites, reference_pdb, density_dir,
             cmd.load(dx_path, map_name)
             cmd.isomesh(mesh_name, map_name, level, center, carve=radius)
             cmd.color(color, mesh_name)
-            members += [mesh_name]
+            members += [mesh_name, map_name]
             lines.append(f"cmd.load('{dx_path}', '{map_name}')\n")
             lines.append(
                 f"cmd.isomesh('{mesh_name}', '{map_name}', {level}, "
