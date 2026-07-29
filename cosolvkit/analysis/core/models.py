@@ -13,6 +13,21 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 
+def _round_or_none(value, ndigits=4):
+    """Round *value* for CSV/JSON export, passing ``None``/non-finite through as ``None``.
+
+    Sites that do not come from an AGFE density map (e.g. crystallographic ligand
+    positions used as ground truth) legitimately have no affinity or shape values.
+    """
+    if value is None:
+        return None
+    try:
+        fval = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(fval, ndigits) if np.isfinite(fval) else None
+
+
 # ---------------------------------------------------------------------------
 # PocketResidue — per-residue data attached to a Hotspot
 # ---------------------------------------------------------------------------
@@ -176,22 +191,28 @@ class Hotspot:
     downstream analyses (e.g. residence time, pharmacophore annotation) can
     attach extra data without subclassing.
 
-    Parameters are set by :class:`HotspotDetector` — do not construct directly.
+    Normally constructed by :class:`HotspotDetector`. Every AGFE-derived argument
+    is optional, so the class doubles as a plain occupancy-region record for sites
+    that come from somewhere other than a density map — e.g. a crystallographic
+    ligand copy used as benchmark ground truth. Such a hotspot carries only
+    ``cosolvent`` (the chemical species), ``centroid`` and ``voxel_mask``, which is
+    all :func:`cosolvkit.analysis.sites.binding_sites.group_hotspots` needs.
     """
 
-    def __init__(self, rank, site_id, cosolvent, n_voxels, centroid,
-                 agfe_min, agfe_mean_top_pct, voxel_mask,
-                 favorable_atomtypes, per_type_agfe):
+    def __init__(self, rank, site_id, cosolvent, n_voxels=0, centroid=None,
+                 agfe_min=None, agfe_mean_top_pct=None, voxel_mask=None,
+                 favorable_atomtypes=None, per_type_agfe=None):
         self.rank = rank                            # int; 1 = most-negative agfe_min
         self.site_id = site_id                      # label from scipy.ndimage.label
         self.cosolvent = cosolvent                  # str residue name
         self.n_voxels = n_voxels                    # int
         self.centroid = centroid                    # np.ndarray (3,), Angstroms
-        self.agfe_min = agfe_min                    # float, kcal/mol
-        self.agfe_mean_top_pct = agfe_mean_top_pct  # float, kcal/mol
+        self.agfe_min = agfe_min                    # float, kcal/mol, or None
+        self.agfe_mean_top_pct = agfe_mean_top_pct  # float, kcal/mol, or None
         self.voxel_mask = voxel_mask                # boolean 3D ndarray, same shape as AGFE grid
-        self.favorable_atomtypes = favorable_atomtypes  # List[str]
-        self.per_type_agfe = per_type_agfe            # Dict[str, float]: min AGFE per type
+        self.favorable_atomtypes = (list(favorable_atomtypes)
+                                    if favorable_atomtypes else [])  # List[str]
+        self.per_type_agfe = dict(per_type_agfe) if per_type_agfe else {}  # min AGFE per type
         self.properties = {}                          # extensible user properties
         self.pocket_residues = []                     # List[PocketResidue], populated on demand
         # Grid spatial metadata — set by HotspotDetector.detect() after construction.
@@ -256,19 +277,20 @@ class Hotspot:
 
     def to_dict(self):
         """Flat dict for CSV/JSON export. Includes base scores and ``properties``."""
+        cent = self.centroid if self.centroid is not None else (None, None, None)
         d = {
             "rank": self.rank,
             "site_id": self.site_id,
             "cosolvent": self.cosolvent,
             "n_voxels": self.n_voxels,
-            "centroid_x": round(float(self.centroid[0]), 3),
-            "centroid_y": round(float(self.centroid[1]), 3),
-            "centroid_z": round(float(self.centroid[2]), 3),
-            "agfe_min": round(float(self.agfe_min), 4),
-            "agfe_mean_top_pct": round(float(self.agfe_mean_top_pct), 4),
+            "centroid_x": _round_or_none(cent[0], 3),
+            "centroid_y": _round_or_none(cent[1], 3),
+            "centroid_z": _round_or_none(cent[2], 3),
+            "agfe_min": _round_or_none(self.agfe_min),
+            "agfe_mean_top_pct": _round_or_none(self.agfe_mean_top_pct),
             "favorable_atomtypes": ",".join(self.favorable_atomtypes),
         }
-        d.update({f"agfe_{k}": round(float(v), 4) for k, v in self.per_type_agfe.items()})
+        d.update({f"agfe_{k}": _round_or_none(v) for k, v in self.per_type_agfe.items()})
         d.update(self.properties)
         if self.pocket_residues:
             d["pocket_residues"] = [r.to_dict() for r in self.pocket_residues]
@@ -309,10 +331,14 @@ class Hotspot:
             return None
 
     def __repr__(self):
+        agfe = ("n/a" if self.agfe_min is None
+                else f"{float(self.agfe_min):.3f} kcal/mol")
+        top = ("n/a" if self.agfe_mean_top_pct is None
+               else f"{float(self.agfe_mean_top_pct):.3f}")
         return (
             f"Hotspot(rank={self.rank}, cosolvent={self.cosolvent!r}, "
-            f"n_voxels={self.n_voxels}, agfe_min={self.agfe_min:.3f} kcal/mol, "
-            f"agfe_mean_top_pct={self.agfe_mean_top_pct:.3f})"
+            f"n_voxels={self.n_voxels}, agfe_min={agfe}, "
+            f"agfe_mean_top_pct={top})"
         )
 
 
@@ -327,16 +353,24 @@ class BindingSite:
     union of member hotspot masks; affinity/kinetics/chemistry are roll-ups of
     the members. ``combined`` and ``rank`` are set by
     :func:`cosolvkit.analysis.core.scoring.score_binding_sites`.
+
+    Every aggregate except ``site_id`` is optional so the class can also describe a
+    pocket that was not derived from AGFE densities — e.g. a ground-truth site built
+    from crystallographic ligand copies, where only the members, mask and centroid
+    are known. ``cosolvents`` / ``n_total_cosolvents`` default to values derived from
+    ``member_hotspots``.
     """
 
-    def __init__(self, site_id, member_hotspots, voxel_mask, centroid,
-                 agfe_min, agfe_mean_top_pct, volume,
-                 solidity, extent, axis_major_length, axis_minor_length,
-                 favorable_atomtypes, pharmacophore, residence,
-                 cosolvents, n_total_cosolvents,
+    def __init__(self, site_id, member_hotspots=None, voxel_mask=None, centroid=None,
+                 agfe_min=None, agfe_mean_top_pct=None, volume=None,
+                 solidity=None, extent=None, axis_major_length=None,
+                 axis_minor_length=None,
+                 favorable_atomtypes=None, pharmacophore=None, residence=None,
+                 cosolvents=None, n_total_cosolvents=None,
                  pocket_residues=None, grid_origin=None, grid_delta=None):
         self.site_id = site_id
-        self.member_hotspots = member_hotspots          # list[Hotspot]
+        self.member_hotspots = (list(member_hotspots)
+                                if member_hotspots is not None else [])  # list[Hotspot]
         self.voxel_mask = voxel_mask                    # boolean 3D ndarray on the common grid
         self.centroid = centroid                        # np.ndarray (3,), Angstroms
         self.agfe_min = agfe_min                        # best (most-negative) across members
@@ -346,11 +380,17 @@ class BindingSite:
         self.extent = extent
         self.axis_major_length = axis_major_length
         self.axis_minor_length = axis_minor_length
-        self.favorable_atomtypes = favorable_atomtypes  # list[str], union over members
-        self.pharmacophore = pharmacophore              # {cosolvent: {atomtype: min_agfe}}
+        self.favorable_atomtypes = (list(favorable_atomtypes)
+                                    if favorable_atomtypes else [])  # union over members
+        self.pharmacophore = dict(pharmacophore) if pharmacophore else {}
         self.residence = residence                      # max sp_mrt across members, or None
+        # Default the chemistry roll-ups from the members rather than requiring them.
+        if cosolvents is None:
+            cosolvents = sorted({h.cosolvent for h in self.member_hotspots
+                                 if h.cosolvent is not None})
         self.cosolvents = cosolvents                    # sorted unique list[str]
-        self.n_total_cosolvents = n_total_cosolvents
+        self.n_total_cosolvents = (len(cosolvents) if n_total_cosolvents is None
+                                   else n_total_cosolvents)
         self.pocket_residues = pocket_residues if pocket_residues is not None else []
         self.grid_origin = grid_origin
         self.grid_delta = grid_delta
@@ -377,35 +417,35 @@ class BindingSite:
 
     def to_dict(self):
         """Flat dict for CSV/JSON export (binding_sites.csv schema)."""
+        cent = self.centroid if self.centroid is not None else (None, None, None)
         d = {
             "site_id": self.site_id,
             "rank": self.rank,
-            "combined": (round(float(self.combined), 4)
-                         if self.combined is not None else None),
+            "combined": _round_or_none(self.combined),
             "cosolvents": ",".join(self.cosolvents),
             "n_cosolvents": self.n_cosolvents,
-            "probe_coverage": round(float(self.probe_coverage), 4),
+            "probe_coverage": _round_or_none(self.probe_coverage),
             "n_hotspots": self.n_hotspots,
             "member_hotspot_ids": ",".join(str(i) for i in self.member_hotspot_ids),
-            "centroid_x": round(float(self.centroid[0]), 3),
-            "centroid_y": round(float(self.centroid[1]), 3),
-            "centroid_z": round(float(self.centroid[2]), 3),
-            "agfe_min": round(float(self.agfe_min), 4),
-            "agfe_mean_top_pct": round(float(self.agfe_mean_top_pct), 4),
-            "volume": round(float(self.volume), 3),
-            "solidity": round(float(self.solidity), 4),
-            "extent": round(float(self.extent), 4),
-            "axis_major_length": round(float(self.axis_major_length), 4),
-            "axis_minor_length": round(float(self.axis_minor_length), 4),
+            "centroid_x": _round_or_none(cent[0], 3),
+            "centroid_y": _round_or_none(cent[1], 3),
+            "centroid_z": _round_or_none(cent[2], 3),
+            "agfe_min": _round_or_none(self.agfe_min),
+            "agfe_mean_top_pct": _round_or_none(self.agfe_mean_top_pct),
+            "volume": _round_or_none(self.volume, 3),
+            "solidity": _round_or_none(self.solidity),
+            "extent": _round_or_none(self.extent),
+            "axis_major_length": _round_or_none(self.axis_major_length),
+            "axis_minor_length": _round_or_none(self.axis_minor_length),
             "favorable_atomtypes": ",".join(self.favorable_atomtypes),
             "n_chemotypes": len(self.favorable_atomtypes),
-            "residence": (round(float(self.residence), 4)
-                          if self.residence is not None else None),
+            "residence": _round_or_none(self.residence),
         }
         d.update(self.properties)
         return d
 
     def __repr__(self):
+        agfe = "n/a" if self.agfe_min is None else f"{float(self.agfe_min):.3f}"
         return (f"BindingSite(site_id={self.site_id}, rank={self.rank}, "
                 f"n_hotspots={self.n_hotspots}, cosolvents={self.cosolvents}, "
-                f"agfe_min={self.agfe_min:.3f})")
+                f"agfe_min={agfe})")

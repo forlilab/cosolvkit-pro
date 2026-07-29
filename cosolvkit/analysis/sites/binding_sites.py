@@ -120,8 +120,29 @@ def _union_shape_features(union_mask):
     }
 
 
+def _finite_values(members, attr):
+    """Member values of *attr* that are present and finite (may be empty)."""
+    out = []
+    for m in members:
+        v = getattr(m, attr, None)
+        if v is None:
+            continue
+        try:
+            fv = float(v)
+        except (TypeError, ValueError):
+            continue
+        if np.isfinite(fv):
+            out.append(fv)
+    return out
+
+
 def build_binding_site(site_id, group, n_total_cosolvents):
-    """Aggregate a group of member hotspots into a BindingSite."""
+    """Aggregate a group of member hotspots into a BindingSite.
+
+    Members need not carry AGFE data: hotspots built from something other than a
+    density map (e.g. crystallographic ligand copies used as ground truth) yield a
+    site with ``agfe_min=None``, an unweighted centroid and an empty pharmacophore.
+    """
     from cosolvkit.analysis.core.models import BindingSite
 
     members = group["members"]
@@ -129,13 +150,19 @@ def build_binding_site(site_id, group, n_total_cosolvents):
     ref_d = np.asarray(group["ref_delta"], dtype=float)
     union = group["union_mask"]
 
-    # Affinity-weighted centroid of member centroids (weight |agfe_min|).
+    # Affinity-weighted centroid of member centroids (weight |agfe_min|); falls back
+    # to the plain mean when members have no AGFE to weight by.
     cents = np.array([m.centroid for m in members], dtype=float)
-    w = np.array([abs(m.agfe_min) for m in members], dtype=float)
+    agfe_vals = _finite_values(members, "agfe_min")
+    if len(agfe_vals) == len(members):
+        w = np.abs(np.array(agfe_vals, dtype=float))
+    else:
+        w = np.zeros(len(members), dtype=float)
     centroid = (cents.T @ w) / w.sum() if w.sum() > 0 else cents.mean(axis=0)
 
-    agfe_min = min(m.agfe_min for m in members)
-    agfe_mean_top_pct = min(m.agfe_mean_top_pct for m in members)
+    agfe_min = min(agfe_vals) if agfe_vals else None
+    top_vals = _finite_values(members, "agfe_mean_top_pct")
+    agfe_mean_top_pct = min(top_vals) if top_vals else None
     gridsize = float(ref_d[0])
     volume = float(union.sum()) * (gridsize ** 3)
 
