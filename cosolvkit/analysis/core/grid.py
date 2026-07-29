@@ -26,16 +26,36 @@ def _read_dx(filepath: str = None) -> Grid:
     """Reads a .dx map using gridData.Grid."""
     return Grid(str(filepath))
 
-def _grids_spatially_aligned(g1: Grid, g2: Grid, atol: float = 1e-3) -> bool:
+# Fraction of a voxel by which two grids' edges may differ and still count as
+# aligned. Replicas of the same system are built on independently-computed boxes, so
+# their origins differ by a few hundredths of an Angstrom -- physically meaningless
+# next to a 0.5 A voxel, but enough to fail an absolute 1e-3 A test and send every map
+# through an interpolating resample it does not need.
+_ALIGNMENT_VOXEL_FRACTION = 0.1
+
+
+def _grids_spatially_aligned(g1: Grid, g2: Grid, atol: float = None,
+                             voxel_fraction: float = _ALIGNMENT_VOXEL_FRACTION) -> bool:
     """True if two grids share shape, origin, and spacing.
 
     Equal shape alone is not enough: two maps can have identical dimensions but
     different origin/spacing, in which case voxel [i, j, k] points to a
     different physical location in each. Comparing the full per-axis edges
     captures both origin and spacing in one check.
+
+    The comparison is deliberately *sub-voxel* rather than exact. When *atol* is None
+    it defaults to ``voxel_fraction`` x the smaller grid spacing, so grids offset by a
+    small fraction of a voxel are treated as aligned and averaged voxel-wise. The
+    registration error this introduces is bounded by that fraction of a voxel; the
+    alternative -- resampling -- is far more damaging, because interpolation fills
+    out-of-range boundary voxels with a constant (see
+    :func:`combine_dx_maps_with_resampling`).
     """
     if g1.grid.shape != g2.grid.shape:
         return False
+    if atol is None:
+        spacing = min(float(np.min(g1.delta)), float(np.min(g2.delta)))
+        atol = voxel_fraction * spacing
     return all(
         len(e1) == len(e2) and np.allclose(e1, e2, atol=atol)
         for e1, e2 in zip(g1.edges, g2.edges)
@@ -78,11 +98,56 @@ def combine_dx_maps(filepaths: List[str] = None, method: str = 'mean', out_fname
 
     return combined_grid
 
+def _axis_midpoints(edges) -> List[np.ndarray]:
+    """Voxel-centre coordinate per axis from a grid's edge arrays."""
+    return [0.5 * (np.asarray(e[:-1]) + np.asarray(e[1:])) for e in edges]
+
+
+def _resample_grid(g: Grid, ref_grid: Grid, fill_value: float = 0.0,
+                   order: int = 1) -> np.ndarray:
+    """Resample *g* onto *ref_grid*'s edges with an explicit out-of-range fill.
+
+    Deliberately does NOT use :meth:`gridData.Grid.resample`, whose two defaults are
+    both wrong for a free-energy map:
+
+    * ``Grid.interpolation_cval`` defaults to ``grid.min()``. Reasonable for a density
+      (min ~ 0 = empty) but catastrophic for an AGFE map, where the minimum is the
+      *most favourable* value: every target voxel falling outside the source grid — i.e.
+      the whole outer voxel layer whenever the origins differ even by a sub-voxel
+      amount — comes back at maximal attraction. That produces a shell of spurious
+      density on all six faces of the box, which merges into one connected cluster
+      holding ~99% of the favourable volume and outranks every real pocket.
+      ``fill_value=0.0`` is the correct neutral (bulk) AGFE.
+    * The interpolation is a cubic spline. gridData's own docs warn that cubic
+      interpolation invents values not present in the data; on sharp wells in a flat
+      background that manufactures favourable voxels at well edges. Linear interpolation
+      cannot overshoot, and ``scipy.ndimage.spline_filter`` refuses order < 2, so the
+      linear path has to go through ``map_coordinates`` directly.
+
+    Assumes each axis is uniformly spaced, which is true for .dx grids.
+    """
+    from scipy.ndimage import map_coordinates
+
+    src_mid = _axis_midpoints(g.edges)
+    tgt_mid = _axis_midpoints(ref_grid.edges)
+
+    # Fractional source index of every target voxel centre, per axis.
+    frac = []
+    for s, t in zip(src_mid, tgt_mid):
+        spacing = s[1] - s[0] if len(s) > 1 else 1.0
+        frac.append((t - s[0]) / spacing)
+    coords = np.stack(np.meshgrid(*frac, indexing="ij"))
+
+    return map_coordinates(g.grid, coords, order=order,
+                           mode="constant", cval=fill_value)
+
+
 def combine_dx_maps_with_resampling(
     filepaths: List[str],
     method: str = 'mean',
     resample_to: str = 'first',
     out_fname: str = 'combined.dx',
+    fill_value: float = 0.0,
 ) -> Grid:
     """Combine .dx maps from simulations that may have different box sizes.
 
@@ -102,6 +167,11 @@ def combine_dx_maps_with_resampling(
     :type resample_to: str
     :param out_fname: Output path for the combined .dx file.
     :type out_fname: str
+    :param fill_value: Value used for target voxels that fall outside a source grid
+        during resampling. Defaults to 0.0, the neutral/bulk AGFE. Do NOT leave this to
+        gridData's default (the grid minimum) for energy-like maps — see
+        :func:`_resample_grid`.
+    :type fill_value: float
     :return: Combined grid exported to out_fname.
     :rtype: gridData.Grid
     """
@@ -130,7 +200,7 @@ def combine_dx_maps_with_resampling(
             if _grids_spatially_aligned(g, ref_grid):
                 resampled.append(g.grid)
             else:
-                resampled.append(g.resample(ref_grid.edges).grid)
+                resampled.append(_resample_grid(g, ref_grid, fill_value=fill_value))
 
     agg_fn = {
         'mean': np.mean,
