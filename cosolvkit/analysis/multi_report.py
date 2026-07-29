@@ -251,6 +251,10 @@ class MultiReport:
             cosolvent_to_universe = _build_cosolvent_universe_map(
                 self.config.simulations, self._reports
             )
+            # Survival probability averages over replicas rather than using one.
+            cosolvent_to_universes = _build_cosolvent_universes_map(
+                self.config.simulations, self._reports
+            )
             cosolvent_to_out_path = _build_cosolvent_out_path_map(
                 self.config.simulations, self._reports
             )
@@ -266,15 +270,19 @@ class MultiReport:
                     continue
                 candidate_zones = _sp_candidate_zones(sites, sp_top_n)
                 sim_out = cosolvent_to_out_path[cosolvent]
+                replicas = cosolvent_to_universes.get(
+                    cosolvent, [cosolvent_to_universe[cosolvent]])
                 self.logger.info(
                     f"Running survival probability for {len(candidate_zones)} "
-                    f"site(s) of '{cosolvent}' (sp_top_n={sp_top_n}) → {sim_out}"
+                    f"site(s) of '{cosolvent}' over {len(replicas)} replica(s) "
+                    f"(sp_top_n={sp_top_n}) → {sim_out}"
                 )
                 detector.universe = cosolvent_to_universe[cosolvent]
                 detector.out_path = sim_out
                 detector.property_calculator.run_survival_probability(
                     cosolvent_names=[cosolvent],
                     candidate_zones=candidate_zones,
+                    universes=replicas,
                     **survival_kwargs,
                 )
                 ran_any = True
@@ -399,6 +407,23 @@ def _build_cosolvent_universe_map(
         for cosolvent in sim.cosolvents:
             if cosolvent not in mapping:
                 mapping[cosolvent] = report.universe
+    return mapping
+
+
+def _build_cosolvent_universes_map(
+    simulations: List[SimulationEntry],
+    reports: List[Report],
+) -> Dict[str, List[object]]:
+    """Return ``{cosolvent_name: [universe, ...]}`` — EVERY replica of each cosolvent.
+
+    Survival probability must be computed per replica and averaged (concatenating
+    replicas would invent departure events at each join), so it needs all of them,
+    unlike the single-universe map used for residue featurisation.
+    """
+    mapping: Dict[str, List[object]] = {}
+    for sim, report in zip(simulations, reports):
+        for cosolvent in sim.cosolvents:
+            mapping.setdefault(cosolvent, []).append(report.universe)
     return mapping
 
 

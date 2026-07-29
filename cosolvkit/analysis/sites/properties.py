@@ -303,7 +303,8 @@ class PocketPropertyCalculator:
     # ------------------------------------------------------------------
 
     def run_survival_probability(self, cosolvent_names, candidate_zones,
-                                 radius=6.0, max_tau=100, intermittency=2):
+                                 radius=6.0, max_tau=100, intermittency=2,
+                                 universes=None):
         """Compute the survival probability of cosolvents inside spherical zones.
 
         Each zone can be defined as a group of residue IDs or as an explicit
@@ -315,8 +316,11 @@ class PocketPropertyCalculator:
         * ``[x, y, z]`` (3 floats) — sphere centred at the explicit Angstrom point.
         * A bare ``int`` — treated as ``[resid]``.
 
-        Results are saved as ``survival_probability_{cosolvent}.csv`` and
-        ``survival_probability_{cosolvent}.png`` under ``self.out_path``.
+        Results are saved as ``survival_probability_{cosolvent}.csv`` (the
+        replica-averaged curve, which :meth:`fit_survival_probability` consumes) and
+        ``survival_probability_{cosolvent}.png`` under ``self.out_path``. With more than
+        one replica, ``survival_probability_{cosolvent}_per_replica.csv`` also keeps the
+        individual curves so the spread is recoverable.
 
         Parameters
         ----------
@@ -330,6 +334,18 @@ class PocketPropertyCalculator:
             Maximum lag time for the survival-probability calculation (default 100).
         intermittency : int
             Intermittency for ``waterdynamics.SurvivalProbability`` (default 2).
+        universes : list, optional
+            Replica universes to average over. Defaults to ``[self.universe]``.
+
+            Survival probability is a *dynamical* quantity, so replicas must be run
+            SEPARATELY and their curves averaged — they cannot be concatenated into one
+            trajectory. A join between two independent replicas is a discontinuity: a
+            probe present in the last frame of one and absent from the first frame of the
+            next registers as a departure that never happened, and the resids do not even
+            refer to the same molecule across the join. With ``max_tau`` lag frames every
+            join corrupts that many lag windows, biasing residence times downward.
+            Averaging independent replicas is the correct ensemble average and is the only
+            version that yields an uncertainty.
         """
         import cosolvkit.analysis.hotspot_visualization as viz
         try:
@@ -343,32 +359,55 @@ class PocketPropertyCalculator:
         if candidate_zones is None:
             raise ValueError("candidate_zones must be provided.")
 
+        replicas = list(universes) if universes else [self.universe]
+
         for cosolvent_name in cosolvent_names:
             data = []
 
-            for zone_idx, zone in enumerate(candidate_zones):
-                select, label_str = _build_selection(cosolvent_name, zone, radius)
-                self.logger.info(
-                    f"Zone {zone_idx} [{label_str}] — cosolvent {cosolvent_name}"
+            for rep_idx, universe in enumerate(replicas):
+                for zone_idx, zone in enumerate(candidate_zones):
+                    select, label_str = _build_selection(cosolvent_name, zone, radius)
+                    self.logger.info(
+                        f"Zone {zone_idx} [{label_str}] — cosolvent {cosolvent_name} "
+                        f"— replica {rep_idx + 1}/{len(replicas)}"
+                    )
+
+                    sp = SP(universe, select, verbose=True)
+                    sp.run(tau_max=max_tau, residues=False,
+                           intermittency=intermittency)
+
+                    for tau, sp_value in zip(sp.tau_timeseries, sp.sp_timeseries):
+                        data.append({
+                            "Group": zone_idx,
+                            "Zone": label_str,
+                            "Time": tau,
+                            "SP": sp_value,
+                            "Cosolvent": cosolvent_name,
+                            "Replica": rep_idx,
+                        })
+
+            df_raw = pd.DataFrame(data)
+            out_csv = os.path.join(
+                self.out_path, f"survival_probability_{cosolvent_name}.csv")
+
+            if len(replicas) > 1:
+                df_raw.to_csv(
+                    os.path.join(
+                        self.out_path,
+                        f"survival_probability_{cosolvent_name}_per_replica.csv"),
+                    index=False,
                 )
+                # Average each zone's curve over replicas. Zones unoccupied in a replica
+                # yield NaN there and are simply dropped from that point's mean, so a
+                # missing replica lowers n rather than poisoning the average.
+                df_sp = (
+                    df_raw.groupby(["Group", "Zone", "Time", "Cosolvent"], as_index=False)
+                    .agg(SP=("SP", "mean"), SP_sd=("SP", "std"), n_replicas=("SP", "count"))
+                )
+            else:
+                df_sp = df_raw.drop(columns=["Replica"])
 
-                sp = SP(self.universe, select, verbose=True)
-                sp.run(tau_max=max_tau, residues=False, intermittency=intermittency)
-
-                for tau, sp_value in zip(sp.tau_timeseries, sp.sp_timeseries):
-                    data.append({
-                        "Group": zone_idx,
-                        "Zone": label_str,
-                        "Time": tau,
-                        "SP": sp_value,
-                        "Cosolvent": cosolvent_name,
-                    })
-
-            df_sp = pd.DataFrame(data)
-            df_sp.to_csv(
-                os.path.join(self.out_path, f"survival_probability_{cosolvent_name}.csv"),
-                index=False,
-            )
+            df_sp.to_csv(out_csv, index=False)
             viz.plot_sp_raw(cosolvent_name, df_sp, self.out_path)
 
     # ------------------------------------------------------------------

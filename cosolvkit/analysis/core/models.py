@@ -366,6 +366,7 @@ class BindingSite:
                  solidity=None, extent=None, axis_major_length=None,
                  axis_minor_length=None,
                  favorable_atomtypes=None, pharmacophore=None, residence=None,
+                 residence_metric=None,
                  cosolvents=None, n_total_cosolvents=None,
                  pocket_residues=None, grid_origin=None, grid_delta=None,
                  probe_chemotypes=None, n_total_probe_chemotypes=None):
@@ -384,7 +385,11 @@ class BindingSite:
         self.favorable_atomtypes = (list(favorable_atomtypes)
                                     if favorable_atomtypes else [])  # union over members
         self.pharmacophore = dict(pharmacophore) if pharmacophore else {}
-        self.residence = residence                      # max sp_mrt across members, or None
+        self.residence = residence                      # max of the kinetics metric, or None
+        # Which survival-probability metric ``residence`` holds. Recorded because the
+        # default is ``sp_plateau`` (a FRACTION still bound at long lag), not a time —
+        # the column would otherwise be silently misread as a residence time.
+        self.residence_metric = residence_metric
         # Default the chemistry roll-ups from the members rather than requiring them.
         if cosolvents is None:
             cosolvents = sorted({h.cosolvent for h in self.member_hotspots
@@ -469,6 +474,7 @@ class BindingSite:
             "favorable_atomtypes": ",".join(self.favorable_atomtypes),
             "n_chemotypes": len(self.favorable_atomtypes),
             "residence": _round_or_none(self.residence),
+            "residence_metric": self.residence_metric,
         }
         d.update(self.properties)
         return d

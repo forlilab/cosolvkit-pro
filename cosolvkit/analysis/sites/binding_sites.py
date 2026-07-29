@@ -120,11 +120,29 @@ def _union_shape_features(union_mask):
     }
 
 
+# Which survival-probability metric feeds BindingSite.residence (the ``kinetics`` score
+# feature). ``sp_plateau`` -- the fraction of probes still bound at the longest lag -- not
+# ``sp_mrt``: on 100 ns trajectories with tau_max=100 frames, MRT is CENSORED at exactly
+# the strongest sites (70-82% of probes never leave the observation window, so their MRT
+# is a lower bound, not a measurement) and swings 50x between replicas of the same zone.
+# The plateau IS the censored quantity, so it stays well defined where MRT saturates.
+KINETICS_METRIC = "sp_plateau"
+
+
 def _finite_values(members, attr):
     """Member values of *attr* that are present and finite (may be empty)."""
+    return _finite_from(members, lambda m: getattr(m, attr, None))
+
+
+def _finite_properties(members, key):
+    """Member ``properties[key]`` values that are present and finite (may be empty)."""
+    return _finite_from(members, lambda m: m.properties.get(key))
+
+
+def _finite_from(members, getter):
     out = []
     for m in members:
-        v = getattr(m, attr, None)
+        v = getter(m)
         if v is None:
             continue
         try:
@@ -179,9 +197,7 @@ def build_binding_site(site_id, group, n_total_cosolvents,
             if atype not in d or v < d[atype]:
                 d[atype] = round(v, 4)
 
-    sp_vals = [m.properties.get("sp_mrt") for m in members
-               if m.properties.get("sp_mrt") is not None
-               and np.isfinite(m.properties.get("sp_mrt"))]
+    sp_vals = _finite_properties(members, KINETICS_METRIC)
     residence = max(sp_vals) if sp_vals else None
 
     cosolvents = sorted({m.cosolvent for m in members})
@@ -198,7 +214,8 @@ def build_binding_site(site_id, group, n_total_cosolvents,
         axis_major_length=shape["axis_major_length"],
         axis_minor_length=shape["axis_minor_length"],
         favorable_atomtypes=favorable_atomtypes, pharmacophore=pharmacophore,
-        residence=residence, cosolvents=cosolvents,
+        residence=residence, residence_metric=KINETICS_METRIC,
+        cosolvents=cosolvents,
         n_total_cosolvents=n_total_cosolvents,
         grid_origin=ref_o, grid_delta=ref_d,
     )
