@@ -347,17 +347,10 @@ class HotspotDetector:
             # Centroid in Angstroms
             centroid_ang = self._voxel_to_angstrom(combined_grid, com_vox)
 
-            # Diversity: fraction of atom types favorable at this site
-            if per_type_grids:
-                n_fav_types = sum(
-                    1 for tg in per_type_grids.values()
-                    if np.any(tg.grid[site_mask] < self.agfe_cutoff)
-                )
-                d_raw = float(n_fav_types) / len(per_type_grids)
-            else:
-                d_raw = 0.0
-
-            # Per-type min AGFE (only types with at least one favorable voxel)
+            # Per-type min AGFE (only types with at least one favorable voxel).
+            # The set of keys IS the site's favorable atom types, so no separate
+            # diversity scalar is needed here; binding-site scoring derives it from
+            # favorable_atomtypes.
             per_type_agfe = {
                 atype: float(np.min(tg.grid[site_mask]))
                 for atype, tg in per_type_grids.items()
@@ -371,7 +364,6 @@ class HotspotDetector:
                 "centroid_ang": centroid_ang,
                 "agfe_min": float(np.min(voxel_agfe)),
                 "agfe_mean_top_pct": f_raw,
-                "diversity": d_raw,
                 "voxel_mask": site_mask,
                 "favorable_atomtypes": favorable_atomtypes,
                 "per_type_agfe": per_type_agfe,
