@@ -9,6 +9,8 @@
 # has been removed.
 #
 
+import warnings
+
 import numpy as np
 
 
@@ -51,11 +53,25 @@ DEFAULT_BINDING_SITE_WEIGHTS = {
     "volume": 1.0,
     "kinetics": 1.0,
     "shape": 1.0,
-    "diversity": 1.0,
+    # Number of favourable pharmacophoric ATOM TYPES (HBD/HBA/Car/Cal/Hal) at the site.
+    # Requires atom-type-split density maps (``density_maps.use_atomtypes: true``);
+    # without them every site has zero favourable atom types and this contributes
+    # nothing. Do not confuse it with probe diversity — that is ``probe_coverage``
+    # (how many probes) and ``probe_chemotype_coverage`` (how many probe chemotypes).
+    "chemotype_diversity": 1.0,
+    # Fraction of probe chemotype classes (aromatic/aliphatic/HBD/HBA/anionic/cationic)
+    # represented among the probes that hit the site. Opt-in: weight 0.0 by default,
+    # pending validation across more than one target.
+    "probe_chemotype_coverage": 0.0,
 }
 
 # Features whose raw value is "lower is better" -> inverted min-max (most-negative -> 1).
 _BS_INVERTED_FEATURES = {"affinity"}
+
+# ``diversity`` was renamed to ``chemotype_diversity`` because it scores atom types, not
+# probes, and readers reliably assumed the latter. Accepted with a warning rather than
+# rejected so that saved weight sets and the dashboard keep working.
+_LEGACY_WEIGHT_ALIASES = {"diversity": "chemotype_diversity"}
 
 
 def _binding_site_feature_values(binding_sites):
@@ -66,8 +82,38 @@ def _binding_site_feature_values(binding_sites):
         "volume":         [s.volume for s in binding_sites],
         "kinetics":       [s.residence for s in binding_sites],
         "shape":          [s.solidity for s in binding_sites],
-        "diversity":      [float(len(s.favorable_atomtypes)) for s in binding_sites],
+        "chemotype_diversity": [float(len(s.favorable_atomtypes))
+                                for s in binding_sites],
+        "probe_chemotype_coverage": [getattr(s, "probe_chemotype_coverage", None)
+                                     for s in binding_sites],
     }
+
+
+def normalize_weights(weights):
+    """Resolve a user weights dict against the defaults.
+
+    Applies the legacy aliases (with a ``DeprecationWarning``) and rejects any key that
+    is not a real feature — a silently-ignored weight would look like a working knob
+    while doing nothing.
+    """
+    if not weights:
+        return dict(DEFAULT_BINDING_SITE_WEIGHTS)
+    resolved = {}
+    for key, value in weights.items():
+        canonical = _LEGACY_WEIGHT_ALIASES.get(key, key)
+        if canonical != key:
+            warnings.warn(
+                f"Binding-site weight {key!r} is deprecated; use {canonical!r} "
+                "(it scores favourable ATOM TYPES, not probes).",
+                DeprecationWarning, stacklevel=3,
+            )
+        if canonical not in DEFAULT_BINDING_SITE_WEIGHTS:
+            raise ValueError(
+                f"Unknown binding-site weight {key!r}. Valid weights: "
+                f"{sorted(DEFAULT_BINDING_SITE_WEIGHTS)}"
+            )
+        resolved[canonical] = value
+    return {**DEFAULT_BINDING_SITE_WEIGHTS, **resolved}
 
 
 def score_binding_sites(binding_sites, weights=None):
@@ -77,12 +123,13 @@ def score_binding_sites(binding_sites, weights=None):
     Each weightable feature is normalised across *binding_sites* to [0,1],
     oriented higher=better (affinity inverts agfe_min). Sites missing a feature
     (None/non-finite) contribute 0 for it. ``weights`` may be negative and need
-    not sum to 1; missing keys fall back to DEFAULT_BINDING_SITE_WEIGHTS.
+    not sum to 1; missing keys fall back to DEFAULT_BINDING_SITE_WEIGHTS, and an
+    unrecognised key raises (see :func:`normalize_weights`).
     Sets ``.combined`` and ``.rank`` (1 = highest combined).
     """
     if not binding_sites:
         return
-    weights = {**DEFAULT_BINDING_SITE_WEIGHTS, **(weights or {})}
+    weights = normalize_weights(weights)
     raw = _binding_site_feature_values(binding_sites)
     n = len(binding_sites)
 

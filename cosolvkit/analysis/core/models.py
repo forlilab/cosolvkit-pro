@@ -367,7 +367,8 @@ class BindingSite:
                  axis_minor_length=None,
                  favorable_atomtypes=None, pharmacophore=None, residence=None,
                  cosolvents=None, n_total_cosolvents=None,
-                 pocket_residues=None, grid_origin=None, grid_delta=None):
+                 pocket_residues=None, grid_origin=None, grid_delta=None,
+                 probe_chemotypes=None, n_total_probe_chemotypes=None):
         self.site_id = site_id
         self.member_hotspots = (list(member_hotspots)
                                 if member_hotspots is not None else [])  # list[Hotspot]
@@ -391,6 +392,14 @@ class BindingSite:
         self.cosolvents = cosolvents                    # sorted unique list[str]
         self.n_total_cosolvents = (len(cosolvents) if n_total_cosolvents is None
                                    else n_total_cosolvents)
+        # Chemotype classes spanned by the probes that hit this site, and how many the
+        # whole panel could express. Distinct from n_cosolvents: four hydrophobes span
+        # fewer classes than one anion plus one cation.
+        if probe_chemotypes is None:
+            from cosolvkit.analysis.core.chemotypes import probe_chemotypes as _pc
+            probe_chemotypes = _pc(self.cosolvents)
+        self.probe_chemotypes = list(probe_chemotypes)
+        self.n_total_probe_chemotypes = n_total_probe_chemotypes
         self.pocket_residues = pocket_residues if pocket_residues is not None else []
         self.grid_origin = grid_origin
         self.grid_delta = grid_delta
@@ -412,6 +421,23 @@ class BindingSite:
                 if self.n_total_cosolvents else 0.0)
 
     @property
+    def n_probe_chemotypes(self):
+        return len(self.probe_chemotypes)
+
+    @property
+    def probe_chemotype_coverage(self):
+        """Fraction of the panel's chemotype classes represented at this site.
+
+        Falls back to the full class list as the denominator when the panel's own
+        class count was not supplied.
+        """
+        total = self.n_total_probe_chemotypes
+        if not total:
+            from cosolvkit.analysis.core.chemotypes import CHEMOTYPE_CLASSES
+            total = len(CHEMOTYPE_CLASSES)
+        return self.n_probe_chemotypes / total if total else 0.0
+
+    @property
     def member_hotspot_ids(self):
         return [h.site_id for h in self.member_hotspots]
 
@@ -425,6 +451,9 @@ class BindingSite:
             "cosolvents": ",".join(self.cosolvents),
             "n_cosolvents": self.n_cosolvents,
             "probe_coverage": _round_or_none(self.probe_coverage),
+            "probe_chemotypes": ",".join(self.probe_chemotypes),
+            "n_probe_chemotypes": self.n_probe_chemotypes,
+            "probe_chemotype_coverage": _round_or_none(self.probe_chemotype_coverage),
             "n_hotspots": self.n_hotspots,
             "member_hotspot_ids": ",".join(str(i) for i in self.member_hotspot_ids),
             "centroid_x": _round_or_none(cent[0], 3),

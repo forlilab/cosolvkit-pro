@@ -309,6 +309,7 @@ class MultiReport:
             binding_sites = identify_binding_sites(
                 results, connectivity=bs_cfg.connectivity,
                 weights=bs_cfg.weights, merge_tolerance_ang=bs_cfg.merge_tolerance_ang,
+                probe_chemotype_overrides=bs_cfg.probe_chemotypes,
             )
             export_binding_sites(binding_sites, self.out_path)
             self._binding_sites = binding_sites

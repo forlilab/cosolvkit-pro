@@ -235,7 +235,10 @@ class Report:
         connected-components analysis, and scores each site on:
 
         - **favorability** — mean AGFE of the most-favorable voxels (top percentile)
-        - **diversity** — fraction of atom types (HBD/HBA/Car/Cal/Hal) favorable at the site
+        - **chemotype_diversity** — how many atom types (HBD/HBA/Car/Cal/Hal) are
+          favorable at the site. Requires atom-type-split maps; this is a property of
+          the probe's chemistry at the site, NOT of how many probes bound there (that
+          is ``probe_coverage`` / ``probe_chemotype_coverage``).
         - **volume** — normalised cluster size (proxy for pocket spatial extent)
 
         Note: persistence (fraction of trajectory occupied) is intentionally omitted

@@ -136,7 +136,8 @@ def _finite_values(members, attr):
     return out
 
 
-def build_binding_site(site_id, group, n_total_cosolvents):
+def build_binding_site(site_id, group, n_total_cosolvents,
+                       chemotype_map=None, n_total_probe_chemotypes=None):
     """Aggregate a group of member hotspots into a BindingSite.
 
     Members need not carry AGFE data: hotspots built from something other than a
@@ -185,8 +186,13 @@ def build_binding_site(site_id, group, n_total_cosolvents):
 
     cosolvents = sorted({m.cosolvent for m in members})
 
+    from cosolvkit.analysis.core.chemotypes import probe_chemotypes
+    chemotypes = probe_chemotypes(cosolvents, chemotype_map)
+
     return BindingSite(
         site_id=site_id, member_hotspots=members, voxel_mask=union, centroid=centroid,
+        probe_chemotypes=chemotypes,
+        n_total_probe_chemotypes=n_total_probe_chemotypes,
         agfe_min=agfe_min, agfe_mean_top_pct=agfe_mean_top_pct, volume=volume,
         solidity=shape["solidity"], extent=shape["extent"],
         axis_major_length=shape["axis_major_length"],
@@ -201,20 +207,33 @@ def build_binding_site(site_id, group, n_total_cosolvents):
 class BindingSiteDetector:
     """Detect binding sites by grouping hotspots (mask connectivity) and scoring them."""
 
-    def __init__(self, probe_results, connectivity=26, weights=None, merge_tolerance_ang=2.0):
+    def __init__(self, probe_results, connectivity=26, weights=None,
+                 merge_tolerance_ang=2.0, probe_chemotype_overrides=None):
+        from cosolvkit.analysis.core.chemotypes import (
+            n_available_chemotypes,
+            resolve_probe_chemotypes,
+        )
         self.probe_results = probe_results
         self.connectivity = connectivity
         self.weights = weights
         self.merge_tolerance_ang = merge_tolerance_ang
         self.n_total_cosolvents = len(probe_results)
+        self.chemotype_map = resolve_probe_chemotypes(probe_chemotype_overrides)
+        # Denominator for probe_chemotype_coverage: what THIS panel can express.
+        self.n_total_probe_chemotypes = n_available_chemotypes(
+            list(probe_results.keys()), self.chemotype_map)
 
     def detect(self):
         from cosolvkit.analysis.core.scoring import score_binding_sites
         groups = group_hotspots(self.probe_results, connectivity=self.connectivity,
                                 merge_tolerance_ang=self.merge_tolerance_ang)
         sites = [
-            build_binding_site(site_id=i + 1, group=g,
-                               n_total_cosolvents=self.n_total_cosolvents)
+            build_binding_site(
+                site_id=i + 1, group=g,
+                n_total_cosolvents=self.n_total_cosolvents,
+                chemotype_map=self.chemotype_map,
+                n_total_probe_chemotypes=self.n_total_probe_chemotypes,
+            )
             for i, g in enumerate(groups)
         ]
         score_binding_sites(sites, self.weights)   # sets .combined and .rank
@@ -222,10 +241,13 @@ class BindingSiteDetector:
         return sites
 
 
-def identify_binding_sites(probe_results, connectivity=26, weights=None, merge_tolerance_ang=2.0):
+def identify_binding_sites(probe_results, connectivity=26, weights=None,
+                           merge_tolerance_ang=2.0, probe_chemotype_overrides=None):
     """Group per-cosolvent hotspots into ranked cross-cosolvent binding sites."""
-    return BindingSiteDetector(probe_results, connectivity=connectivity,
-                               weights=weights, merge_tolerance_ang=merge_tolerance_ang).detect()
+    return BindingSiteDetector(
+        probe_results, connectivity=connectivity, weights=weights,
+        merge_tolerance_ang=merge_tolerance_ang,
+        probe_chemotype_overrides=probe_chemotype_overrides).detect()
 
 
 def export_binding_sites(sites, out_path):

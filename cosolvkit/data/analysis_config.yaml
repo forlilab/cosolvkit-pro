@@ -88,7 +88,14 @@ hotspots:
 binding_sites:
   enabled:      true              # set to false to skip binding-site detection
   connectivity: 26                # voxel connectivity for grouping: 6, 18, or 26
+  merge_tolerance_ang: 2.0        # surface gap (A) that still merges two hotspots
   weights:      null              # null → default binding-site scoring weights
+  # Chemotype classes per probe resname, overriding the built-in table in
+  # cosolvkit/analysis/core/chemotypes.py. Only needed for probes missing from it, or
+  # to reclassify one. Feeds the probe_chemotype_coverage score feature, which counts
+  # CHEMICAL CLASSES of probes at a site (unlike probe_coverage, which counts probes).
+  # Valid classes: aromatic, aliphatic, hbond_donor, hbond_acceptor, anionic, cationic.
+  probe_chemotypes: null          # e.g. {MYP: [aromatic, anionic]}
 
 # -----------------------------------------------------------------
 # checkpoint: save/load hotspot results to skip re-detection

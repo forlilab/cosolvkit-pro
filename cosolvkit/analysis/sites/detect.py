@@ -159,7 +159,8 @@ class HotspotDetector:
         For ``use_atomtypes=True`` runs: takes the element-wise minimum across
         all per-type maps (most favorable signal at each voxel).  This finds
         any voxel favorable for *any* part of the cosolvent.
-        Atom-type composition is then read back per-site for diversity scoring.
+        Atom-type composition is then read back per-site as ``favorable_atomtypes``,
+        which binding-site scoring uses for ``chemotype_diversity``.
 
         Returns
         -------

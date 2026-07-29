@@ -85,6 +85,10 @@ class BindingSitesConfig:
     connectivity:        int           = 26
     weights:             Optional[Dict] = None
     merge_tolerance_ang: float         = 2.0
+    # ``{resname: [chemotype_class, ...]}`` overriding
+    # cosolvkit.analysis.core.chemotypes.DEFAULT_PROBE_CHEMOTYPES. Only needed for
+    # probes absent from that table, or to reclassify one. null = built-in table only.
+    probe_chemotypes:    Optional[Dict] = None
 
 
 @dataclass
