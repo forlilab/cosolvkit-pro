@@ -121,12 +121,19 @@ def _union_shape_features(union_mask):
 
 
 # Which survival-probability metric feeds BindingSite.residence (the ``kinetics`` score
-# feature). ``sp_plateau`` -- the fraction of probes still bound at the longest lag -- not
-# ``sp_mrt``: on 100 ns trajectories with tau_max=100 frames, MRT is CENSORED at exactly
-# the strongest sites (70-82% of probes never leave the observation window, so their MRT
-# is a lower bound, not a measurement) and swings 50x between replicas of the same zone.
-# The plateau IS the censored quantity, so it stays well defined where MRT saturates.
-KINETICS_METRIC = "sp_plateau"
+# feature). ``sp_half_life`` -- the lag at which survival falls to 0.5.
+#
+# Chosen on a benchmark against 220 crystallographic ligand positions vs 660
+# buriedness-matched decoys, profiled at those FIXED points (not at hotspot centroids):
+# sp_half_life reached AUC 0.899/0.883 with between-replica rho 0.66/0.68 at two zone radii,
+# while sp_plateau -- an earlier choice here -- came LAST at AUC 0.504/0.505 with rho ~0.0.
+# sp_mrt and sp_tau_single are statistically indistinguishable from sp_half_life; half-life is
+# preferred for being the most directly interpretable of the three.
+#
+# The earlier reasoning for sp_plateau (that MRT is right-censored at tau_max) was measured at
+# hotspot centroids, which sit a median 1.4 A from the ligand they represent; at correct
+# locations censoring is not the limiting problem and the ranking of metrics inverts.
+KINETICS_METRIC = "sp_half_life"
 
 
 def _finite_values(members, attr):
