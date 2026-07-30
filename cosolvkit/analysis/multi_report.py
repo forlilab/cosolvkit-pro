@@ -23,9 +23,60 @@ from .hotspots_detection import HotspotDetector
 DEFAULT_PLOT_TOP_N = 10
 
 
-def _sp_candidate_zones(sites, sp_top_n):
-    """Return ``[[x, y, z], ...]`` centroids for the top ``sp_top_n`` sites."""
+def _sp_candidate_zones(sites, sp_top_n, zones=None):
+    """Zones to profile kinetics in, as ``[[x, y, z], ...]``.
+
+    Defaults to the top ``sp_top_n`` hotspot centroids. Pass *zones* to profile SUPPLIED
+    points instead.
+
+    Why supplying points matters: hotspot centroids are thresholded-and-clustered objects.
+    Benchmarked against crystallographic ligand positions they sit a median 1.4 A (max 3.8 A)
+    from the ligand they represent, and only 9 of 38 land within 1 A. Since the zone radius is
+    only a few Angstrom, that offset is large enough to change the answer — profiling the same
+    trajectories at ligand-centred points instead moved ``sp_half_life`` from AUC ~0.5 with
+    between-replica rho ~0.15 to AUC 0.90 with rho 0.66. Kinetics measured at centroids is not
+    the same measurement.
+    """
+    if zones is not None:
+        return [[float(v) for v in z] for z in zones]
     return [[float(v) for v in site.centroid] for site in sites[:sp_top_n]]
+
+
+def _load_zones_csv(path):
+    """Read supplied kinetics zones from a CSV with x/y/z columns (case-insensitive)."""
+    import pandas as pd
+
+    df = pd.read_csv(path)
+    cols = {c.lower(): c for c in df.columns}
+    missing = [a for a in ("x", "y", "z") if a not in cols]
+    if missing:
+        raise ValueError(
+            f"{path}: zones CSV needs x, y, z columns; missing {missing} "
+            f"(found {list(df.columns)})")
+    return df[[cols["x"], cols["y"], cols["z"]]].to_numpy(dtype=float).tolist()
+
+
+def _zone_to_site_rank(zones, sites, max_dist_ang):
+    """Map each supplied zone to the RANK of the nearest hotspot within *max_dist_ang*.
+
+    Needed because ``fit_survival_probability`` otherwise attaches zone *i*'s kinetics to the
+    site of rank *i+1* — correct for centroid-derived zones, but arbitrary for supplied ones.
+    Zones with no hotspot in range are left unmapped, so their curves are still written to CSV
+    but no hotspot receives misattributed ``sp_*`` values.
+    """
+    import numpy as np
+
+    if not sites:
+        return {}
+    cents = np.asarray([s.centroid for s in sites], dtype=float)
+    ranks = [s.rank for s in sites]
+    out = {}
+    for i, z in enumerate(zones):
+        d = np.sqrt(((cents - np.asarray(z, dtype=float)) ** 2).sum(axis=1))
+        j = int(np.argmin(d))
+        if d[j] <= max_dist_ang:
+            out[i] = ranks[j]
+    return out
 
 
 class MultiReport:
@@ -48,12 +99,20 @@ class MultiReport:
     Parameters
     ----------
     config : AnalysisConfig
+    sp_zones : list of [x, y, z], optional
+        Explicit points at which to profile kinetics, overriding the default of hotspot
+        centroids (and overriding ``survival_kwargs.zones_csv`` if both are given). Use this
+        to measure residence at externally-defined locations — crystallographic ligand
+        positions, docking poses, a grid — rather than at cluster centroids, which are a
+        median 1.4 A away from the ligands they represent. See :func:`_sp_candidate_zones`.
     """
 
-    def __init__(self, config: AnalysisConfig):
+    def __init__(self, config: AnalysisConfig, sp_zones=None):
         self.config = config
         self.logger = logging.getLogger(__name__)
         self.out_path = config.out_path
+        self.sp_zones = (None if sp_zones is None
+                         else [[float(v) for v in z] for z in sp_zones])
         os.makedirs(self.out_path, exist_ok=True)
 
         self._reports: List[Report] = []
@@ -247,7 +306,16 @@ class MultiReport:
         # to the probe's own simulation subfolder, not the merged directory.
         survival_kwargs = dict(hs.survival_kwargs or {})
         sp_top_n = int(survival_kwargs.pop("sp_top_n", 5))
-        if sp_top_n > 0:
+        # Supplied zones override the hotspot centroids: explicit argument first, then a
+        # zones_csv in the config. See _sp_candidate_zones for why this matters.
+        zones_csv = survival_kwargs.pop("zones_csv", None)
+        supplied_zones = self.sp_zones
+        if supplied_zones is None and zones_csv:
+            supplied_zones = _load_zones_csv(zones_csv)
+            self.logger.info(
+                f"Kinetics zones supplied from {zones_csv}: {len(supplied_zones)} points")
+        zone_match_ang = float(survival_kwargs.pop("zone_match_ang", 4.0))
+        if supplied_zones is not None or sp_top_n > 0:
             cosolvent_to_universe = _build_cosolvent_universe_map(
                 self.config.simulations, self._reports
             )
@@ -268,14 +336,16 @@ class MultiReport:
                         "skipping survival probability."
                     )
                     continue
-                candidate_zones = _sp_candidate_zones(sites, sp_top_n)
+                candidate_zones = _sp_candidate_zones(sites, sp_top_n,
+                                                      zones=supplied_zones)
                 sim_out = cosolvent_to_out_path[cosolvent]
                 replicas = cosolvent_to_universes.get(
                     cosolvent, [cosolvent_to_universe[cosolvent]])
                 self.logger.info(
                     f"Running survival probability for {len(candidate_zones)} "
-                    f"site(s) of '{cosolvent}' over {len(replicas)} replica(s) "
-                    f"(sp_top_n={sp_top_n}) → {sim_out}"
+                    f"zone(s) of '{cosolvent}' over {len(replicas)} replica(s) "
+                    f"({'supplied points' if supplied_zones is not None else f'sp_top_n={sp_top_n}'})"
+                    f" → {sim_out}"
                 )
                 detector.universe = cosolvent_to_universe[cosolvent]
                 detector.out_path = sim_out
@@ -291,8 +361,19 @@ class MultiReport:
                 for cosolvent in results:
                     if cosolvent in cosolvent_to_out_path:
                         detector.out_path = cosolvent_to_out_path[cosolvent]
+                        z2r = None
+                        if supplied_zones is not None:
+                            z2r = _zone_to_site_rank(
+                                _sp_candidate_zones(results[cosolvent], sp_top_n,
+                                                    zones=supplied_zones),
+                                results[cosolvent], zone_match_ang)
+                            self.logger.info(
+                                f"'{cosolvent}': {len(z2r)} of {len(supplied_zones)} supplied "
+                                f"zones matched a hotspot within {zone_match_ang} A; "
+                                "unmatched zones keep their curves but attach to no site."
+                            )
                         detector.property_calculator.fit_survival_probability(
-                            {cosolvent: results[cosolvent]}
+                            {cosolvent: results[cosolvent]}, zone_to_site_rank=z2r
                         )
 
             # Restore out_path to merged dir for subsequent operations

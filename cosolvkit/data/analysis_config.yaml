@@ -64,7 +64,13 @@ hotspots:
   n_kt:           1.0             # AGFE cutoff = -n_kt * kB * T (temperature-aware).
                                   # 1.0 → -1 kT (~ -0.60 kcal/mol at 300 K). Larger = stricter.
   top_percentile: 10.0           # top N% of voxels used for favorability metrics
-  survival_kwargs:               # kwargs forwarded to survival_probability()
+  survival_kwargs:               # kwargs forwarded to run_survival_probability()
+    # By default kinetics is profiled at hotspot CENTROIDS, which are thresholded-and-
+    # clustered objects sitting a median 1.4 A from the ligand they represent. Point these
+    # at explicit coordinates instead when that matters (see _sp_candidate_zones):
+    # zones_csv:      null       # CSV with x,y,z columns -> profile kinetics at THOSE points
+    # zone_match_ang: 4.0        # supplied zone -> nearest hotspot within this distance, for
+    #                            # attaching sp_* values; unmatched zones attach to no site
     sp_top_n:      5             # per cosolvent: how many top hotspots get SP analysis
                                   # (0 disables survival probability entirely)
     radius:        6.0           # sphere radius around hotspot centroid (Angstroms)
