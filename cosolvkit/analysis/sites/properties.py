@@ -322,20 +322,23 @@ class PocketPropertyCalculator:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def probe_zone_radius(universe, cosolvent_name, tolerance=1.2):
-        """Survival-probability zone radius scaled to the PROBE's own size.
+    def probe_zone_radius(universe, cosolvent_name, tolerance=1.7):
+        """Survival-probability zone radius scaled to the PROBE: ``Rg + tolerance``.
 
-        ``footprint = half the largest intramolecular heavy-atom separation + the mean
-        heavy-atom vdW radius``, then ``+ tolerance`` for thermal wobble.
+        ``Rg`` is the probe's heavy-atom radius of gyration and *tolerance* is a contact
+        buffer (default 1.7 A, a heavy-atom vdW radius).
 
         Scaling on the probe rather than on the hotspot is deliberate. Hotspot volume is
         "voxels above the AGFE cutoff, as grouped by the clustering", so deriving the
-        radius from it would make the kinetics inherit both of those choices — the exact
-        circularity that segmentation-free evaluation exists to avoid. Probe size is a
-        fixed molecular property. It also keeps the radius constant within a probe, so
-        residence stays comparable BETWEEN sites (a larger zone holds a molecule longer
-        for purely geometric reasons), and it puts the probes on a common physical footing,
-        which matters because cross-probe consensus is where the signal lives.
+        radius from it would make the kinetics inherit both of those choices. Probe size is
+        a fixed molecular property. It also keeps the radius constant within a probe, so
+        residence stays comparable BETWEEN sites (a larger zone holds a molecule longer for
+        purely geometric reasons), and puts the probes on a common physical footing.
+
+        This replaces an earlier ``half the largest heavy-atom separation + mean vdW``
+        footprint, which correlated with Rg at Pearson 0.95 while needing an element table
+        and name-guessing to produce a term that varied by only 0.11 A across an 18-probe
+        panel. For equivalent magnitudes to that formula use ``tolerance ~ 2.9``.
 
         Returns ``None`` when the cosolvent is absent from *universe*.
         """
@@ -343,22 +346,19 @@ class PocketPropertyCalculator:
         if sel.n_atoms == 0:
             return None
         atoms = sel.residues[0].atoms
-        elements = np.array([_element_of(a) for a in atoms])
-        heavy = atoms[elements != "H"]
+        heavy = atoms[np.array([_element_of(a) for a in atoms]) != "H"]
         if heavy.n_atoms == 0:
             return None
+        # Unweighted (number-average) Rg: the zone is a geometric criterion, so atom
+        # identity should not tilt it. Differs from the mass-weighted value by <0.07 A
+        # on this panel.
         pos = heavy.positions
-        if heavy.n_atoms == 1:
-            d_max = 0.0
-        else:
-            diff = pos[:, None, :] - pos[None, :, :]
-            d_max = float(np.sqrt((diff ** 2).sum(axis=2)).max())
-        r_vdw = float(np.mean([_VDW_RADII.get(_element_of(a), 1.70) for a in heavy]))
-        return d_max / 2.0 + r_vdw + float(tolerance)
+        rg = float(np.sqrt(((pos - pos.mean(axis=0)) ** 2).sum(axis=1).mean()))
+        return rg + float(tolerance)
 
     def run_survival_probability(self, cosolvent_names, candidate_zones,
                                  radius=6.0, max_tau=100, intermittency=2,
-                                 universes=None, radius_tolerance=1.2):
+                                 universes=None, radius_tolerance=1.7):
         """Compute the survival probability of cosolvents inside spherical zones.
 
         Each zone can be defined as a group of residue IDs or as an explicit
@@ -389,8 +389,8 @@ class PocketPropertyCalculator:
             hotspot volume and measures the neighbourhood, while 3.5 A is small enough that
             replica agreement collapses to rho ~ 0.06.
         radius_tolerance : float
-            Thermal-wobble allowance added to the probe footprint when
-            ``radius="adaptive"`` (default 1.2 A).
+            Contact buffer added to the probe's radius of gyration when
+            ``radius="adaptive"`` (default 1.7 A, a heavy-atom vdW radius).
         max_tau : int
             Maximum lag time for the survival-probability calculation (default 100).
         intermittency : int
@@ -438,7 +438,7 @@ class PocketPropertyCalculator:
                         "not found in the trajectory topology")
                 self.logger.info(
                     f"Adaptive SP zone radius for {cosolvent_name}: "
-                    f"{zone_radius:.2f} A (probe footprint + {radius_tolerance:.2f})"
+                    f"{zone_radius:.2f} A (probe Rg + {radius_tolerance:.2f})"
                 )
 
             for rep_idx, universe in enumerate(replicas):

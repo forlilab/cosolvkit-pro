@@ -193,11 +193,26 @@ def _diatomic_universe(sep=1.4, resname="MOH"):
     return u
 
 
-def test_adaptive_radius_is_footprint_plus_tolerance():
+def test_adaptive_radius_is_rg_plus_buffer():
     u = _diatomic_universe(sep=1.4)
-    # half the max heavy-atom separation (0.7) + carbon vdW (1.70) + tolerance
-    r = PocketPropertyCalculator.probe_zone_radius(u, "MOH", tolerance=1.2)
-    assert r == pytest.approx(0.7 + 1.70 + 1.2, abs=1e-6)
+    # Rg of two points 1.4 apart about their midpoint = 0.7, plus the buffer.
+    r = PocketPropertyCalculator.probe_zone_radius(u, "MOH", tolerance=1.7)
+    assert r == pytest.approx(0.7 + 1.7, abs=1e-6)
+
+
+def test_adaptive_radius_uses_unweighted_rg():
+    """Rg must not depend on atomic masses: the zone is a geometric criterion."""
+    import MDAnalysis as mda
+    u = mda.Universe.empty(2, n_residues=1, atom_resindex=[0, 0],
+                           residue_segindex=[0], trajectory=True)
+    u.add_TopologyAttr("name", ["C1", "O1"])
+    u.add_TopologyAttr("type", ["C", "O"])       # unequal masses
+    u.add_TopologyAttr("resname", ["MOH"])
+    u.add_TopologyAttr("resid", [1])
+    u.atoms.positions = np.array([[0.0, 0.0, 0.0], [1.4, 0.0, 0.0]])
+    # Unweighted Rg is exactly half the separation regardless of the mass difference.
+    assert PocketPropertyCalculator.probe_zone_radius(
+        u, "MOH", tolerance=0.0) == pytest.approx(0.7, abs=1e-6)
 
 
 def test_adaptive_radius_grows_with_probe_size():
@@ -224,7 +239,7 @@ def test_run_sp_resolves_adaptive_radius(tmp_path, stub_sp):
     stub_sp.registry[id(u)] = 0.5
     calc = _calculator(tmp_path, u)
     calc.run_survival_probability(["MOH"], [[0.0, 0.0, 0.0]], radius="adaptive",
-                                 max_tau=3, radius_tolerance=1.2, universes=[u])
+                                 max_tau=3, radius_tolerance=1.7, universes=[u])
     df = pd.read_csv(tmp_path / "survival_probability_MOH.csv")
     assert len(df) == 4
 
