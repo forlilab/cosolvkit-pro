@@ -174,3 +174,74 @@ def test_universes_map_handles_multi_cosolvent_simulations():
     u1 = _FakeUniverse()
     m = _build_cosolvent_universes_map([_Sim(["BEN", "ACT"])], [_Rep(u1)])
     assert m == {"BEN": [u1], "ACT": [u1]}
+
+
+# ---------------------------------------------------------------------------
+# Adaptive (probe-scaled) zone radius
+# ---------------------------------------------------------------------------
+
+def _diatomic_universe(sep=1.4, resname="MOH"):
+    """Two carbons `sep` apart in one residue."""
+    import MDAnalysis as mda
+    u = mda.Universe.empty(2, n_residues=1, atom_resindex=[0, 0],
+                           residue_segindex=[0], trajectory=True)
+    u.add_TopologyAttr("name", ["C1", "C2"])
+    u.add_TopologyAttr("type", ["C", "C"])
+    u.add_TopologyAttr("resname", [resname])
+    u.add_TopologyAttr("resid", [1])
+    u.atoms.positions = np.array([[0.0, 0.0, 0.0], [sep, 0.0, 0.0]])
+    return u
+
+
+def test_adaptive_radius_is_footprint_plus_tolerance():
+    u = _diatomic_universe(sep=1.4)
+    # half the max heavy-atom separation (0.7) + carbon vdW (1.70) + tolerance
+    r = PocketPropertyCalculator.probe_zone_radius(u, "MOH", tolerance=1.2)
+    assert r == pytest.approx(0.7 + 1.70 + 1.2, abs=1e-6)
+
+
+def test_adaptive_radius_grows_with_probe_size():
+    small = PocketPropertyCalculator.probe_zone_radius(_diatomic_universe(1.4), "MOH")
+    big = PocketPropertyCalculator.probe_zone_radius(_diatomic_universe(5.0), "MOH")
+    assert big > small
+
+
+def test_adaptive_radius_scales_with_tolerance():
+    u = _diatomic_universe()
+    assert (PocketPropertyCalculator.probe_zone_radius(u, "MOH", tolerance=2.0)
+            - PocketPropertyCalculator.probe_zone_radius(u, "MOH", tolerance=0.5)
+            == pytest.approx(1.5, abs=1e-6))
+
+
+def test_adaptive_radius_none_for_absent_cosolvent():
+    assert PocketPropertyCalculator.probe_zone_radius(
+        _diatomic_universe(), "NOPE") is None
+
+
+def test_run_sp_resolves_adaptive_radius(tmp_path, stub_sp):
+    """radius='adaptive' must size the zone from the probe, not raise."""
+    u = _diatomic_universe(sep=1.4)
+    stub_sp.registry[id(u)] = 0.5
+    calc = _calculator(tmp_path, u)
+    calc.run_survival_probability(["MOH"], [[0.0, 0.0, 0.0]], radius="adaptive",
+                                 max_tau=3, radius_tolerance=1.2, universes=[u])
+    df = pd.read_csv(tmp_path / "survival_probability_MOH.csv")
+    assert len(df) == 4
+
+
+def test_run_sp_rejects_a_bad_radius_string(tmp_path, stub_sp):
+    u = _diatomic_universe()
+    stub_sp.registry[id(u)] = 0.5
+    calc = _calculator(tmp_path, u)
+    with pytest.raises(ValueError, match="must be a number or 'adaptive'"):
+        calc.run_survival_probability(["MOH"], [[0.0, 0.0, 0.0]], radius="big",
+                                     max_tau=3, universes=[u])
+
+
+def test_run_sp_adaptive_raises_when_probe_missing(tmp_path, stub_sp):
+    u = _diatomic_universe(resname="MOH")
+    stub_sp.registry[id(u)] = 0.5
+    calc = _calculator(tmp_path, u)
+    with pytest.raises(ValueError, match="not found in the trajectory topology"):
+        calc.run_survival_probability(["ZZZ"], [[0.0, 0.0, 0.0]], radius="adaptive",
+                                     max_tau=3, universes=[u])
