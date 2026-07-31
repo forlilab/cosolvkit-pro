@@ -139,6 +139,32 @@ class Report:
 
         return atomtypes_definitions
 
+    def _log_sampling_adequacy(self, analysis, cosolvent, gridsize, temperature,
+                               atom_radius=1.4, n_kt=1.0):
+        """Report whether this map is better sampled than its own Poisson noise.
+
+        A dilute probe collects a fraction of one count per voxel, so a single visit can look
+        like a deep well. *n_kt* mirrors the default hotspot cutoff.
+        """
+        from cosolvkit.analysis.core.sampling import sampling_report
+        try:
+            rep = sampling_report(
+                n_atoms=analysis._n_atoms,
+                n_frames=analysis._nframes,
+                n_accessible_voxels=analysis._n_accessible_voxels,
+                sigma_voxels=(atom_radius / 3.0) / gridsize,
+                n_kt=n_kt,
+                temperature=temperature,
+            )
+        except (AttributeError, ValueError, ZeroDivisionError) as exc:
+            self.logger.debug(f"Could not assess sampling for {cosolvent}: {exc}")
+            return
+        line = f"{cosolvent} {rep['summary']}"
+        if rep["cutoff_below_noise_floor"]:
+            self.logger.warning(line)
+        else:
+            self.logger.info(line)
+
     def generate_density_maps(self,
                               cosolvent_names:list[str]=None,
                               use_atomtypes:bool=True,
@@ -202,6 +228,7 @@ class Report:
             analysis.run()
             # analysis.export_density(os.path.join(self.out_path, f"map_rawdensity_{cosolvent}.dx"))
             analysis.atomic_grid_free_energy(temperature, smoothing=True)
+            self._log_sampling_adequacy(analysis, cosolvent, gridsize, temperature)
             analysis.export_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_{cosolvent}.dx"))
             if export_raw:
                 analysis.export_raw_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_raw_{cosolvent}.dx"))
