@@ -241,6 +241,16 @@ class MultiReport:
     # Step 3 — joint hotspot detection
     # ------------------------------------------------------------------
 
+    def _save_hotspot_checkpoint(self, results):
+        """Write the hotspot checkpoint if enabled.
+
+        Called twice per run: once after detection (crash-safe, geometry only) and again after
+        ``fit_survival_probability`` so the persisted copy carries the ``sp_*`` metrics.
+        """
+        if not self.config.checkpoint.save_hotspots:
+            return
+        HotspotDetector.save_checkpoint(results, self._merged_dir)
+
     def run_joint_hotspot_detection(self) -> dict:
         """Run :class:`HotspotDetector` on merged maps.
 
@@ -299,8 +309,8 @@ class MultiReport:
         else:
             results = detector.detect_all()
             detector.export_results(results, label_map=True)
-            if ck.save_hotspots:
-                HotspotDetector.save_checkpoint(results, self._merged_dir)
+            # Saved again after kinetics; this one is the crash-safe copy if SP dies.
+            self._save_hotspot_checkpoint(results)
 
         # Run survival probability per-cosolvent using the simulation universe
         # that actually contains each probe.  Outputs (CSV + PNG) are written
@@ -379,6 +389,10 @@ class MultiReport:
 
             # Restore out_path to merged dir for subsequent operations
             detector.out_path = self._merged_dir
+
+            # Re-save now that fit_survival_probability has attached the sp_* metrics;
+            # the checkpoint written after detection holds only geom_*.
+            self._save_hotspot_checkpoint(results)
 
         for cosolvent, sites in results.items():
             if sites:
