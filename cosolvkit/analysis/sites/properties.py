@@ -68,6 +68,42 @@ REGIONPROPS_ALL = [
 ]
 
 
+def detect_fused_residues(atomgroup):
+    """Residues holding more selected atoms than the modal residue, as (resid, n_atoms).
+
+    The PDB resid field maxes out at 9999, so a box with >9999 waters wraps and merges the
+    overflow into one pseudo-residue. Position histograms do not care, but anything tracking
+    molecular identity does.
+    """
+    if atomgroup is None or atomgroup.n_atoms == 0:
+        return []
+    uniq, counts = np.unique(atomgroup.resindices, return_counts=True)
+    if len(uniq) < 2:
+        return []
+    modal = int(np.bincount(counts).argmax())
+    residues = atomgroup.universe.residues
+    return [(int(residues[ri].resid), int(c))
+            for ri, c in zip(uniq, counts) if c > modal]
+
+
+def warn_if_fused_residues(atomgroup, logger=None, context=""):
+    """Log a warning if *atomgroup*'s topology has fused residues. True if any were found."""
+    fused = detect_fused_residues(atomgroup)
+    if not fused:
+        return False
+    if logger is not None:
+        where = f" for {context}" if context else ""
+        logger.warning(
+            f"Topology has {len(fused)} over-sized residue(s) holding "
+            f"{sum(n for _, n in fused)} atoms{where}: the resid field wrapped (PDB resid "
+            "maxes at 9999), fusing distinct molecules into one residue. 'resid'-based "
+            "selections are therefore ambiguous, and per-residue quantities are wrong for the "
+            "fused residue. Use the prmtop as topology, not the PDB. Density maps and survival "
+            "probability are unaffected (they key on positions and on unique atom ids)."
+        )
+    return True
+
+
 def _finite_or_none(val):
     """inf/nan are not valid JSON. QHull returns convex_area 0 for blobs it cannot hull
     (~10 voxels), so solidity comes back as inf; record it as missing instead."""
@@ -95,6 +131,13 @@ def _serialize_regionprop_value(val):
 def _is_xyz(group):
     """Return True if group encodes an XYZ point (exactly 3 float-like values)."""
     return len(group) == 3 and all(isinstance(v, float) for v in group)
+
+
+def _zone_is_resid_based(zone):
+    """True if *zone* selects by resid rather than by an explicit XYZ point."""
+    if isinstance(zone, int):
+        return True
+    return not _is_xyz(list(zone))
 
 
 def _build_selection(cosolvent_name, group, radius):
@@ -447,6 +490,13 @@ class PocketPropertyCalculator:
                     f"Adaptive SP zone radius for {cosolvent_name}: "
                     f"{zone_radius:.2f} A (probe Rg + {radius_tolerance:.2f})"
                 )
+
+            # 'resid N' is ambiguous on a wrapped topology, so only resid-style zones care.
+            if any(_zone_is_resid_based(z) for z in candidate_zones):
+                for universe in replicas:
+                    warn_if_fused_residues(
+                        universe.atoms, logger=self.logger,
+                        context=f"resid-based SP zones of {cosolvent_name}")
 
             for rep_idx, universe in enumerate(replicas):
                 for zone_idx, zone in enumerate(candidate_zones):
