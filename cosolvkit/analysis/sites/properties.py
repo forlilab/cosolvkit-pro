@@ -68,6 +68,13 @@ REGIONPROPS_ALL = [
 ]
 
 
+def _finite_or_none(val):
+    """inf/nan are not valid JSON. QHull returns convex_area 0 for blobs it cannot hull
+    (~10 voxels), so solidity comes back as inf; record it as missing instead."""
+    f = float(val)
+    return f if np.isfinite(f) else None
+
+
 def _serialize_regionprop_value(val):
     """Convert a regionprops_table cell to a JSON-safe Python scalar or list."""
     if isinstance(val, tuple) and any(isinstance(x, slice) for x in val):
@@ -77,8 +84,8 @@ def _serialize_regionprop_value(val):
     if np.ndim(val) == 0:
         if isinstance(val, (np.integer, int)):
             return int(val)
-        return float(val)
-    return [float(v) for v in np.ravel(val)]
+        return _finite_or_none(val)
+    return [_finite_or_none(v) for v in np.ravel(val)]
 
 
 # ---------------------------------------------------------------------------
