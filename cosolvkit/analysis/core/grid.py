@@ -381,9 +381,38 @@ class GridAnalysis(AnalysisBase):
         x, y, z = self._center
         sd = self._box_size / 2.
         hbins = np.round(self._box_size / self._gridsize).astype(int)
-        self._edges = (np.linspace(0, self._box_size[0], num=hbins[0] + 1, endpoint=True) + (x - sd[0]),
-                    np.linspace(0, self._box_size[1], num=hbins[1] + 1, endpoint=True) + (y - sd[1]),
-                    np.linspace(0, self._box_size[2], num=hbins[2] + 1, endpoint=True) + (z - sd[2]))
+        self._delta = self._box_size / hbins
+
+        # An aligned trajectory rotates coordinates but not the box vectors, so wrapped solvent
+        # occupies a ROTATED box while this grid is axis-aligned. Positions then fall outside a
+        # box-sized grid and np.histogramdd discards them silently (16% of atom-frames on FosAKP).
+        # Pad the grid outward in whole voxels so the interior still lines up with the
+        # unpadded grid, leaving ordinary wrapped trajectories bit-identical.
+        flat = self._positions.reshape(-1, 3)
+        box_lo, box_hi = self._center - sd, self._center + sd
+        self._frac_outside_box = float(
+            np.mean(np.any((flat < box_lo) | (flat > box_hi), axis=1))
+        ) if flat.size else 0.0
+
+        pad_lo = np.ceil(np.maximum(0.0, box_lo - (flat.min(axis=0) - self._delta))
+                         / self._delta).astype(int) if flat.size else np.zeros(3, int)
+        pad_hi = np.ceil(np.maximum(0.0, (flat.max(axis=0) + self._delta) - box_hi)
+                         / self._delta).astype(int) if flat.size else np.zeros(3, int)
+
+        if not (pad_lo.any() or pad_hi.any()):
+            self._edges = (np.linspace(0, self._box_size[0], num=hbins[0] + 1, endpoint=True) + (x - sd[0]),
+                        np.linspace(0, self._box_size[1], num=hbins[1] + 1, endpoint=True) + (y - sd[1]),
+                        np.linspace(0, self._box_size[2], num=hbins[2] + 1, endpoint=True) + (z - sd[2]))
+        else:
+            nbins = hbins + pad_lo + pad_hi
+            lo = box_lo - pad_lo * self._delta
+            self._edges = tuple(lo[d] + np.arange(nbins[d] + 1) * self._delta[d]
+                                for d in range(3))
+            self.logger.warning(
+                f"{100 * self._frac_outside_box:.2f}% of positions fell outside the "
+                f"box-sized grid (aligned trajectory in an axis-aligned grid); grid padded "
+                f"{tuple(hbins)} -> {tuple(nbins)} voxels so none are discarded."
+            )
         origin = (self._edges[0][0], self._edges[1][0], self._edges[2][0])
 
         # get the mask of accesible voxels that will be used for the free energy calculation
@@ -501,8 +530,32 @@ class GridAnalysis(AnalysisBase):
             protein_mask = protein_hist > 0
             mask = mask & ~protein_mask
 
-        # count and save the mask
-        self._n_accessible_voxels = int(mask.sum())
+        # Count the reference volume only inside the box-sized central region. A padded grid
+        # sweeps corners the rotated box passes through, and any voxel solvent ever touched is
+        # marked accessible, so counting the whole grid would inflate the reference and deflate
+        # N_o. Restricting to the box region makes N_o independent of the padding.
+        delta = getattr(self, "_delta", np.full(3, self._gridsize, dtype=float))
+        box_lo = np.asarray(self._center) - np.asarray(self._box_size) / 2.0
+        box_hi = np.asarray(self._center) + np.asarray(self._box_size) / 2.0
+        in_box = np.ones(mask.shape, dtype=bool)
+        for d in range(3):
+            mids = (self._edges[d][:-1] + self._edges[d][1:]) / 2.0
+            keep = (mids >= box_lo[d] - 1e-9) & (mids <= box_hi[d] + 1e-9)
+            shape = [1, 1, 1]
+            shape[d] = -1
+            in_box &= keep.reshape(shape)
+        n_acc = int((mask & in_box).sum())
+        box_voxels = int(round(float(np.prod(np.asarray(self._box_size) / np.asarray(delta)))))
+        n_protein = int(protein_mask.sum()) if protein_coords else 0
+        cap = max(1, box_voxels - n_protein)
+        if n_acc > cap:
+            self.logger.warning(
+                f"Accessible voxels ({n_acc:,}) exceed the box solvent volume "
+                f"({cap:,} = box {box_voxels:,} - protein {n_protein:,}); capping. "
+                "The reference volume cannot exceed the periodic box."
+            )
+            n_acc = cap
+        self._n_accessible_voxels = n_acc
         grid_vol = self._gridsize ** 3
         self.logger.info(f"Number of accessible voxels: {self._n_accessible_voxels:.2f}")
         self.logger.info(f"Volume of accessible voxels: {self._n_accessible_voxels/1000 * grid_vol:.2f} nm³")
