@@ -156,6 +156,7 @@ class MultiReport:
                 atomtypes_definitions=cfg.density_maps.atomtypes_file,
                 gridsize=cfg.density_maps.gridsize,
                 temperature=cfg.density_maps.temperature,
+                export_raw=cfg.density_maps.export_raw,
             )
 
             self._reports.append(report)

@@ -145,6 +145,7 @@ class Report:
                               atomtypes_definitions:str=None,
                               gridsize:float=0.5,
                               temperature:float=None,
+                              export_raw:bool=True,
                               ):
         """Generates the density maps for all the cosolvents especified. It is possible to use atomtypes for the analysis.
         If no atomtypes are specified, the default atomtypes are used: HBD, HBA, Car.
@@ -202,7 +203,8 @@ class Report:
             # analysis.export_density(os.path.join(self.out_path, f"map_rawdensity_{cosolvent}.dx"))
             analysis.atomic_grid_free_energy(temperature, smoothing=True)
             analysis.export_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_{cosolvent}.dx"))
-            # analysis.export_raw_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_raw_{cosolvent}.dx"))
+            if export_raw:
+                analysis.export_raw_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_raw_{cosolvent}.dx"))
 
         return
 

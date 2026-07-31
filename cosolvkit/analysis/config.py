@@ -53,6 +53,9 @@ class DensityMapsConfig:
     atomtypes_file: Optional[str] = None
     gridsize:       float         = 0.5
     temperature:    float         = 300.0
+    # Also write map_agfe_raw_*.dx, the unclamped AGFE. The shipped map zeroes every
+    # voxel >= 0, which erases depletion and makes two maps impossible to difference.
+    export_raw:     bool          = True
 
 
 @dataclass

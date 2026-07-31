@@ -45,6 +45,10 @@ density_maps:
   atomtypes_file: null            # path to custom atomtypes JSON; null → built-in default
   gridsize:       0.5             # voxel edge length in Angstroms (also used by hotspots)
   temperature:    300.0           # simulation temperature in Kelvin
+  export_raw:     true            # also write map_agfe_raw_*.dx (unclamped AGFE).
+                                  # map_agfe_*.dx zeroes every voxel >= 0, which erases
+                                  # depletion and makes two maps impossible to difference.
+                                  # Roughly doubles map disk usage.
 
 # -----------------------------------------------------------------
 # misc: how per-simulation AGFE maps are combined
