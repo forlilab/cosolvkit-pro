@@ -15,6 +15,17 @@ from skimage.filters import gaussian
 from sklearn.cluster import DBSCAN
 
 
+def min_cluster_voxels_for_volume(volume_ang3, gridsize):
+    """Voxel count matching a physical minimum cluster volume, at least 1.
+
+    A threshold expressed in voxels changes meaning with the grid: 10 voxels is 1.25 A^3 at
+    0.5 A but 5.12 A^3 at 0.8 A, so a resolution change silently alters which clusters survive.
+    """
+    if gridsize is None or float(gridsize) <= 0:
+        raise ValueError(f"gridsize must be positive, got {gridsize!r}")
+    return max(1, int(round(float(volume_ang3) / float(gridsize) ** 3)))
+
+
 class ConnectedComponentsClustering:
     """Cluster favorable voxels with connected-components labeling.
 
@@ -236,12 +247,13 @@ class DBSCANClustering:
         return labeled_array, site_labels
 
 
-def build_clustering_strategy(clustering_cfg):
+def build_clustering_strategy(clustering_cfg, gridsize=None):
     """Build a clustering-strategy instance from a ``ClusteringConfig``.
 
     Maps ``clustering_cfg.strategy`` to the matching class and constructs it
-    with ``min_cluster_voxels=clustering_cfg.min_cluster_voxels`` plus any
-    ``clustering_cfg.strategy_kwargs``.
+    with ``min_cluster_voxels`` plus any ``clustering_cfg.strategy_kwargs``. When *gridsize* is
+    given and the config sets ``min_cluster_volume_ang3``, the voxel threshold is derived from
+    that physical volume so it does not change meaning with the grid.
 
     Raises
     ------
@@ -261,6 +273,8 @@ def build_clustering_strategy(clustering_cfg):
             f"valid options: {sorted(registry)}"
         )
     kwargs = dict(clustering_cfg.strategy_kwargs or {})
-    return registry[strategy](
-        min_cluster_voxels=clustering_cfg.min_cluster_voxels, **kwargs
-    )
+    n_vox = clustering_cfg.min_cluster_voxels
+    resolve = getattr(clustering_cfg, "resolve_min_cluster_voxels", None)
+    if resolve is not None and gridsize is not None:
+        n_vox = resolve(gridsize)
+    return registry[strategy](min_cluster_voxels=n_vox, **kwargs)

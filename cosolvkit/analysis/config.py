@@ -69,9 +69,20 @@ class ClusteringConfig:
     strategy:            str  = "skimage_watershed"  # skimage_watershed | connected_components | watershed | dbscan
     strategy_kwargs:     Dict = field(default_factory=dict)
     min_cluster_voxels:  int  = 20
+    # Preferred over min_cluster_voxels: a voxel count changes physical meaning with gridsize
+    # (10 voxels = 1.25 A^3 at 0.5 A but 5.12 A^3 at 0.8 A), so a resolution change silently
+    # alters which clusters survive. When set, this wins.
+    min_cluster_volume_ang3: Optional[float] = None
     use_skimage_cleanup: bool = False
     cleanup_min_size:    int  = 1
     cleanup_hole_size:   int  = 2
+
+    def resolve_min_cluster_voxels(self, gridsize):
+        """Voxel threshold to actually use, honouring ``min_cluster_volume_ang3`` if set."""
+        if self.min_cluster_volume_ang3 is None:
+            return int(self.min_cluster_voxels)
+        from cosolvkit.analysis.sites.clustering import min_cluster_voxels_for_volume
+        return min_cluster_voxels_for_volume(self.min_cluster_volume_ang3, gridsize)
 
 
 @dataclass

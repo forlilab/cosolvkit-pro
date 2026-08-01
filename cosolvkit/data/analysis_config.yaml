@@ -85,7 +85,11 @@ hotspots:
     strategy_kwargs:     {}       # extra kwargs for the chosen strategy
                                   # e.g. skimage_watershed: {h: 0.5, watershed_mode: score}
                                   #      dbscan:            {eps_angstrom: 1.5}
-    min_cluster_voxels:  20       # discard clusters smaller than this
+    min_cluster_voxels:  20       # discard clusters smaller than this (VOXELS - changes
+                                  # physical meaning if you change gridsize)
+    min_cluster_volume_ang3: null  # preferred: same threshold in A^3, invariant to gridsize.
+                                  # When set it overrides min_cluster_voxels. 10 voxels at
+                                  # 0.5 A = 1.25 A^3; the same count at 0.8 A is 5.12 A^3.
     use_skimage_cleanup: false    # apply scikit-image morphology cleanup before clustering
     cleanup_min_size:    1        # remove objects smaller than this (voxels)
     cleanup_hole_size:   2        # fill holes smaller than this (voxels)

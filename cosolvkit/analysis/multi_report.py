@@ -292,7 +292,8 @@ class MultiReport:
             agfe_cutoff=effective_cutoff,
             top_percentile=hs.top_percentile,
             gridsize=self.config.density_maps.gridsize,
-            clustering_strategy=build_clustering_strategy(cl),
+            clustering_strategy=build_clustering_strategy(
+                cl, gridsize=self.config.density_maps.gridsize),
             compute_survival_probability=False,
             use_skimage_cleanup=cl.use_skimage_cleanup,
             cleanup_min_size=cl.cleanup_min_size,
