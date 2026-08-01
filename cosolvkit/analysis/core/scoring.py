@@ -63,15 +63,38 @@ DEFAULT_BINDING_SITE_WEIGHTS = {
     # represented among the probes that hit the site. Opt-in: weight 0.0 by default,
     # pending validation across more than one target.
     "probe_chemotype_coverage": 0.0,
+    # Read from the AGFE map as a FIELD at member-hotspot centroids (see core/field.py), not
+    # from the thresholded blob. At fixed query points these reach AUC 0.805 versus 0.50-0.70
+    # for blob geometry. Opt-in at 0.0: that AUC was measured at crystallographic ligand
+    # positions, and a hotspot centroid sits a median 1.4 A away, so enabling them should be a
+    # weight sweep rather than an assumption.
+    "field_contrast": 0.0,
+    "field_sharpness": 0.0,
 }
 
 # Features whose raw value is "lower is better" -> inverted min-max (most-negative -> 1).
-_BS_INVERTED_FEATURES = {"affinity"}
+_BS_INVERTED_FEATURES = {"affinity", "field_contrast"}
 
 # ``diversity`` was renamed to ``chemotype_diversity`` because it scores atom types, not
 # probes, and readers reliably assumed the latter. Accepted with a warning rather than
 # rejected so that saved weight sets and the dashboard keep working.
 _LEGACY_WEIGHT_ALIASES = {"diversity": "chemotype_diversity"}
+
+
+def _best_member_property(site, name, prefer="min"):
+    """Best value of *name* over a site's member hotspots, or None if none carry it.
+
+    Field descriptors live on hotspots (that is where the map was in hand), so a site takes its
+    strongest member: most-negative for contrast, largest for sharpness.
+    """
+    vals = []
+    for hs in getattr(site, "member_hotspots", None) or []:
+        v = (getattr(hs, "properties", None) or {}).get(name)
+        if v is not None and np.isfinite(v):
+            vals.append(float(v))
+    if not vals:
+        return None
+    return min(vals) if prefer == "min" else max(vals)
 
 
 def _binding_site_feature_values(binding_sites):
@@ -86,6 +109,10 @@ def _binding_site_feature_values(binding_sites):
                                 for s in binding_sites],
         "probe_chemotype_coverage": [getattr(s, "probe_chemotype_coverage", None)
                                      for s in binding_sites],
+        "field_contrast":  [_best_member_property(s, "field_contrast", prefer="min")
+                            for s in binding_sites],
+        "field_sharpness": [_best_member_property(s, "field_sharpness", prefer="max")
+                            for s in binding_sites],
     }
 
 

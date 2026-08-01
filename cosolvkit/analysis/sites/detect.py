@@ -389,6 +389,13 @@ class HotspotDetector:
                 per_type_agfe=sd["per_type_agfe"],
             ))
 
+        # --- Field descriptors, read from the map rather than the thresholded blob ---
+        # Done here because this is where the AGFE array is in hand. Weighted 0.0 by default;
+        # see core/field.py and DEFAULT_BINDING_SITE_WEIGHTS.
+        from cosolvkit.analysis.core.field import attach_field_descriptors
+        attach_field_descriptors(sites, agfe_array, combined_grid.origin,
+                                 combined_grid.delta)
+
         # --- Optional geometry descriptor extraction ---
         if self.compute_regionprops:
             score_image = np.clip(-agfe_array, 0, None)

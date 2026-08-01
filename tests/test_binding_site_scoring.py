@@ -51,8 +51,11 @@ def test_score_binding_sites_none_kinetics_contributes_zero():
 
 
 def test_default_weights_constant():
+    """Pins the shipped weights. field_* are new and opt-in at 0.0, so adding them changes no
+    ranking — the field AUC of 0.805 was measured at ligand positions, not hotspot centroids."""
     assert DEFAULT_BINDING_SITE_WEIGHTS == {
         "affinity": 3.0, "probe_coverage": 2.0, "volume": 1.0,
         "kinetics": 1.0, "shape": 1.0, "chemotype_diversity": 1.0,
         "probe_chemotype_coverage": 0.0,
+        "field_contrast": 0.0, "field_sharpness": 0.0,
     }
