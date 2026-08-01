@@ -81,7 +81,11 @@ DEFAULT_BINDING_SITE_WEIGHTS = {
 }
 
 # Features whose raw value is "lower is better" -> inverted min-max (most-negative -> 1).
-_BS_INVERTED_FEATURES = {"affinity", "field_contrast"}
+# `shape` (solidity) is here on measurement, not intuition: on analysis_v3 (405 hotspots, 51
+# known) solidity separates known from novel at within-probe AUC 0.734 and 0.700 after
+# controlling for volume — the strongest feature we have, where agfe_min falls to 0.500 — and
+# known sites are LESS convex (mean 0.742 vs 0.835). Real pockets are irregular clefts.
+_BS_INVERTED_FEATURES = {"affinity", "field_contrast", "shape"}
 
 # ``diversity`` was renamed to ``chemotype_diversity`` because it scores atom types, not
 # probes, and readers reliably assumed the latter. Accepted with a warning rather than
