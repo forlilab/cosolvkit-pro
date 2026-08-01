@@ -15,9 +15,8 @@ def _bs(site_id, agfe_min, volume, n_cos, residence, solidity, atomtypes):
 
 
 def test_score_binding_sites_default_weights_and_rank():
-    # 2 sites. Defaults: affinity+3, volume+1, kinetics+1, shape+1, chemotype_diversity+1.
-    # probe_coverage is 0.0 by default (it correlates with member count at rho +0.978 — it IS
-    # the count, scaled), as are probe_chemotype_coverage and the field_* terms.
+    # 2 sites. Defaults: affinity+3, probe_coverage+2, volume+1, kinetics+1, shape+1,
+    # chemotype_diversity+1. probe_chemotype_coverage and the field_* terms are 0.0.
     # A: agfe_min -3 (best), vol 100, 2 cos (coverage 1.0), residence 20, solidity 0.9, 2 atomtypes
     # B: agfe_min -1 (worst), vol 50, 1 cos (coverage 0.5), residence 10, solidity 0.6, 1 atomtype
     # solidity: A=0.6, B=0.9 — known sites are LESS convex (0.742 vs 0.835 measured), so the
@@ -26,8 +25,8 @@ def test_score_binding_sites_default_weights_and_rank():
     b = _bs(2, -1.0, 50.0, 1, 10.0, 0.9, ["Car"])
     score_binding_sites([a, b])
     # Every feature: A=1.0, B=0.0 after normalization (A better on all; affinity inverted).
-    # combined_A = 3+1+1+1+1 = 7.0 ; combined_B = 0.0
-    assert a.combined == pytest.approx(7.0, abs=1e-9)
+    # combined_A = 3+2+1+1+1+1 = 9.0 ; combined_B = 0.0
+    assert a.combined == pytest.approx(9.0, abs=1e-9)
     assert b.combined == pytest.approx(0.0, abs=1e-9)
     assert a.rank == 1 and b.rank == 2
 
@@ -57,7 +56,7 @@ def test_default_weights_constant():
     """Pins the shipped weights. field_* are new and opt-in at 0.0, so adding them changes no
     ranking — the field AUC of 0.805 was measured at ligand positions, not hotspot centroids."""
     assert DEFAULT_BINDING_SITE_WEIGHTS == {
-        "affinity": 3.0, "probe_coverage": 0.0, "volume": 1.0,
+        "affinity": 3.0, "probe_coverage": 2.0, "volume": 1.0,
         "kinetics": 1.0, "shape": 1.0, "chemotype_diversity": 1.0,
         "probe_chemotype_coverage": 0.0,
         "field_contrast": 0.0, "field_sharpness": 0.0,

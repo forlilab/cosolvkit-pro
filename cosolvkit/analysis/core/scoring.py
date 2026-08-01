@@ -51,13 +51,12 @@ DEFAULT_BINDING_SITE_WEIGHTS = {
     # Fused across every probe at the site's point when the maps are available, falling back
     # (loudly) to best-member agfe_min otherwise. See _affinity_values.
     "affinity": 3.0,
-    # Was 2.0. Dropped to 0.0: probe_coverage is n_cosolvents/n_total, which correlates with
-    # member count at rho +0.978 on this benchmark — it IS the count, scaled. Combined with a
-    # best-of-members affinity it meant five of nine weight units measured "how many hotspots
-    # landed here", and member count is anti-predictive for the sites that matter (the
-    # 23-fragment main pocket is hit by 4 probes, a 6-fragment site by 13). A count cannot be
-    # de-biased, only dropped; chemistry belongs in probe_chemotype_coverage instead.
-    "probe_coverage": 0.0,
+    # Correlates with member count at rho +0.978 (it IS the count, scaled), and member count is
+    # anti-predictive for the sites that matter here (the 23-fragment main pocket is hit by 4
+    # probes, a 6-fragment site by 13). Dropping it to 0.0 was tried and MEASURED WORSE: over 43
+    # matched sites in 18 probes the mean rank of true sites went 8.25 -> 11.13 and top5
+    # 0.167 -> 0.111. The count is a biased but on-average-useful ranking signal, so it stays.
+    "probe_coverage": 2.0,
     "volume": 1.0,
     "kinetics": 1.0,
     "shape": 1.0,
@@ -115,6 +114,14 @@ def _best_member_property(site, name, prefer="min"):
     return min(vals) if prefer == "min" else max(vals)
 
 
+#: Use the count-normalised fused affinity instead of best-member ``agfe_min``.
+#: Default False on measurement: it removes the count bias (rho(n_hotspots, score) +0.77 -> -0.44)
+#: but ranked WORSE on FosAKP (mean rank of true sites 8.25 -> 11.13 over 43 matched sites). The
+#: fused values are still computed and exported whenever the maps are supplied, so a weight sweep
+#: or a second target can revisit this without a code change.
+USE_FUSED_AFFINITY = False
+
+
 def _affinity_values(binding_sites):
     """Fused, count-normalised affinity when available; best-member ``agfe_min`` otherwise.
 
@@ -124,6 +131,8 @@ def _affinity_values(binding_sites):
     is constant. Falling back is loud, because a silently count-biased affinity at weight 3.0 is
     most of the score.
     """
+    if not USE_FUSED_AFFINITY:
+        return [s.agfe_min for s in binding_sites]
     fused = [_site_property(s, "fused_affinity") for s in binding_sites]
     if any(v is not None for v in fused):
         return fused

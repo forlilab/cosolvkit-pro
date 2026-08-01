@@ -98,9 +98,11 @@ class TestCountNormalisation:
 
 class TestScoringDefaults:
 
-    def test_affinity_uses_the_fused_value_when_available(self, make_hotspot):
+    def test_affinity_uses_the_fused_value_when_opted_in(self, make_hotspot, monkeypatch):
+        from cosolvkit.analysis.core import scoring
         from cosolvkit.analysis.core.models import BindingSite
         from cosolvkit.analysis.core.scoring import _binding_site_feature_values
+        monkeypatch.setattr(scoring, "USE_FUSED_AFFINITY", True)
         hs = make_hotspot(agfe_min=-9.0)                 # a deep member, best-of-members bait
         site = BindingSite(site_id=1, member_hotspots=[hs], agfe_min=-9.0)
         site.add_property("fused_affinity", 1.5)
@@ -108,18 +110,21 @@ class TestScoringDefaults:
         assert vals["affinity"][0] == pytest.approx(1.5), \
             "fused value must take precedence over the count-biased best-of-members"
 
-    def test_affinity_falls_back_to_agfe_min_with_a_warning(self, make_hotspot):
+    def test_affinity_falls_back_to_agfe_min_with_a_warning(self, make_hotspot, monkeypatch):
+        from cosolvkit.analysis.core import scoring
         from cosolvkit.analysis.core.models import BindingSite
         from cosolvkit.analysis.core.scoring import _binding_site_feature_values
+        monkeypatch.setattr(scoring, "USE_FUSED_AFFINITY", True)
         site = BindingSite(site_id=1, member_hotspots=[make_hotspot()], agfe_min=-2.0)
         with pytest.warns(UserWarning, match="count"):
             vals = _binding_site_feature_values([site])
         assert vals["affinity"][0] == pytest.approx(-2.0)
 
-    def test_probe_coverage_weight_is_zero_by_default(self):
+    def test_probe_coverage_keeps_its_weight_despite_the_count_bias(self):
+        """It IS the member count (rho +0.978), but dropping it measured worse: mean rank of
+        true sites 8.25 -> 11.13 over 43 matched sites. Biased and still useful on average."""
         from cosolvkit.analysis.core.scoring import DEFAULT_BINDING_SITE_WEIGHTS
-        assert DEFAULT_BINDING_SITE_WEIGHTS["probe_coverage"] == 0.0, \
-            "probe_coverage is 98% member count; it cannot be de-biased, only dropped"
+        assert DEFAULT_BINDING_SITE_WEIGHTS["probe_coverage"] == 2.0
 
     def test_shape_keeps_its_weight(self):
         """Re-measured on v3: solidity is the best per-hotspot discriminator, 0.700 after
