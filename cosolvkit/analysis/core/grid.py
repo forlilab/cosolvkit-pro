@@ -247,6 +247,47 @@ def _grid_free_energy(hist, n_atoms, n_frames, n_accessible_voxels, temperature=
 
     return gfe
 
+def _detection_floor_counts(sigma_voxels, ndim: int = 3) -> float:
+    """Smallest pooled count a Gaussian kernel of width *sigma_voxels* can represent.
+
+    A single observation smoothed by the kernel peaks at ``1/((2*pi)^(d/2) * sigma^d)``, so
+    anything below that is less than one observation's worth — the resolution limit of the map.
+    Without smoothing the limit is one count. Unlike the old ``N = max(N, 1e-10)`` floor this is
+    derived from the kernel rather than chosen.
+    """
+    if sigma_voxels <= 0:
+        return 1.0
+    return float(1.0 / ((2.0 * np.pi) ** (ndim / 2.0) * float(sigma_voxels) ** ndim))
+
+
+def _grid_free_energy_density_smoothed(hist, n_atoms, n_frames, n_accessible_voxels,
+                                       sigma_voxels, temperature=300.0):
+    """AGFE from a Gaussian-smoothed OCCUPANCY histogram.
+
+    Smoothing belongs on the density, not on the energy. The kernel width is ``atom_radius/3``,
+    i.e. it represents the physical size of an atom — a statement about where density is. Density
+    also averages linearly, and the log of a locally-averaged density is a well-defined free
+    energy, whereas an average of logs is not.
+
+    Doing it in this order removes the need for the ``N = max(N, 1e-10)`` floor, whose only job
+    was to keep ``log(0)`` finite but which set the unvisited background to +8.5 kcal/mol and then
+    let the Gaussian filter mix that arbitrary constant into every neighbourhood — making the
+    favourable set depend on the choice of epsilon. Here the only bound is the kernel's own
+    resolution limit (:func:`_detection_floor_counts`), and it is applied *after* smoothing so it
+    cannot propagate.
+
+    Side effect worth knowing: an isolated single visit now reads as slightly UNFAVOURABLE,
+    because one count spread over the kernel is below bulk density. The -1 kT cutoff therefore
+    needs ~5 coincident visits instead of a single one anywhere.
+    """
+    hist = np.asarray(hist, dtype=float)
+    counts = (gaussian_filter(hist, sigma=sigma_voxels, mode="constant", cval=0.0)
+              if sigma_voxels and sigma_voxels > 0 else hist)
+    N = np.maximum(counts, _detection_floor_counts(sigma_voxels)) / n_frames
+    N_o = n_atoms / n_accessible_voxels
+    return -(BOLTZMANN_CONSTANT_KB * temperature) * np.log(N / N_o)
+
+
 def _smooth_grid_free_energy(gfe,
                              energy_cutoff: float = 0,
                              sigma: float = 1,
@@ -626,15 +667,46 @@ class GridAnalysis(AnalysisBase):
 
         return mapped_atomtypes
 
-    def atomic_grid_free_energy(self, temperature=300., atom_radius=1.4, smoothing=True):
+    def _agfe_from_hist(self, hist, n_atoms, sigma_vox, smoothing, smoothing_space,
+                        temperature):
+        """(raw, display) AGFE arrays for one occupancy histogram.
+
+        ``raw`` is the full unclipped field; ``display`` has unfavourable voxels zeroed. In
+        ``"density"`` space ``raw`` is already smoothed (the smoothing happens on the counts,
+        before the log); in legacy ``"energy"`` space ``raw`` is the unsmoothed inversion.
+        """
+        if smoothing and smoothing_space == "density":
+            raw = _grid_free_energy_density_smoothed(
+                hist, n_atoms, self._nframes, self._n_accessible_voxels,
+                sigma_vox, temperature)
+            display = raw.copy()
+            display[display >= 0] = 0.0
+            return raw, display
+
+        raw = _grid_free_energy(hist, n_atoms, self._nframes,
+                                self._n_accessible_voxels, temperature)
+        if not smoothing:
+            return raw, raw
+        return raw, _smooth_grid_free_energy(raw, sigma=sigma_vox, energy_cutoff=0)
+
+    def atomic_grid_free_energy(self, temperature=300., atom_radius=1.4, smoothing=True,
+                                smoothing_space="density"):
         """Compute grid free energy by boltzmann inversion of the occupancy histogram at a given temperature.
         Optionally, the free energy map can be smoothed using a Gaussian filter and some tricks.
 
         :param temperature: Temperature in Kelvin (default 300K)
         :param atom_radius: Atomic radius for smoothing (default 1.4A)
         :param smoothing: Apply smoothing to the free energy map (default True)
+        :param smoothing_space: ``"density"`` (default) smooths the occupancy histogram and then
+            inverts it, which is the physically correct order and needs no ``log(0)`` floor.
+            ``"energy"`` reproduces the legacy behaviour: invert first with ``N`` floored at
+            1e-10, then smooth the energy field — which mixes an arbitrary +8.5 kcal/mol
+            background into every neighbourhood. Kept only for reproducing earlier results.
 
         """
+        if smoothing_space not in ("density", "energy"):
+            raise ValueError("smoothing_space must be 'density' or 'energy', "
+                             f"got {smoothing_space!r}")
 
         # gaussian_filter interprets sigma in VOXELS
         sigma_vox = (atom_radius / 3.0) / self._gridsize
@@ -643,20 +715,17 @@ class GridAnalysis(AnalysisBase):
             self._type_agfe_raw = {}
             for atom_type, grid in self._type_histograms.items():
                 n_atoms_type = self._n_atoms_by_type[atom_type]
-                agfe = _grid_free_energy(grid.grid, n_atoms_type, self._nframes, self._n_accessible_voxels, temperature)
-                self._type_agfe_raw[atom_type] = Grid(agfe, edges=grid.edges)
-                if smoothing:
-                    agfe = _smooth_grid_free_energy(agfe, sigma=sigma_vox, energy_cutoff=0)
+                raw, agfe = self._agfe_from_hist(grid.grid, n_atoms_type, sigma_vox,
+                                                 smoothing, smoothing_space, temperature)
+                self._type_agfe_raw[atom_type] = Grid(raw, edges=grid.edges)
 
                 self.logger.info(f"Free energy for {atom_type}: MIN: {np.min(agfe):.2f} kcal/mol, MAX: {np.max(agfe):.2f} kcal/mol")
                 self._type_histograms[atom_type] = Grid(agfe, edges=grid.edges)
         else:
-            agfe = _grid_free_energy(self._histogram.grid, self._n_atoms, self._nframes, self._n_accessible_voxels, temperature)
-            self._agfe_raw = Grid(agfe, edges=self._histogram.edges)
-
+            raw, agfe = self._agfe_from_hist(self._histogram.grid, self._n_atoms, sigma_vox,
+                                             smoothing, smoothing_space, temperature)
+            self._agfe_raw = Grid(raw, edges=self._histogram.edges)
             if smoothing:
-                # radius == 3 sigma, converted from Angstrom to voxels.
-                agfe = _smooth_grid_free_energy(agfe, sigma=sigma_vox, energy_cutoff=0)
                 self.logger.info(f"Free energy: MIN: {np.min(agfe):.2f} kcal/mol, MAX: {np.max(agfe):.2f} kcal/mol")
 
             self._agfe = Grid(agfe, edges=self._histogram.edges)
