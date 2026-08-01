@@ -77,6 +77,13 @@ DEFAULT_BINDING_SITE_WEIGHTS = {
     # weight sweep rather than an assumption.
     "field_contrast": 0.0,
     "field_sharpness": 0.0,
+    # Protein heavy atoms within 8 A of the site — an enclosure proxy. Opt-in at 0.0 pending a
+    # weight sweep, but the most promising addition available: it is the only feature measured to
+    # be INDEPENDENT of the size/depth axis (rho +0.044 with volume, versus -0.948 for
+    # field_min_ball), and volume+buriedness reaches 0.726 against competing hotspots vs 0.697
+    # for volume alone. Aggregated as the MEAN over member hotspots, never the max, so member
+    # count cannot inflate it.
+    "buriedness": 0.0,
 }
 
 # Features whose raw value is "lower is better" -> inverted min-max (most-negative -> 1).
@@ -122,6 +129,17 @@ def _best_member_property(site, name, prefer="min"):
 USE_FUSED_AFFINITY = False
 
 
+def _mean_member_property(site, name):
+    """Mean of *name* over member hotspots, or None. Mean rather than max: a best-of-members
+    summary is inflated by member count (rho -0.82 on this benchmark)."""
+    vals = []
+    for hs in getattr(site, "member_hotspots", None) or []:
+        v = (getattr(hs, "properties", None) or {}).get(name)
+        if v is not None and np.isfinite(v):
+            vals.append(float(v))
+    return float(np.mean(vals)) if vals else None
+
+
 def _affinity_values(binding_sites):
     """Fused, count-normalised affinity when available; best-member ``agfe_min`` otherwise.
 
@@ -162,6 +180,7 @@ def _binding_site_feature_values(binding_sites):
                             if _site_property(s, "fused_contrast") is not None
                             else _best_member_property(s, "field_contrast", prefer="min")
                             for s in binding_sites],
+        "buriedness":     [_mean_member_property(s, "buriedness") for s in binding_sites],
         "field_sharpness": [_site_property(s, "fused_sharpness")
                             if _site_property(s, "fused_sharpness") is not None
                             else _best_member_property(s, "field_sharpness", prefer="max")

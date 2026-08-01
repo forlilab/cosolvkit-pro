@@ -60,4 +60,5 @@ def test_default_weights_constant():
         "kinetics": 1.0, "shape": 1.0, "chemotype_diversity": 1.0,
         "probe_chemotype_coverage": 0.0,
         "field_contrast": 0.0, "field_sharpness": 0.0,
+        "buriedness": 0.0,
     }

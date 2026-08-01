@@ -75,6 +75,35 @@ def field_descriptors(agfe, origin, delta, xyz):
     return out
 
 
+def buriedness(points, protein_xyz, radius=8.0):
+    """Protein heavy atoms within *radius* of each point — a simple enclosure proxy.
+
+    Worth having because it is **independent** of the density terms, not because it is strong on
+    its own: measured against competing hotspots, buriedness scores 0.686 and volume 0.697, but
+    rho(volume, buriedness) = +0.044 while rho(volume, field_min_ball) = -0.948. Combining volume
+    and buriedness reaches 0.726; adding the field term does not help.
+    """
+    pts = np.atleast_2d(np.asarray(points, dtype=float))
+    prot = np.asarray(protein_xyz, dtype=float)
+    if prot.size == 0:
+        return np.zeros(len(pts))
+    out = np.empty(len(pts))
+    for i, q in enumerate(pts):
+        out[i] = int((np.sqrt(((prot - q) ** 2).sum(axis=1)) <= radius).sum())
+    return out
+
+
+def attach_buriedness(hotspots, protein_xyz, radius=8.0):
+    """Attach ``buriedness`` at each hotspot centroid. Returns the count attached."""
+    n = 0
+    for hs in hotspots:
+        if getattr(hs, "centroid", None) is None:
+            continue
+        hs.add_property("buriedness", float(buriedness(hs.centroid, protein_xyz, radius)[0]))
+        n += 1
+    return n
+
+
 def attach_field_descriptors(hotspots, agfe, origin, delta):
     """Compute and attach field descriptors at each hotspot centroid. Returns the count."""
     n = 0
