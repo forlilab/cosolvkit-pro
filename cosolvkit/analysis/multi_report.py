@@ -157,6 +157,8 @@ class MultiReport:
                 gridsize=cfg.density_maps.gridsize,
                 temperature=cfg.density_maps.temperature,
                 export_raw=cfg.density_maps.export_raw,
+                # The sampling verdict is only meaningful against the cutoff detection will use.
+                n_kt=cfg.hotspots.n_kt,
             )
 
             self._reports.append(report)
