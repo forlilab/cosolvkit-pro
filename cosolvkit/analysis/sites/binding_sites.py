@@ -232,7 +232,8 @@ class BindingSiteDetector:
     """Detect binding sites by grouping hotspots (mask connectivity) and scoring them."""
 
     def __init__(self, probe_results, connectivity=26, weights=None,
-                 merge_tolerance_ang=2.0, probe_chemotype_overrides=None):
+                 merge_tolerance_ang=2.0, probe_chemotype_overrides=None,
+                 field_maps=None):
         from cosolvkit.analysis.core.chemotypes import (
             n_available_chemotypes,
             resolve_probe_chemotypes,
@@ -241,6 +242,7 @@ class BindingSiteDetector:
         self.connectivity = connectivity
         self.weights = weights
         self.merge_tolerance_ang = merge_tolerance_ang
+        self.field_maps = field_maps
         self.n_total_cosolvents = len(probe_results)
         self.chemotype_map = resolve_probe_chemotypes(probe_chemotype_overrides)
         # Denominator for probe_chemotype_coverage: what THIS panel can express.
@@ -260,18 +262,32 @@ class BindingSiteDetector:
             )
             for i, g in enumerate(groups)
         ]
+        if self.field_maps:
+            # Count-normalised: sample every probe at each site's point, fuse across probes.
+            from cosolvkit.analysis.core.site_features import (
+                ProbeFieldSampler, fused_site_features,
+            )
+            fused_site_features(sites, ProbeFieldSampler(self.field_maps))
         score_binding_sites(sites, self.weights)   # sets .combined and .rank
         sites.sort(key=lambda s: s.rank)
         return sites
 
 
 def identify_binding_sites(probe_results, connectivity=26, weights=None,
-                           merge_tolerance_ang=2.0, probe_chemotype_overrides=None):
-    """Group per-cosolvent hotspots into ranked cross-cosolvent binding sites."""
+                           merge_tolerance_ang=2.0, probe_chemotype_overrides=None,
+                           field_maps=None):
+    """Group per-cosolvent hotspots into ranked cross-cosolvent binding sites.
+
+    *field_maps* is ``{cosolvent: (agfe_array, origin, delta)}``. Supplying it lets the scorer use
+    **count-normalised** features fused over every probe at each site's point, instead of a
+    best-of-members maximum that correlates with member count at rho -0.82. Without it the
+    fallback is used and a warning is emitted.
+    """
     return BindingSiteDetector(
         probe_results, connectivity=connectivity, weights=weights,
         merge_tolerance_ang=merge_tolerance_ang,
-        probe_chemotype_overrides=probe_chemotype_overrides).detect()
+        probe_chemotype_overrides=probe_chemotype_overrides,
+        field_maps=field_maps).detect()
 
 
 def export_binding_sites(sites, out_path):

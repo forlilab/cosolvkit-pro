@@ -243,6 +243,25 @@ class MultiReport:
     # Step 3 — joint hotspot detection
     # ------------------------------------------------------------------
 
+    def _load_merged_field_maps(self, cosolvents):
+        """``{cosolvent: (array, origin, delta)}`` from the merged AGFE maps, for fused scoring."""
+        import numpy as np
+        from gridData import Grid
+        maps = {}
+        for cos in cosolvents:
+            path = os.path.join(self._merged_dir, f"map_agfe_{cos}.dx")
+            if not os.path.isfile(path):
+                continue
+            g = Grid(path)
+            maps[cos] = (np.asarray(g.grid), np.asarray(g.origin, dtype=float),
+                         np.asarray(g.delta, dtype=float))
+        if not maps:
+            self.logger.warning(
+                "No merged maps found for fused binding-site features; scoring will fall back "
+                "to best-member values, which are biased by member count."
+            )
+        return maps
+
     def _save_hotspot_checkpoint(self, results):
         """Write the hotspot checkpoint if enabled.
 
@@ -413,10 +432,13 @@ class MultiReport:
             from cosolvkit.analysis.sites.binding_sites import (
                 identify_binding_sites, export_binding_sites,
             )
+            # Supply the merged maps so site features are fused over every probe rather than
+            # summarised as a best-of-members maximum (which tracks member count at rho -0.82).
             binding_sites = identify_binding_sites(
                 results, connectivity=bs_cfg.connectivity,
                 weights=bs_cfg.weights, merge_tolerance_ang=bs_cfg.merge_tolerance_ang,
                 probe_chemotype_overrides=bs_cfg.probe_chemotypes,
+                field_maps=self._load_merged_field_maps(all_cosolvents),
             )
             export_binding_sites(binding_sites, self.out_path)
             self._binding_sites = binding_sites
