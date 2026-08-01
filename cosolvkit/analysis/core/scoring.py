@@ -48,8 +48,16 @@ def _minmax(arr):
 # ---------------------------------------------------------------------------
 
 DEFAULT_BINDING_SITE_WEIGHTS = {
+    # Fused across every probe at the site's point when the maps are available, falling back
+    # (loudly) to best-member agfe_min otherwise. See _affinity_values.
     "affinity": 3.0,
-    "probe_coverage": 2.0,
+    # Was 2.0. Dropped to 0.0: probe_coverage is n_cosolvents/n_total, which correlates with
+    # member count at rho +0.978 on this benchmark — it IS the count, scaled. Combined with a
+    # best-of-members affinity it meant five of nine weight units measured "how many hotspots
+    # landed here", and member count is anti-predictive for the sites that matter (the
+    # 23-fragment main pocket is hit by 4 probes, a 6-fragment site by 13). A count cannot be
+    # de-biased, only dropped; chemistry belongs in probe_chemotype_coverage instead.
+    "probe_coverage": 0.0,
     "volume": 1.0,
     "kinetics": 1.0,
     "shape": 1.0,
@@ -81,6 +89,12 @@ _BS_INVERTED_FEATURES = {"affinity", "field_contrast"}
 _LEGACY_WEIGHT_ALIASES = {"diversity": "chemotype_diversity"}
 
 
+def _site_property(site, name):
+    """A property attached to the site itself (fused features), or None."""
+    v = (getattr(site, "properties", None) or {}).get(name)
+    return float(v) if v is not None and np.isfinite(v) else None
+
+
 def _best_member_property(site, name, prefer="min"):
     """Best value of *name* over a site's member hotspots, or None if none carry it.
 
@@ -97,10 +111,31 @@ def _best_member_property(site, name, prefer="min"):
     return min(vals) if prefer == "min" else max(vals)
 
 
+def _affinity_values(binding_sites):
+    """Fused, count-normalised affinity when available; best-member ``agfe_min`` otherwise.
+
+    ``agfe_min`` is the most-negative value over a site's member hotspots, which correlates with
+    member count at rho -0.82 on this benchmark — best-of-n inflation, not quality. The fused
+    value samples every probe at the site's point (see core/site_features.py) so its denominator
+    is constant. Falling back is loud, because a silently count-biased affinity at weight 3.0 is
+    most of the score.
+    """
+    fused = [_site_property(s, "fused_affinity") for s in binding_sites]
+    if any(v is not None for v in fused):
+        return fused
+    warnings.warn(
+        "Binding-site 'affinity' is falling back to best-member agfe_min, which correlates "
+        "with member count at rho -0.82 (best-of-n inflation). Pass the per-probe maps so "
+        "fused_affinity can be computed — see core/site_features.fused_site_features.",
+        UserWarning, stacklevel=2,
+    )
+    return [s.agfe_min for s in binding_sites]
+
+
 def _binding_site_feature_values(binding_sites):
     """Raw scalar per weightable feature (None allowed -> contributes 0)."""
     return {
-        "affinity":       [s.agfe_min for s in binding_sites],
+        "affinity":       _affinity_values(binding_sites),
         "probe_coverage": [s.probe_coverage for s in binding_sites],
         "volume":         [s.volume for s in binding_sites],
         "kinetics":       [s.residence for s in binding_sites],
@@ -109,9 +144,14 @@ def _binding_site_feature_values(binding_sites):
                                 for s in binding_sites],
         "probe_chemotype_coverage": [getattr(s, "probe_chemotype_coverage", None)
                                      for s in binding_sites],
-        "field_contrast":  [_best_member_property(s, "field_contrast", prefer="min")
+        # Fused (count-normalised) when present, else best-of-members as a documented fallback.
+        "field_contrast":  [_site_property(s, "fused_contrast")
+                            if _site_property(s, "fused_contrast") is not None
+                            else _best_member_property(s, "field_contrast", prefer="min")
                             for s in binding_sites],
-        "field_sharpness": [_best_member_property(s, "field_sharpness", prefer="max")
+        "field_sharpness": [_site_property(s, "fused_sharpness")
+                            if _site_property(s, "fused_sharpness") is not None
+                            else _best_member_property(s, "field_sharpness", prefer="max")
                             for s in binding_sites],
     }
 

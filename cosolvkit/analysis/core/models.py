@@ -412,6 +412,11 @@ class BindingSite:
         self.combined = None                            # set by score_binding_sites
         self.rank = None
 
+    def add_property(self, name, value):
+        """Attach an arbitrary property, e.g. the fused field features written by
+        :func:`cosolvkit.analysis.core.site_features.fused_site_features`."""
+        self.properties[name] = value
+
     @property
     def n_hotspots(self):
         return len(self.member_hotspots)
