@@ -26,16 +26,10 @@ DEFAULT_PLOT_TOP_N = 10
 def _sp_candidate_zones(sites, sp_top_n, zones=None):
     """Zones to profile kinetics in, as ``[[x, y, z], ...]``.
 
-    Defaults to the top ``sp_top_n`` hotspot centroids. Pass *zones* to profile SUPPLIED
-    points instead.
-
-    Why supplying points matters: hotspot centroids are thresholded-and-clustered objects.
-    Benchmarked against crystallographic ligand positions they sit a median 1.4 A (max 3.8 A)
-    from the ligand they represent, and only 9 of 38 land within 1 A. Since the zone radius is
-    only a few Angstrom, that offset is large enough to change the answer — profiling the same
-    trajectories at ligand-centred points instead moved ``sp_half_life`` from AUC ~0.5 with
-    between-replica rho ~0.15 to AUC 0.90 with rho 0.66. Kinetics measured at centroids is not
-    the same measurement.
+    Defaults to the top ``sp_top_n`` hotspot centroids; pass *zones* to use supplied points.
+    Centroids are thresholded-and-clustered objects and can sit a few Angstrom from the true
+    site centre — comparable to the zone radius — so kinetics measured at centroids is not
+    the same measurement as kinetics at externally-defined points.
     """
     if zones is not None:
         return [[float(v) for v in z] for z in zones]
@@ -59,10 +53,9 @@ def _load_zones_csv(path):
 def _zone_to_site_rank(zones, sites, max_dist_ang):
     """Map each supplied zone to the RANK of the nearest hotspot within *max_dist_ang*.
 
-    Needed because ``fit_survival_probability`` otherwise attaches zone *i*'s kinetics to the
-    site of rank *i+1* — correct for centroid-derived zones, but arbitrary for supplied ones.
-    Zones with no hotspot in range are left unmapped, so their curves are still written to CSV
-    but no hotspot receives misattributed ``sp_*`` values.
+    Without this, ``fit_survival_probability`` attaches zone *i* to the site of rank *i+1*,
+    which is only correct for centroid-derived zones. Out-of-range zones stay unmapped: their
+    curves are still written, but no hotspot gets misattributed ``sp_*`` values.
     """
     import numpy as np
 
@@ -82,29 +75,17 @@ def _zone_to_site_rank(zones, sites, max_dist_ang):
 class MultiReport:
     """Orchestrate analysis of one or more cosolvent MD simulations.
 
-    Takes an :class:`~cosolvkit.analysis_config.AnalysisConfig` (loaded from a
-    YAML file) and runs the full pipeline:
-
-    1. Per-simulation: structural report + density-map generation, written to
-       ``out_path/<label>/`` subdirectories.
-    2. Merge: AGFE ``.dx`` maps from different simulations are resampled onto a
-       common grid and combined into ``out_path/merged/``.
-    3. Joint hotspot detection on the merged maps using the protein reference
-       from the first simulation (or an explicit ``reference_pdb``).
-    4. PyMol session generation pointing at the merged maps.
-
-    Each step is a separate public method so they can be called independently
-    when partial re-runs are needed.
+    Runs the pipeline described by an :class:`AnalysisConfig`: per-simulation report and
+    density maps into ``out_path/<label>/``, merge onto a common grid into
+    ``out_path/merged/``, joint hotspot and binding-site detection, then PyMol sessions.
+    Each step is a separate public method so partial re-runs are possible.
 
     Parameters
     ----------
     config : AnalysisConfig
     sp_zones : list of [x, y, z], optional
-        Explicit points at which to profile kinetics, overriding the default of hotspot
-        centroids (and overriding ``survival_kwargs.zones_csv`` if both are given). Use this
-        to measure residence at externally-defined locations — crystallographic ligand
-        positions, docking poses, a grid — rather than at cluster centroids, which are a
-        median 1.4 A away from the ligands they represent. See :func:`_sp_candidate_zones`.
+        Explicit points at which to profile kinetics, overriding hotspot centroids and
+        ``survival_kwargs.zones_csv``. See :func:`_sp_candidate_zones`.
     """
 
     def __init__(self, config: AnalysisConfig, sp_zones=None):
@@ -125,8 +106,7 @@ class MultiReport:
     # ------------------------------------------------------------------
 
     def run_per_simulation(self):
-        """Build a :class:`Report` per simulation and run structural analysis
-        and density-map generation, writing results to per-simulation subdirs."""
+        """Run structural analysis and density-map generation per simulation subdir."""
         cfg = self.config
 
         for i, sim in enumerate(cfg.simulations):
@@ -163,7 +143,6 @@ class MultiReport:
 
             self._reports.append(report)
 
-        # Determine protein reference for hotspot detection
         if self._reports:
             self._reference_pdb = (
                 cfg.report.reference_pdb
@@ -184,10 +163,8 @@ class MultiReport:
     def merge_density_maps(self):
         """Merge per-simulation AGFE maps into ``out_path/merged/``.
 
-        For each cosolvent that appears in only one simulation the maps are
-        copied/linked without aggregation.  For cosolvents that appear in
-        multiple simulations, ``combine_dx_maps_with_resampling`` is used to
-        resample all maps to a common grid and combine them.
+        Maps present in a single simulation are copied as-is; maps present in several are
+        resampled onto a common grid and combined.
         """
         merged_dir = os.path.join(self.out_path, "merged")
         os.makedirs(merged_dir, exist_ok=True)
@@ -209,7 +186,6 @@ class MultiReport:
                 )
                 continue
 
-            # Group by atom-type key (e.g. 'HBD', 'HBA', 'Car', or 'total')
             groups = _group_dx_by_atomtype(cosolvent, dx_paths)
 
             for group_key, paths in groups.items():
@@ -219,7 +195,6 @@ class MultiReport:
                     out_fname = os.path.join(merged_dir, f"map_agfe_{group_key}_{cosolvent}.dx")
 
                 if len(paths) == 1:
-                    # Only one simulation contributes this map — no aggregation needed
                     import shutil
                     shutil.copy(paths[0], out_fname)
                     self.logger.info(
@@ -265,18 +240,17 @@ class MultiReport:
     def _save_hotspot_checkpoint(self, results):
         """Write the hotspot checkpoint if enabled.
 
-        Called twice per run: after detection (geometry only) and after
-        ``fit_survival_probability``, so the persisted copy carries the ``sp_*`` metrics.
+        Must be called again after ``fit_survival_probability`` or the persisted copy
+        loses the ``sp_*`` metrics.
         """
         if not self.config.checkpoint.save_hotspots:
             return
         HotspotDetector.save_checkpoint(results, self._merged_dir)
 
     def run_joint_hotspot_detection(self) -> dict:
-        """Run :class:`HotspotDetector` on merged maps.
+        """Detect hotspots on the merged maps, profile kinetics, and identify binding sites.
 
-        Uses the protein reference from the first simulation unless
-        ``config.report.reference_pdb`` is specified.
+        Requires :meth:`run_per_simulation` and :meth:`merge_density_maps` to have run.
 
         Returns
         -------
@@ -302,8 +276,7 @@ class MultiReport:
             f"(n_kt={hs.n_kt}, T={self.config.density_maps.temperature} K)."
         )
 
-        # Always disable auto-survival inside detect_all so we can run it
-        # per-cosolvent with the correct universe below.
+        # Survival is disabled here and run per-cosolvent below, with each probe's own universe.
         detector = HotspotDetector(
             out_path=self._merged_dir,
             cosolvent_names=all_cosolvents,
@@ -331,16 +304,14 @@ class MultiReport:
         else:
             results = detector.detect_all()
             detector.export_results(results, label_map=True)
-            # Saved again after kinetics; this one is the crash-safe copy if SP dies.
+            # Crash-safe copy; re-saved after kinetics below.
             self._save_hotspot_checkpoint(results)
 
-        # Run survival probability per-cosolvent using the simulation universe
-        # that actually contains each probe.  Outputs (CSV + PNG) are written
-        # to the probe's own simulation subfolder, not the merged directory.
+        # Survival probability runs per cosolvent, using the universe that contains that
+        # probe; its CSV/PNG outputs go to the probe's own simulation subfolder.
         survival_kwargs = dict(hs.survival_kwargs or {})
         sp_top_n = int(survival_kwargs.pop("sp_top_n", 5))
-        # Supplied zones override the hotspot centroids: explicit argument first, then a
-        # zones_csv in the config. See _sp_candidate_zones for why this matters.
+        # Zone precedence: explicit sp_zones, then config zones_csv, then hotspot centroids.
         zones_csv = survival_kwargs.pop("zones_csv", None)
         supplied_zones = self.sp_zones
         if supplied_zones is None and zones_csv:
@@ -352,7 +323,6 @@ class MultiReport:
             cosolvent_to_universe = _build_cosolvent_universe_map(
                 self.config.simulations, self._reports
             )
-            # Survival probability averages over replicas rather than using one.
             cosolvent_to_universes = _build_cosolvent_universes_map(
                 self.config.simulations, self._reports
             )
@@ -409,7 +379,6 @@ class MultiReport:
                             {cosolvent: results[cosolvent]}, zone_to_site_rank=z2r
                         )
 
-            # Restore out_path to merged dir for subsequent operations
             detector.out_path = self._merged_dir
 
             # Re-save now that fit_survival_probability has attached the sp_* metrics.
@@ -431,8 +400,8 @@ class MultiReport:
             from cosolvkit.analysis.sites.binding_sites import (
                 identify_binding_sites, export_binding_sites,
             )
-            # Merged maps let site features be fused over every probe instead of a
-            # best-of-members maximum, which tracks member count.
+            # Passing the merged maps fuses site features over every probe; without them
+            # scoring falls back to a best-of-members maximum that tracks member count.
             binding_sites = identify_binding_sites(
                 results, connectivity=bs_cfg.connectivity,
                 weights=bs_cfg.weights, merge_tolerance_ang=bs_cfg.merge_tolerance_ang,
@@ -474,8 +443,7 @@ class MultiReport:
     # ------------------------------------------------------------------
 
     def run(self):
-        """Execute the full analysis pipeline in order:
-        per-simulation → merge → hotspot detection → sessions."""
+        """Run the full pipeline: per-simulation → merge → hotspot detection → sessions."""
         self.run_per_simulation()
         self.merge_density_maps()
         self.run_joint_hotspot_detection()
@@ -536,9 +504,8 @@ def _build_cosolvent_universes_map(
 ) -> Dict[str, List[object]]:
     """Return ``{cosolvent_name: [universe, ...]}`` — EVERY replica of each cosolvent.
 
-    Survival probability must be computed per replica and averaged (concatenating
-    replicas would invent departure events at each join), so it needs all of them,
-    unlike the single-universe map used for residue featurisation.
+    Survival probability must be computed per replica and averaged; concatenating replicas
+    would invent departure events at each join.
     """
     mapping: Dict[str, List[object]] = {}
     for sim, report in zip(simulations, reports):
@@ -551,9 +518,7 @@ def _build_cosolvent_out_path_map(
     simulations: List[SimulationEntry],
     reports: List[Report],
 ) -> Dict[str, str]:
-    """Return ``{cosolvent_name: out_path}`` pointing to the simulation subdir
-    that owns each cosolvent.  Survival probability outputs are written there
-    so they stay alongside the per-probe density maps and plots."""
+    """Return ``{cosolvent_name: out_path}`` for the simulation subdir owning each cosolvent."""
     mapping: Dict[str, str] = {}
     for sim, report in zip(simulations, reports):
         for cosolvent in sim.cosolvents:
@@ -563,8 +528,7 @@ def _build_cosolvent_out_path_map(
 
 
 def _group_dx_by_atomtype(cosolvent: str, dx_paths: List[str]) -> Dict[str, List[str]]:
-    """Group .dx paths by their atom-type prefix (e.g. 'HBD', 'HBA', 'Car')
-    or by 'total' when no atom-type prefix is present."""
+    """Group .dx paths by atom-type prefix, or under 'total' when there is none."""
     groups: Dict[str, List[str]] = {}
     for p in dx_paths:
         name = os.path.basename(p)

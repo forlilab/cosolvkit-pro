@@ -16,11 +16,7 @@ import yaml
 
 
 def resolve_agfe_cutoff(hotspots_cfg, temperature):
-    """Resolve the effective AGFE cutoff (kcal/mol) for hotspot detection.
-
-    The cutoff is always ``-n_kt * kB * T`` (temperature-aware; physically an
-    ``e^{n_kt}``-fold enrichment over bulk).
-    """
+    """Effective AGFE cutoff in kcal/mol: ``-n_kt * kB * T`` (an e^n_kt enrichment over bulk)."""
     from cosolvkit.analysis.core.grid import BOLTZMANN_CONSTANT_KB
     return -float(hotspots_cfg.n_kt) * BOLTZMANN_CONSTANT_KB * float(temperature)
 
@@ -51,10 +47,9 @@ class ReportConfig:
 class DensityMapsConfig:
     use_atomtypes:  bool          = True
     atomtypes_file: Optional[str] = None
-    gridsize:       float         = 0.5
-    temperature:    float         = 300.0
-    # Also write map_agfe_raw_*.dx (unclamped AGFE); map_agfe_*.dx zeroes voxels >= 0,
-    # which erases depletion.
+    gridsize:       float         = 0.5    # voxel edge, Angstrom
+    temperature:    float         = 300.0  # K
+    # Also write unclamped map_agfe_raw_*.dx; map_agfe_*.dx zeroes voxels >= 0, losing depletion.
     export_raw:     bool          = True
 
 
@@ -69,15 +64,14 @@ class ClusteringConfig:
     strategy:            str  = "skimage_watershed"  # skimage_watershed | connected_components | watershed | dbscan
     strategy_kwargs:     Dict = field(default_factory=dict)
     min_cluster_voxels:  int  = 20
-    # Preferred over min_cluster_voxels, whose physical meaning changes with gridsize.
-    # When set, this wins.
+    # Overrides min_cluster_voxels when set; gridsize-independent, so prefer it.
     min_cluster_volume_ang3: Optional[float] = None
     use_skimage_cleanup: bool = False
     cleanup_min_size:    int  = 1
     cleanup_hole_size:   int  = 2
 
     def resolve_min_cluster_voxels(self, gridsize):
-        """Voxel threshold to actually use, honouring ``min_cluster_volume_ang3`` if set."""
+        """Voxel threshold to use, honouring ``min_cluster_volume_ang3`` if set."""
         if self.min_cluster_volume_ang3 is None:
             return int(self.min_cluster_voxels)
         from cosolvkit.analysis.sites.clustering import min_cluster_voxels_for_volume
@@ -97,10 +91,9 @@ class BindingSitesConfig:
     enabled:             bool          = True
     connectivity:        int           = 26
     weights:             Optional[Dict] = None
-    merge_tolerance_ang: float         = 2.0
+    merge_tolerance_ang: float         = 2.0  # Angstrom
     # ``{resname: [chemotype_class, ...]}`` overriding
-    # cosolvkit.analysis.core.chemotypes.DEFAULT_PROBE_CHEMOTYPES. Only needed for
-    # probes absent from that table, or to reclassify one. null = built-in table only.
+    # cosolvkit.analysis.core.chemotypes.DEFAULT_PROBE_CHEMOTYPES; null = built-in table only.
     probe_chemotypes:    Optional[Dict] = None
 
 
@@ -112,16 +105,10 @@ class PyMolConfig:
 
 @dataclass
 class CheckpointConfig:
-    """Controls checkpoint save/load for the hotspot detection step.
-
-    Set ``save_hotspots: true`` (default) to write compressed NPZ files under
-    ``out_path/hotspot_checkpoints/`` after each hotspot detection run.
-
-    Set ``load_hotspots: true`` to skip hotspot detection entirely and reload
-    the previously saved checkpoint instead — useful when you only want to
-    re-run binding-site detection with different parameters.
-    """
+    """Checkpoint save/load for the hotspot detection step."""
+    # Write compressed NPZ files under out_path/hotspot_checkpoints/ after detection.
     save_hotspots: bool = True
+    # Skip detection and reload the saved checkpoint instead.
     load_hotspots: bool = False
 
 
@@ -150,8 +137,7 @@ class AnalysisConfig:
     def from_yaml(cls, path: str) -> "AnalysisConfig":
         """Load and validate an analysis config YAML file.
 
-        All relative paths inside the YAML are resolved against the directory
-        that contains the YAML file, so configs are portable.
+        Relative paths inside the YAML are resolved against the YAML's own directory.
 
         Parameters
         ----------
@@ -177,7 +163,6 @@ class AnalysisConfig:
         if raw is None:
             raw = {}
 
-        # --- validate top-level keys ---
         known_top = {"out_path", "simulations",
                      "report", "density_maps", "misc", "hotspots",
                      "binding_sites", "pymol", "checkpoint"}
@@ -188,7 +173,6 @@ class AnalysisConfig:
                 f"Valid keys are: {sorted(known_top)}"
             )
 
-        # --- required fields ---
         if "out_path" not in raw:
             raise ValueError("'out_path' is required in the analysis config.")
         if "simulations" not in raw or not raw["simulations"]:
@@ -200,7 +184,6 @@ class AnalysisConfig:
                 return None
             return p if os.path.isabs(p) else os.path.join(base_dir, p)
 
-        # --- parse simulations ---
         sims = []
         for i, s in enumerate(raw["simulations"]):
             missing = [k for k in ("trajectory", "topology", "cosolvents") if k not in s]
@@ -220,7 +203,6 @@ class AnalysisConfig:
                 label=s.get("label"),
             ))
 
-        # --- generic section parser ---
         def _parse(section_cls, raw_dict):
             valid = {f.name for f in dataclasses.fields(section_cls)}
             bad_keys = set(raw_dict) - valid
@@ -239,18 +221,14 @@ class AnalysisConfig:
         pm_raw = dict(raw.get("pymol",        {}))
         ck_raw = dict(raw.get("checkpoint",   {}))
 
-        # clustering is nested inside hotspots
+        # clustering is nested inside hotspots and must be injected as a dataclass instance
         cl_raw = dict(hs_raw.pop("clustering", {}))
         clustering = _parse(ClusteringConfig, cl_raw)
-
-        # hotspots needs clustering injected as a dataclass instance
         hotspots = _parse(HotspotsConfig, {**hs_raw, "clustering": clustering})
 
-        # resolve paths inside density_maps
         if dm_raw.get("atomtypes_file"):
             dm_raw["atomtypes_file"] = resolve(dm_raw["atomtypes_file"])
 
-        # resolve the report's reference_pdb relative to the YAML dir
         if r_raw.get("reference_pdb"):
             r_raw["reference_pdb"] = resolve(r_raw["reference_pdb"])
 
@@ -268,13 +246,7 @@ class AnalysisConfig:
 
     @classmethod
     def generate_template(cls, path: str) -> None:
-        """Write a fully-commented YAML template to *path*.
-
-        Parameters
-        ----------
-        path : str
-            Destination path for the template YAML file.
-        """
+        """Write a fully-commented YAML template to *path*."""
         template_src = os.path.join(
             os.path.dirname(os.path.dirname(__file__)), "data", "analysis_config.yaml"
         )

@@ -15,7 +15,9 @@ def generate_vmd_session(out_path: str,
                           topology: str,
                           trajectory: str,
                           density_files: Union[str, list] = None):
-    """Generate a VMD session script to visualize the trajectory and density.
+    """Write ``vmd_session.vmd``: the trajectory plus one isosurface per density.
+
+    Topology must be parm7 and trajectory netcdf; densities get ColorIDs in order.
 
     :param out_path: directory where the script is written.
     :type out_path: str
@@ -28,7 +30,7 @@ def generate_vmd_session(out_path: str,
     """
     logger = logging.getLogger(__name__)
 
-    # FIXME at some point like for pymol
+    # FIXME: hard-coded isovalue; derive per-map as in the PyMol backend.
     isovalue = 1.0
     output_vmd_file = os.path.join(out_path, "vmd_session.vmd")
 

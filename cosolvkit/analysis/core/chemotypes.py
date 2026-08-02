@@ -19,13 +19,9 @@ CHEMOTYPE_CLASSES = (
 )
 
 # Chemotype classes per cosolvent residue name, for the standard CoSolvKit probe panel.
-# A probe belongs to every class it can express, so benzene is purely aromatic while
-# phenol is aromatic AND an H-bond donor and acceptor.
-#
-# This is what distinguishes *probe chemotype* coverage from plain probe coverage: a site
-# hit by benzene, phenol, propane and fluorobenzene is hit by four probes but spans only
-# the hydrophobic/aromatic corner of chemical space, whereas a site hit by acetate and
-# methylammonium spans two opposite charges with two probes.
+# A probe belongs to every class it can express, so entries are usually multi-class.
+# Chemotype coverage therefore differs from probe coverage: many probes from the same
+# corner of chemical space span fewer classes than two probes from opposite corners.
 DEFAULT_PROBE_CHEMOTYPES = {
     # aromatics
     "BEN": ("aromatic", "aliphatic"),                       # benzene
@@ -66,9 +62,9 @@ DEFAULT_PROBE_CHEMOTYPES = {
 def resolve_probe_chemotypes(overrides=None):
     """Return the resname -> tuple(classes) mapping, with *overrides* applied.
 
-    *overrides* is ``{resname: [class, ...]}``; it beats the built-in table, so a target
-    with custom probes (or a probe whose default classification you disagree with) needs
-    no code change. An unknown class name raises rather than being silently dropped.
+    :param overrides: ``{resname: [class, ...]}``, taking precedence over the built-in
+        table. An unknown class name raises rather than being silently dropped.
+    :return: dict mapping upper-case resname to a tuple of chemotype classes.
     """
     mapping = {k: tuple(v) for k, v in DEFAULT_PROBE_CHEMOTYPES.items()}
     for resname, classes in (overrides or {}).items():
@@ -96,8 +92,8 @@ def probe_chemotypes(cosolvents, mapping=None):
 def n_available_chemotypes(cosolvents, mapping=None):
     """How many classes the whole panel could express — the coverage denominator.
 
-    Uses the panel rather than ``len(CHEMOTYPE_CLASSES)`` so that a run with no anionic
-    probe is not permanently capped below 1.0 for a reason unrelated to the site.
+    Uses the panel, not ``len(CHEMOTYPE_CLASSES)``, so a panel missing a class is not
+    permanently capped below 1.0 for a reason unrelated to any site.
     """
     n = len(probe_chemotypes(cosolvents, mapping))
     return n if n > 0 else len(CHEMOTYPE_CLASSES)

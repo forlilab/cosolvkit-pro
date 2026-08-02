@@ -14,10 +14,9 @@ from typing import Any, Dict, List, Optional
 
 
 def _round_or_none(value, ndigits=4):
-    """Round *value* for CSV/JSON export, passing ``None``/non-finite through as ``None``.
+    """Round *value* for CSV/JSON export; ``None``/non-finite pass through as ``None``.
 
-    Sites that do not come from an AGFE density map (e.g. crystallographic ligand
-    positions used as ground truth) legitimately have no affinity or shape values.
+    Sites not derived from an AGFE density map legitimately have no affinity/shape values.
     """
     if value is None:
         return None
@@ -36,12 +35,8 @@ def _round_or_none(value, ndigits=4):
 class PocketResidue:
     """A protein residue that lines a cosolvent hotspot cavity.
 
-    Populated incrementally by :class:`PocketPropertyCalculator` methods:
-
-    * :meth:`find_pocket_residues` — identity + proximity fields
-    * :meth:`annotate_residue_rmsf` — ``rmsf``
-    * :meth:`compute_cosolvent_contacts` — ``cosolvent_contacts``
-    * :func:`set_residue_embeddings` — ``embedding`` / ``embedding_model``
+    Populated incrementally by :class:`PocketPropertyCalculator` (identity/proximity,
+    then ``rmsf``, ``cosolvent_contacts``) and by externally injected embeddings.
 
     Attributes
     ----------
@@ -50,31 +45,28 @@ class PocketResidue:
     resindex : int
         Universe-internal index (stable across trajectory frames).
     resname : str
-        Three-letter residue code, e.g. ``"LEU"``.
+        Three-letter residue code.
     chain : str
         Segment / chain ID.
     n_contact_voxels : int
-        Number of distinct blob voxels within *cutoff* Å of any heavy atom.
+        Distinct blob voxels within the cutoff of any heavy atom.
     min_dist_ang : float
         Distance in Å to the nearest blob voxel.
     contact_fraction : float
         ``n_contact_voxels / total_blob_voxels``.
     rmsf : float or None
-        Cα RMSF in Å (set by :meth:`annotate_residue_rmsf`).
+        Cα RMSF in Å.
     embedding : np.ndarray or None
-        PLM feature vector, shape ``(n_dims,)`` (injected externally).
+        PLM feature vector, shape ``(n_dims,)``.
     embedding_model : str or None
         Name of the model that produced ``embedding``.
     cosolvent_contacts : dict
-        ``{cosolvent_name: {cosolvent_resid: [frame_index, ...]}}`` — for each
-        cosolvent molecule (identified by its MDAnalysis ``resid``), the sorted
-        list of trajectory frame indices where it was within *contact_cutoff*
-        of any heavy atom of this residue.
+        ``{cosolvent_name: {cosolvent_resid: [frame_index, ...]}}`` — sorted frames in
+        which each cosolvent molecule was within the contact cutoff of this residue.
     properties : dict
         Extensible bag for arbitrary extra scalar properties.
     """
 
-    # Required positional fields
     resid:            int
     resindex:         int
     resname:          str
@@ -83,7 +75,6 @@ class PocketResidue:
     min_dist_ang:     float
     contact_fraction: float
 
-    # Optional, populated by separate methods
     rmsf:            Optional[float]       = None
     embedding:       Optional[np.ndarray]  = None
     embedding_model: Optional[str]         = None
@@ -92,10 +83,6 @@ class PocketResidue:
         default_factory=dict
     )
     properties: Dict[str, Any] = field(default_factory=dict)
-
-    # ------------------------------------------------------------------
-    # Convenience accessors
-    # ------------------------------------------------------------------
 
     def contact_frames(self, cosolvent_name: str) -> List[int]:
         """Sorted union of frames where ANY molecule of *cosolvent_name* contacted this residue."""
@@ -116,16 +103,8 @@ class PocketResidue:
             for frames in self.cosolvent_contacts.get(cosolvent_name, {}).values()
         )
 
-    # ------------------------------------------------------------------
-    # Serialization
-    # ------------------------------------------------------------------
-
     def to_dict(self) -> dict:
-        """JSON-safe dict representation.
-
-        * ``embedding`` is serialized as ``list[float]`` (or ``None``).
-        * ``cosolvent_contacts`` keys are stringified for JSON compatibility.
-        """
+        """JSON-safe dict: ``embedding`` becomes a list and contact resids are stringified."""
         return {
             "resid": self.resid,
             "resindex": self.resindex,
@@ -187,63 +166,50 @@ class PocketResidue:
 class Hotspot:
     """A binding hotspot detected from cosolvent AGFE density maps.
 
-    Stores all computed scores and an extensible ``properties`` dict so that
-    downstream analyses (e.g. residence time, pharmacophore annotation) can
-    attach extra data without subclassing.
-
-    Normally constructed by :class:`HotspotDetector`. Every AGFE-derived argument
-    is optional, so the class doubles as a plain occupancy-region record for sites
-    that come from somewhere other than a density map — e.g. a crystallographic
-    ligand copy used as benchmark ground truth. Such a hotspot carries only
-    ``cosolvent`` (the chemical species), ``centroid`` and ``voxel_mask``, which is
-    all :func:`cosolvkit.analysis.sites.binding_sites.group_hotspots` needs.
+    Normally built by :class:`HotspotDetector`. Downstream analyses attach extra data
+    through the ``properties`` dict rather than by subclassing. Every AGFE-derived
+    argument is optional, so the class also serves as a plain occupancy-region record
+    for sites that did not come from a density map; ``cosolvent``, ``centroid`` and
+    ``voxel_mask`` alone are enough for hotspot grouping.
     """
 
     def __init__(self, rank, site_id, cosolvent, n_voxels=0, centroid=None,
                  agfe_min=None, agfe_mean_top_pct=None, voxel_mask=None,
                  favorable_atomtypes=None, per_type_agfe=None):
-        self.rank = rank                            # int; 1 = most-negative agfe_min
+        self.rank = rank                            # 1 = most-negative agfe_min
         self.site_id = site_id                      # label from scipy.ndimage.label
-        self.cosolvent = cosolvent                  # str residue name
-        self.n_voxels = n_voxels                    # int
-        self.centroid = centroid                    # np.ndarray (3,), Angstroms
-        self.agfe_min = agfe_min                    # float, kcal/mol, or None
-        self.agfe_mean_top_pct = agfe_mean_top_pct  # float, kcal/mol, or None
-        self.voxel_mask = voxel_mask                # boolean 3D ndarray, same shape as AGFE grid
+        self.cosolvent = cosolvent                  # residue name
+        self.n_voxels = n_voxels
+        self.centroid = centroid                    # (3,), Angstroms
+        self.agfe_min = agfe_min                    # kcal/mol, or None
+        self.agfe_mean_top_pct = agfe_mean_top_pct  # kcal/mol, or None
+        self.voxel_mask = voxel_mask                # boolean 3D, same shape as the AGFE grid
         self.favorable_atomtypes = (list(favorable_atomtypes)
-                                    if favorable_atomtypes else [])  # List[str]
+                                    if favorable_atomtypes else [])
         self.per_type_agfe = dict(per_type_agfe) if per_type_agfe else {}  # min AGFE per type
-        self.properties = {}                          # extensible user properties
-        self.pocket_residues = []                     # List[PocketResidue], populated on demand
-        # Grid spatial metadata — set by HotspotDetector.detect() after construction.
-        # Required for cross-grid voxel-mask computations (e.g. binding-site grouping).
+        self.properties = {}
+        self.pocket_residues = []                     # populated on demand
+        # Grid metadata, set by HotspotDetector.detect() after construction; required to
+        # combine voxel masks across grids (e.g. binding-site grouping).
         self.grid_origin = None                       # np.ndarray (3,), Angstroms
         self.grid_delta = None                        # np.ndarray (3,), Angstroms per voxel
 
     def add_property(self, name, value):
-        """Attach an arbitrary property (e.g. ``site.add_property('residence_time_ns', 12.4)``)."""
+        """Attach an arbitrary named property."""
         self.properties[name] = value
 
     @classmethod
     def from_dict(cls, d, voxel_mask, grid_origin, grid_delta):
-        """Reconstruct a Hotspot from a serialized dict and its voxel mask.
+        """Reconstruct a Hotspot from checkpointed metadata plus its voxel mask.
 
-        This is the inverse of the data written by
-        :meth:`HotspotDetector.save_checkpoint`.  It is not intended for use
-        with the human-readable CSV/JSON exports (those do not contain the
-        voxel mask).
+        Inverse of :meth:`HotspotDetector.save_checkpoint`, not of the CSV/JSON
+        exports (those carry no voxel mask).
 
-        Parameters
-        ----------
-        d : dict
-            Metadata dict as produced by :meth:`to_dict` plus an optional
-            ``_properties`` key carrying the extensible properties dict.
-        voxel_mask : np.ndarray
-            3-D boolean array of shape ``(nx, ny, nz)``.
-        grid_origin : np.ndarray
-            Shape ``(3,)`` origin of the AGFE grid in Angstroms.
-        grid_delta : np.ndarray
-            Shape ``(3,)`` voxel spacing in Angstroms.
+        :param d: metadata as produced by :meth:`to_dict`, optionally with a
+            ``_properties`` key holding the extensible properties dict.
+        :param voxel_mask: 3-D boolean array of shape ``(nx, ny, nz)``.
+        :param grid_origin: shape ``(3,)`` AGFE grid origin, Angstroms.
+        :param grid_delta: shape ``(3,)`` voxel spacing, Angstroms.
         """
         favorable_atomtypes = (
             d["favorable_atomtypes"].split(",")
@@ -299,25 +265,13 @@ class Hotspot:
     def extract_surface(self, agfe_array, level=0.0, spacing=(1.0, 1.0, 1.0)):
         """Generate a surface mesh for this hotspot using marching cubes.
 
-        This is an optional visualization helper and is not called during
-        normal hotspot detection.  Returns ``None`` silently on failure.
+        Optional visualization helper, not part of hotspot detection.
 
-        Parameters
-        ----------
-        agfe_array : np.ndarray
-            3-D AGFE array with the same shape as this site's voxel mask.
-        level : float
-            Iso-surface level passed to ``marching_cubes`` (default 0.0).
-        spacing : tuple of float
-            Voxel spacing in each dimension, e.g. ``(0.5, 0.5, 0.5)`` for a
-            0.5 Å grid.
-
-        Returns
-        -------
-        tuple or None
-            ``(verts, faces, normals, values)`` from
-            ``skimage.measure.marching_cubes``, or ``None`` if the extraction
-            fails (e.g. scikit-image not available, degenerate surface).
+        :param agfe_array: 3-D AGFE array, same shape as this site's voxel mask.
+        :param level: iso-surface level passed to ``marching_cubes``.
+        :param spacing: voxel spacing in Angstroms per dimension.
+        :return: ``(verts, faces, normals, values)``, or ``None`` if extraction fails
+            (scikit-image missing, degenerate surface).
         """
         try:
             from skimage.measure import marching_cubes
@@ -349,16 +303,14 @@ class Hotspot:
 class BindingSite:
     """A binding pocket formed by one or more :class:`Hotspot` objects.
 
-    Geometry (volume/shape/centroid) is the pocket's own, computed on the
-    union of member hotspot masks; affinity/kinetics/chemistry are roll-ups of
-    the members. ``combined`` and ``rank`` are set by
+    Geometry (volume/shape/centroid) is the pocket's own, computed on the union of the
+    member hotspot masks; affinity/kinetics/chemistry are roll-ups over the members.
+    ``combined`` and ``rank`` are set by
     :func:`cosolvkit.analysis.core.scoring.score_binding_sites`.
 
-    Every aggregate except ``site_id`` is optional so the class can also describe a
-    pocket that was not derived from AGFE densities — e.g. a ground-truth site built
-    from crystallographic ligand copies, where only the members, mask and centroid
-    are known. ``cosolvents`` / ``n_total_cosolvents`` default to values derived from
-    ``member_hotspots``.
+    Every aggregate except ``site_id`` is optional, so the class can also describe a
+    pocket not derived from AGFE densities, where only members, mask and centroid are
+    known. The chemistry roll-ups default to values derived from ``member_hotspots``.
     """
 
     def __init__(self, site_id, member_hotspots=None, voxel_mask=None, centroid=None,
@@ -372,9 +324,9 @@ class BindingSite:
                  probe_chemotypes=None, n_total_probe_chemotypes=None):
         self.site_id = site_id
         self.member_hotspots = (list(member_hotspots)
-                                if member_hotspots is not None else [])  # list[Hotspot]
-        self.voxel_mask = voxel_mask                    # boolean 3D ndarray on the common grid
-        self.centroid = centroid                        # np.ndarray (3,), Angstroms
+                                if member_hotspots is not None else [])
+        self.voxel_mask = voxel_mask                    # boolean 3D, on the common grid
+        self.centroid = centroid                        # (3,), Angstroms
         self.agfe_min = agfe_min                        # best (most-negative) across members
         self.agfe_mean_top_pct = agfe_mean_top_pct
         self.volume = volume                            # Angstrom^3, union mask
@@ -387,19 +339,18 @@ class BindingSite:
         self.pharmacophore = dict(pharmacophore) if pharmacophore else {}
         self.residence = residence                      # max of the kinetics metric, or None
         # Which survival-probability metric ``residence`` holds. Recorded because the
-        # default is ``sp_plateau`` (a FRACTION still bound at long lag), not a time —
-        # the column would otherwise be silently misread as a residence time.
+        # default is a FRACTION still bound at long lag, not a time, and would otherwise
+        # be misread as a residence time.
         self.residence_metric = residence_metric
-        # Default the chemistry roll-ups from the members rather than requiring them.
         if cosolvents is None:
             cosolvents = sorted({h.cosolvent for h in self.member_hotspots
                                  if h.cosolvent is not None})
-        self.cosolvents = cosolvents                    # sorted unique list[str]
+        self.cosolvents = cosolvents                    # sorted, unique
         self.n_total_cosolvents = (len(cosolvents) if n_total_cosolvents is None
                                    else n_total_cosolvents)
-        # Chemotype classes spanned by the probes that hit this site, and how many the
-        # whole panel could express. Distinct from n_cosolvents: four hydrophobes span
-        # fewer classes than one anion plus one cation.
+        # Chemotype classes spanned by the probes hitting this site, and how many the
+        # whole panel could express. Distinct from n_cosolvents (a plain probe count):
+        # several probes of the same kind span fewer classes than two opposite ones.
         if probe_chemotypes is None:
             from cosolvkit.analysis.core.chemotypes import probe_chemotypes as _pc
             probe_chemotypes = _pc(self.cosolvents)
@@ -413,7 +364,7 @@ class BindingSite:
         self.rank = None
 
     def add_property(self, name, value):
-        """Attach an arbitrary property, e.g. a fused field feature."""
+        """Attach an arbitrary named property."""
         self.properties[name] = value
 
     @property
@@ -426,6 +377,7 @@ class BindingSite:
 
     @property
     def probe_coverage(self):
+        """Fraction of the panel's probes that hit this site (probe count, not chemistry)."""
         return (self.n_cosolvents / self.n_total_cosolvents
                 if self.n_total_cosolvents else 0.0)
 
@@ -438,7 +390,7 @@ class BindingSite:
         """Fraction of the panel's chemotype classes represented at this site.
 
         Falls back to the full class list as the denominator when the panel's own
-        class count was not supplied.
+        class count is unknown.
         """
         total = self.n_total_probe_chemotypes
         if not total:

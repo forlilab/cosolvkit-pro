@@ -3,8 +3,7 @@
 #
 # CoSolvKit
 #
-# Plotly figure builders for hotspot detection results
-# (moved verbatim from hotspot_visualization.py)
+# Plotly/matplotlib figure builders for hotspot detection results
 #
 
 import os
@@ -27,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Plotly — 3D clustering viewer
 # ---------------------------------------------------------------------------
 
-# Distinct colours for up to 20 clusters (CSS named colours)
+# Per-cluster hex colours, cycled if there are more clusters than entries.
 _CLUSTER_COLORS = [
     "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
     "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
@@ -47,35 +46,29 @@ def plot_hotspot_clustering_3d(
     max_voxels_per_cluster=3000,
     top_n=10,
 ):
-    """Interactive 3-D Plotly figure of hotspot clusters from :class:`HotspotDetector`.
-
-    Each cluster is rendered as a translucent point cloud in Angstrom space.
-    Centroids are overlaid as larger markers with hover labels showing rank,
-    composite score, and AGFE min.  The clustering and scoring are expected
-    to have been performed already (e.g. via :meth:`HotspotDetector.detect`).
+    """Interactive 3-D figure of already-clustered hotspots: one point cloud per
+    cluster in Ångström space, with centroid markers.
 
     Parameters
     ----------
     labeled_array : np.ndarray of int
-        3-D cluster label grid (0 = background, positive ints = cluster IDs).
-        Produced by the clustering strategy inside :meth:`HotspotDetector.detect`.
+        Cluster label grid (0 = background, positive ints = cluster IDs).
     agfe_array : np.ndarray of float
-        3-D AGFE grid values (same shape as *labeled_array*).
+        AGFE grid (kcal/mol), same shape as *labeled_array*.
     sites : list[Hotspot]
-        Ranked binding sites returned by :meth:`HotspotDetector.detect`.
+        Ranked sites; only those present in *labeled_array* are drawn.
     combined_grid : gridData.Grid
-        Grid object used for voxel-to-Angstrom coordinate conversion.
+        Supplies origin/delta for voxel-to-Ångström conversion.
     cosolvent : str
-        Cosolvent residue name — used in the figure title.
+        Cosolvent residue name, used in the title.
     agfe_cutoff : float
-        AGFE threshold (kcal/mol) used to define favorable voxels — shown in title.
+        AGFE threshold (kcal/mol) shown in the title.
     output_path : str, optional
-        If given, save an interactive HTML file to this path.
+        If given, an interactive HTML file is written here.
     max_voxels_per_cluster : int
-        Maximum number of voxels rendered per cluster (random subsampling is
-        applied when a cluster is larger).  Default 3000.
+        Clusters larger than this are randomly subsampled for rendering.
     top_n : int
-        Maximum number of sites to plot, taken in rank order.  Default 10.
+        Maximum number of sites to plot, in rank order.
 
     Returns
     -------
@@ -90,8 +83,7 @@ def plot_hotspot_clustering_3d(
     origin = np.array(combined_grid.origin)
     delta = np.array(combined_grid.delta)
     if delta.ndim == 2:
-        # General grid — extract diagonal (assumes orthogonal axes)
-        delta = np.diag(delta)
+        delta = np.diag(delta)  # general grid; assumes orthogonal axes
 
     traces = []
     sites_to_plot = sorted(sites, key=lambda s: s.rank)[:top_n]
@@ -100,13 +92,11 @@ def plot_hotspot_clustering_3d(
         color = _CLUSTER_COLORS[i % len(_CLUSTER_COLORS)]
         vox_coords = np.argwhere(labeled_array == site.site_id)
 
-        # Subsample if needed
         if len(vox_coords) > max_voxels_per_cluster:
             idx = np.random.choice(len(vox_coords), max_voxels_per_cluster, replace=False)
             vox_coords = vox_coords[idx]
 
-        # Convert voxel indices → Angstroms
-        ang_coords = origin + vox_coords * delta  # (N, 3)
+        ang_coords = origin + vox_coords * delta  # (N, 3) in Å
         agfe_vals = agfe_array[vox_coords[:, 0], vox_coords[:, 1], vox_coords[:, 2]]
 
         hover = (
@@ -134,7 +124,6 @@ def plot_hotspot_clustering_3d(
             showlegend=True,
         ))
 
-        # Centroid marker
         cx, cy, cz = float(site.centroid[0]), float(site.centroid[1]), float(site.centroid[2])
         traces.append(go.Scatter3d(
             x=[cx], y=[cy], z=[cz],
@@ -187,13 +176,16 @@ def plot_hotspot_clustering_3d(
 
 
 def plot_sp_raw(cosolvent_name, df_sp, out_path):
-    """Plot raw survival-probability curves with hotspot rank as legend labels.
+    """Plot raw survival-probability curves, one per hotspot rank.
+
+    Writes ``survival_probability_{cosolvent}.png``.
 
     Parameters
     ----------
     cosolvent_name : str
     df_sp : pd.DataFrame
-        Columns: Group, Zone, Time, SP, Cosolvent.
+        Columns: Group, Zone, Time, SP, Cosolvent.  ``Group`` is 0-based, rank is
+        ``Group + 1``.
     out_path : str
         Directory where the PNG is saved.
     """
@@ -214,10 +206,11 @@ def plot_sp_raw(cosolvent_name, df_sp, out_path):
 
 
 def plot_sp_fits(cosolvent, sites, df, out_path):
-    """Overlay fitted decay curves on SP data — one figure per model.
+    """Overlay fitted decay curves on SP data, one figure per model.
 
-    Writes ``survival_probability_fit_{model}_{cosolvent}.png`` for each of
-    the two models: single-exp and bi-exponential.
+    Fit parameters are read from ``site.properties``; a site missing any of them
+    is drawn as data only.  Writes
+    ``survival_probability_fit_{single,biexp}_{cosolvent}.png``.
 
     Parameters
     ----------

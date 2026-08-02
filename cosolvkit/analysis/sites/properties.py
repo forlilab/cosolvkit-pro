@@ -4,7 +4,6 @@
 # CoSolvKit
 #
 # Property computation over candidate binding pockets.
-# Moved verbatim from pocket_properties.py (Task 8).
 #
 
 import os
@@ -23,19 +22,12 @@ from cosolvkit.analysis.core.models import PocketResidue
 # regionprops constants and helpers
 # ---------------------------------------------------------------------------
 
-# Standard skimage regionprops properties safe for 3D volumetric arrays that
-# produce tabular (scalar or fixed-size array) output suitable for CSV/JSON.
-#
-# Excluded — raise NotImplementedError on 3D inputs:
-#   eccentricity, orientation, perimeter, perimeter_crofton,
-#   moments_hu, moments_weighted_hu
-#
-# Excluded — return variable-size per-region arrays or Python objects that
-# break tabular export (pass them explicitly via regionprops_properties to opt in):
-#   image, image_convex, image_filled, image_intensity, coords, coords_scaled, slice
-#
-# Note: 3D moments tensors are 4×4×4 = 64 columns each; the six moment
-# properties in this list expand to ~384 columns in the output.
+# skimage regionprops properties that work on 3D volumes and export as tabular
+# (scalar or fixed-size) values. Excluded: those raising NotImplementedError on 3D
+# (eccentricity, orientation, perimeter, perimeter_crofton, moments_hu,
+# moments_weighted_hu) and those returning variable-size arrays or objects
+# (image*, coords*, slice) — pass those via regionprops_properties to opt in.
+# Each 3D moments tensor expands to 64 columns.
 REGIONPROPS_ALL = [
     "area",
     "area_bbox",
@@ -71,8 +63,8 @@ REGIONPROPS_ALL = [
 def detect_fused_residues(atomgroup):
     """Residues holding more selected atoms than the modal residue, as (resid, n_atoms).
 
-    Symptom of a wrapped topology: the PDB resid field maxes at 9999, so the overflow is
-    merged into one pseudo-residue.
+    Symptom of a wrapped topology: the PDB resid field maxes at 9999, so the overflow
+    is merged into one pseudo-residue.
     """
     if atomgroup is None or atomgroup.n_atoms == 0:
         return []
@@ -104,8 +96,8 @@ def warn_if_fused_residues(atomgroup, logger=None, context=""):
 
 
 def _finite_or_none(val):
-    """Float, or None if non-finite (not valid JSON). QHull returns convex_area 0 for tiny
-    blobs it cannot hull, making solidity inf."""
+    """Float, or None if non-finite (not valid JSON). QHull returns convex_area 0 for
+    tiny blobs it cannot hull, making solidity inf."""
     f = float(val)
     return f if np.isfinite(f) else None
 
@@ -185,16 +177,14 @@ def _r2(y_true, y_pred):
 def set_residue_embeddings(site, embeddings: Dict[int, Any], model_name: str = "") -> None:
     """Attach protein language model embeddings to pocket residues by resid.
 
-    Call after :meth:`PocketPropertyCalculator.find_pocket_residues` has
-    populated ``site.pocket_residues``.
+    Call after :meth:`PocketPropertyCalculator.find_pocket_residues`.
 
     Parameters
     ----------
     site : Hotspot
         Site whose ``pocket_residues`` list to annotate.
     embeddings : dict[int, array-like]
-        Mapping ``{resid: embedding_vector}``.  Resids that do not match any
-        pocket residue are silently skipped with a warning.
+        Mapping ``{resid: embedding_vector}``. Unmatched resids are skipped with a warning.
     model_name : str
         Recorded as ``PocketResidue.embedding_model`` on each annotated residue.
     """
@@ -237,29 +227,21 @@ def _element_of(atom):
 class PocketPropertyCalculator:
     """Computes and attaches derived properties to :class:`Hotspot` objects.
 
-    Handles three concerns independently of the hotspot-detection algorithm:
-
-    * **Geometry descriptors** — scikit-image ``regionprops_table`` features
-      attached as ``geom_*`` properties.
-    * **Survival probability** — waterdynamics SP curves written to CSV/PNG.
-    * **SP curve fitting** — kinetic metrics (MRT, half-life, τ constants)
-      attached as ``sp_*`` properties.
+    Independent of the hotspot-detection algorithm; covers geometry descriptors
+    (``geom_*``), survival-probability curves, and SP fit metrics (``sp_*``).
 
     Parameters
     ----------
     out_path : str
         Directory for CSV/PNG output files.
     universe : MDAnalysis.Universe or None
-        Required for :meth:`run_survival_probability`; may be ``None`` if SP
-        is not used.
+        Required for :meth:`run_survival_probability`; may be ``None`` otherwise.
     gridsize : float
-        Voxel size in Angstroms (default 0.5).  Not currently used by any
-        method but retained for forward compatibility.
+        Voxel size in Angstroms (default 0.5). Unused; kept for forward compatibility.
     regionprops_properties : list[str], optional
         Overrides :data:`REGIONPROPS_ALL` for geometry descriptor computation.
     regionprops_extra_properties : iterable of callable, optional
-        Custom callables forwarded to ``regionprops_table``'s
-        ``extra_properties`` argument.
+        Callables forwarded to ``regionprops_table``'s ``extra_properties``.
     """
 
     def __init__(self, out_path, universe, gridsize=0.5,
@@ -278,31 +260,23 @@ class PocketPropertyCalculator:
 
     def compute_regionprops(self, sites, labeled_array, intensity_image,
                             properties=None, extra_properties=None):
-        """Compute per-region geometric descriptors and attach them to sites.
-
-        Calls ``skimage.measure.regionprops_table`` on *labeled_array* and
-        populates each site in *sites* with ``geom_*`` properties via
-        :meth:`Hotspot.add_property`.
+        """Compute per-region geometric descriptors and attach them to sites as ``geom_*``.
 
         Parameters
         ----------
         sites : list[Hotspot]
-            Sites to annotate; each site's ``.site_id`` is used as the label
-            key to look up its region in *labeled_array*.
+            Sites to annotate; ``site.site_id`` is the label key into *labeled_array*.
         labeled_array : np.ndarray of int
             3-D labeled array (0 = background, positive integers = cluster ids).
         intensity_image : np.ndarray of float
-            Intensity image passed to ``regionprops_table`` for weighted
-            centroid and intensity properties (typically
+            Intensity image for weighted centroid/intensity properties (typically
             ``clip(-agfe_array, 0, None)``).
         properties : list[str], optional
-            skimage property names to compute.  Overrides
-            ``self.regionprops_properties``; ``None`` resolves to
-            :data:`REGIONPROPS_ALL`.
+            skimage property names. Overrides ``self.regionprops_properties``;
+            ``None`` resolves to :data:`REGIONPROPS_ALL`.
         extra_properties : iterable of callable, optional
-            Custom callables forwarded to ``regionprops_table``'s
-            ``extra_properties`` argument.  Overrides
-            ``self.regionprops_extra_properties``.
+            Callables forwarded to ``regionprops_table``'s ``extra_properties``;
+            overrides ``self.regionprops_extra_properties``.
         """
         from skimage.measure import regionprops_table
 
@@ -336,9 +310,8 @@ class PocketPropertyCalculator:
                 extra_properties=extra_properties or None,
             )
         except ValueError:
-            # feret_diameter_max calls marching_cubes on the convex hull image,
-            # which fails for degenerate/tiny clusters where qhull returns an
-            # empty image. Retry without it.
+            # feret_diameter_max runs marching_cubes on the convex hull image, which
+            # fails for degenerate clusters where qhull returns an empty image.
             fallback = [p for p in requested if p != "feret_diameter_max"]
             self.logger.warning(
                 "regionprops_table failed (feret_diameter_max on degenerate cluster); "
@@ -372,22 +345,15 @@ class PocketPropertyCalculator:
 
     @staticmethod
     def probe_zone_radius(universe, cosolvent_name, tolerance=1.7):
-        """Survival-probability zone radius scaled to the PROBE: ``Rg + tolerance``.
+        """Survival-probability zone radius scaled to the PROBE: ``Rg + tolerance`` (A).
 
-        ``Rg`` is the probe's heavy-atom radius of gyration and *tolerance* is a contact
+        ``Rg`` is the probe's heavy-atom radius of gyration; *tolerance* is a contact
         buffer (default 1.7 A, a heavy-atom vdW radius).
 
-        Scaling on the probe rather than on the hotspot is deliberate. Hotspot volume is
-        "voxels above the AGFE cutoff, as grouped by the clustering", so deriving the
-        radius from it would make the kinetics inherit both of those choices. Probe size is
-        a fixed molecular property. It also keeps the radius constant within a probe, so
-        residence stays comparable BETWEEN sites (a larger zone holds a molecule longer for
-        purely geometric reasons), and puts the probes on a common physical footing.
-
-        This replaces an earlier ``half the largest heavy-atom separation + mean vdW``
-        footprint, which correlated with Rg at Pearson 0.95 while needing an element table
-        and name-guessing to produce a term that varied by only 0.11 A across an 18-probe
-        panel. For equivalent magnitudes to that formula use ``tolerance ~ 2.9``.
+        The radius is derived from the probe, not the hotspot, so that it is a fixed
+        molecular property: constant within a probe, hence residence times stay
+        comparable between sites (a larger zone retains a molecule longer for purely
+        geometric reasons) and across probes.
 
         Returns ``None`` when the cosolvent is absent from *universe*.
         """
@@ -399,8 +365,7 @@ class PocketPropertyCalculator:
         if heavy.n_atoms == 0:
             return None
         # Unweighted (number-average) Rg: the zone is a geometric criterion, so atom
-        # identity should not tilt it. Differs from the mass-weighted value by <0.07 A
-        # on this panel.
+        # identity should not tilt it.
         pos = heavy.positions
         rg = float(np.sqrt(((pos - pos.mean(axis=0)) ** 2).sum(axis=1).mean()))
         return rg + float(tolerance)
@@ -410,20 +375,17 @@ class PocketPropertyCalculator:
                                  universes=None, radius_tolerance=1.7):
         """Compute the survival probability of cosolvents inside spherical zones.
 
-        Each zone can be defined as a group of residue IDs or as an explicit
-        XYZ coordinate; the two forms can be mixed.
-
-        **Zone formats** — each element of ``candidate_zones`` is one zone:
+        **Zone formats** — each element of ``candidate_zones`` is one zone, and the
+        forms may be mixed:
 
         * ``[resid1, resid2, ...]`` — sphere centred at the COM of listed residues.
         * ``[x, y, z]`` (3 floats) — sphere centred at the explicit Angstrom point.
         * A bare ``int`` — treated as ``[resid]``.
 
-        Results are saved as ``survival_probability_{cosolvent}.csv`` (the
-        replica-averaged curve, which :meth:`fit_survival_probability` consumes) and
-        ``survival_probability_{cosolvent}.png`` under ``self.out_path``. With more than
-        one replica, ``survival_probability_{cosolvent}_per_replica.csv`` also keeps the
-        individual curves so the spread is recoverable.
+        Writes ``survival_probability_{cosolvent}.csv`` (the replica-averaged curve, which
+        :meth:`fit_survival_probability` consumes) and ``.png`` under ``self.out_path``,
+        plus ``..._per_replica.csv`` with the individual curves when there is more than
+        one replica.
 
         Parameters
         ----------
@@ -432,11 +394,10 @@ class PocketPropertyCalculator:
         candidate_zones : list
             Zones to analyse (see format description above).
         radius : float or {"adaptive"}
-            Sphere radius in Angstroms (default 6.0), or ``"adaptive"`` to scale it per
-            probe via :meth:`probe_zone_radius` (footprint + *radius_tolerance*). A single
-            fixed radius is a poor compromise on a mixed panel: 6.0 A is ~25x the median
-            hotspot volume and measures the neighbourhood, while 3.5 A is small enough that
-            replica agreement collapses to rho ~ 0.06.
+            Sphere radius in Angstroms (default 6.0), or ``"adaptive"`` to size it per
+            probe via :meth:`probe_zone_radius`. A fixed radius is a compromise on a
+            mixed probe panel: too large and it measures the neighbourhood rather than
+            the site, too small and replica agreement collapses.
         radius_tolerance : float
             Contact buffer added to the probe's radius of gyration when
             ``radius="adaptive"`` (default 1.7 A, a heavy-atom vdW radius).
@@ -447,15 +408,12 @@ class PocketPropertyCalculator:
         universes : list, optional
             Replica universes to average over. Defaults to ``[self.universe]``.
 
-            Survival probability is a *dynamical* quantity, so replicas must be run
-            SEPARATELY and their curves averaged — they cannot be concatenated into one
-            trajectory. A join between two independent replicas is a discontinuity: a
-            probe present in the last frame of one and absent from the first frame of the
-            next registers as a departure that never happened, and the resids do not even
-            refer to the same molecule across the join. With ``max_tau`` lag frames every
-            join corrupts that many lag windows, biasing residence times downward.
-            Averaging independent replicas is the correct ensemble average and is the only
-            version that yields an uncertainty.
+            Survival probability is a *dynamical* quantity: replicas must be run
+            SEPARATELY and their curves averaged, never concatenated into one
+            trajectory. Each join is a discontinuity that registers as a departure
+            that never happened (and resids do not refer to the same molecule across
+            it), corrupting ``max_tau`` lag windows and biasing residence times down.
+            Averaging replicas is also the only version that yields an uncertainty.
         """
         import cosolvkit.analysis.hotspot_visualization as viz
         try:
@@ -531,9 +489,9 @@ class PocketPropertyCalculator:
                         f"survival_probability_{cosolvent_name}_per_replica.csv"),
                     index=False,
                 )
-                # Average each zone's curve over replicas. Zones unoccupied in a replica
-                # yield NaN there and are simply dropped from that point's mean, so a
-                # missing replica lowers n rather than poisoning the average.
+                # Average each zone's curve over replicas. A zone unoccupied in a replica
+                # yields NaN, which is dropped from that point's mean: a missing replica
+                # lowers n rather than poisoning the average.
                 df_sp = (
                     df_raw.groupby(["Group", "Zone", "Time", "Cosolvent"], as_index=False)
                     .agg(SP=("SP", "mean"), SP_sd=("SP", "std"), n_replicas=("SP", "count"))
@@ -552,11 +510,9 @@ class PocketPropertyCalculator:
         """Fit SP decay curves and store kinetic metrics in each Hotspot.
 
         Reads the ``survival_probability_{cosolvent}.csv`` files written by
-        :meth:`run_survival_probability`, fits three decay models to each
-        zone's curve, and stores the derived metrics in
-        ``Hotspot.properties`` via :meth:`Hotspot.add_property`.
+        :meth:`run_survival_probability` and fits three decay models per zone.
 
-        **Stored properties** (prefixed ``sp_``):
+        **Stored properties** (prefixed ``sp_``, times in trajectory lag units):
 
         * ``sp_mrt``            — mean residence time (trapezoid integral of SP)
         * ``sp_half_life``      — time at SP = 0.5
@@ -574,7 +530,7 @@ class PocketPropertyCalculator:
             Output of :meth:`HotspotDetector.detect_all`.
         zone_to_site_rank : dict[int, int], optional
             Maps zone index (``Group`` column in CSV) to site rank.
-            If ``None``, zone 0 → rank 1, zone 1 → rank 2, etc.
+            If ``None``, zone i → rank i + 1.
         """
         import cosolvkit.analysis.hotspot_visualization as viz
         for cosolvent, sites in results.items():
@@ -626,7 +582,7 @@ class PocketPropertyCalculator:
                 except Exception:
                     props["sp_half_life"] = None
 
-                # Late-time plateau (mean of last 10 % of timepoints)
+                # Late-time plateau
                 n_tail = max(1, len(sp_arr) // 10)
                 props["sp_plateau"] = round(float(np.mean(sp_arr[-n_tail:])), 4)
 
@@ -644,7 +600,7 @@ class PocketPropertyCalculator:
                 except Exception as exc:
                     self.logger.debug(f"Single-exp fit failed (zone {zone_idx}): {exc}")
 
-                # Bi-exponential fit (requires at least 6 points)
+                # Bi-exponential fit
                 if len(tau_arr) >= 6:
                     try:
                         mrt = props["sp_mrt"]
@@ -687,25 +643,17 @@ class PocketPropertyCalculator:
     def find_pocket_residues(self, site, cutoff: float = 4.5) -> None:
         """Find protein residues that line the hotspot cavity and store them on *site*.
 
-        Uses a KD-tree over the blob voxel coordinates (derived from
-        ``site.voxel_mask``, ``site.grid_origin``, and ``site.grid_delta``) to
-        efficiently identify protein heavy atoms within *cutoff* Å.  One
-        :class:`PocketResidue` is appended to ``site.pocket_residues`` for each
-        qualifying protein residue.
-
-        Atom positions are read from the current frame of ``self.universe``
-        (typically frame 0 or whatever frame the trajectory is at when this
-        method is called).
+        Appends one :class:`PocketResidue` to ``site.pocket_residues`` per qualifying
+        residue. Atom positions are read from the CURRENT frame of ``self.universe``.
 
         Parameters
         ----------
         site : Hotspot
-            The hotspot to annotate.  Must have ``voxel_mask``, ``grid_origin``,
-            and ``grid_delta`` already set (populated by
-            :meth:`HotspotDetector.detect`).
+            Hotspot to annotate. Must already have ``voxel_mask``, ``grid_origin`` and
+            ``grid_delta`` set by :meth:`HotspotDetector.detect`.
         cutoff : float
-            Distance threshold in Å (default 4.5).  Protein residues with any
-            heavy atom within *cutoff* of any blob voxel are included.
+            Distance threshold in Å (default 4.5). A residue qualifies if any heavy
+            atom lies within *cutoff* of any blob voxel.
         """
         if self.universe is None:
             raise ValueError(
@@ -718,7 +666,7 @@ class PocketPropertyCalculator:
                 "Call HotspotDetector.detect() before find_pocket_residues()."
             )
 
-        # Reconstruct Angstrom coordinates of blob voxels
+        # Angstrom coordinates of the blob voxels
         voxel_indices = np.argwhere(site.voxel_mask)          # (N, 3) int
         voxel_coords = (
             site.grid_origin + voxel_indices * site.grid_delta  # (N, 3) float
@@ -737,7 +685,7 @@ class PocketPropertyCalculator:
         for res in protein_ag.residues:
             res_pos = res.atoms.positions  # (n_res_atoms, 3)
 
-            # Nearest voxel distance for each heavy atom; keep residue if any is close
+            # Nearest voxel per heavy atom; keep the residue if any is within cutoff
             dists, _ = tree.query(res_pos, k=1)
             min_dist = float(dists.min())
             if min_dist > cutoff:
@@ -770,33 +718,18 @@ class PocketPropertyCalculator:
     # ------------------------------------------------------------------
 
     def annotate_residue_rmsf(self, site, rmsf_by_resid: Dict[int, float]) -> None:
-        """Map pre-computed RMSF values onto pocket residues.
+        """Map pre-computed RMSF values onto pocket residues by resid.
 
-        Does **not** run any trajectory analysis — it just looks up each
-        pocket residue's ``resid`` in *rmsf_by_resid* and stores the result.
-        The expectation is that RMSF was already computed earlier in the
-        analysis pipeline (e.g. via :class:`cosolvkit.analysis.analysis.Report`)
-        and the caller passes the resulting mapping here.
-
-        Call after :meth:`find_pocket_residues`.
+        Runs no trajectory analysis; the caller supplies RMSF computed earlier in the
+        pipeline. Call after :meth:`find_pocket_residues`.
 
         Parameters
         ----------
         site : Hotspot
             Site whose ``pocket_residues`` to annotate.
         rmsf_by_resid : dict[int, float]
-            Mapping ``{resid: rmsf_angstroms}``.  Typically built from the
-            ``RMSF`` result in the analysis pipeline::
-
-                ca = universe.select_atoms("protein and name CA")
-                rmsf_result = RMSF(ca).run()
-                rmsf_by_resid = {
-                    int(res.resid): float(val)
-                    for res, val in zip(ca.residues, rmsf_result.results.rmsf)
-                }
-
-            Pocket residues whose ``resid`` is absent from the mapping receive
-            ``rmsf = None``.
+            Mapping ``{resid: rmsf_angstroms}``. Pocket residues absent from the
+            mapping keep ``rmsf = None``.
         """
         if not site.pocket_residues:
             return
@@ -825,12 +758,8 @@ class PocketPropertyCalculator:
     ) -> None:
         """Record trajectory frames in which each cosolvent molecule contacts each pocket residue.
 
-        For every pocket residue in *site*, and for every individual cosolvent
-        molecule (identified by its MDAnalysis ``resid``), this method iterates
-        the trajectory and records the frame indices where any heavy atom of the
-        molecule comes within *contact_cutoff* Å of any heavy atom of the
-        residue.
-
+        A contact is any heavy atom of the molecule within *contact_cutoff* Å of any
+        heavy atom of the residue. Molecules are identified by MDAnalysis ``resid``.
         Results are stored in :attr:`PocketResidue.cosolvent_contacts` as::
 
             {cosolvent_name: {cosolvent_resid: [frame_idx, ...]}}
@@ -846,15 +775,8 @@ class PocketPropertyCalculator:
         contact_cutoff : float
             Distance threshold in Å (default 4.0).
         step : int
-            Trajectory stride — contacts are recorded only for sampled frames
-            (default 1 = every frame).
-
-        Notes
-        -----
-        Atom group objects are cached before the trajectory loop so that only
-        ``.positions`` is accessed inside the hot path.  For very long
-        trajectories with many cosolvent molecules, use ``step > 1`` to limit
-        computation time.
+            Trajectory stride; only sampled frames are scanned (default 1 = every frame).
+            Raise it to bound cost on long trajectories with many cosolvent molecules.
         """
         if not site.pocket_residues:
             return
@@ -865,7 +787,7 @@ class PocketPropertyCalculator:
 
         u = self.universe
 
-        # Cache residue AtomGroups once before the trajectory loop
+        # Cache AtomGroups before the trajectory loop; the hot path only reads .positions
         res_atom_groups: Dict[int, Any] = {
             pr.resindex: u.select_atoms(f"resindex {pr.resindex} and not name H*")
             for pr in site.pocket_residues
@@ -882,7 +804,6 @@ class PocketPropertyCalculator:
 
             cosol_resids: List[int] = [int(r) for r in np.unique(cosol_heavy.resids)]
 
-            # Cache per-molecule AtomGroups
             mol_atom_groups: Dict[int, Any] = {
                 rid: u.select_atoms(
                     f"resname {cosolvent_name} and resid {rid} and not name H*"
@@ -910,7 +831,7 @@ class PocketPropertyCalculator:
                                 .append(frame)
                             )
 
-            # Ensure frame lists are sorted (trajectory may not always be forward)
+            # Frame lists must be sorted: the trajectory is not guaranteed forward
             for pr in site.pocket_residues:
                 mol_dict = pr.cosolvent_contacts.get(cosolvent_name, {})
                 for rid in mol_dict:

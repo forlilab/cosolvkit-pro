@@ -26,11 +26,9 @@ def _read_dx(filepath: str = None) -> Grid:
     """Reads a .dx map using gridData.Grid."""
     return Grid(str(filepath))
 
-# Fraction of a voxel by which two grids' edges may differ and still count as
-# aligned. Replicas of the same system are built on independently-computed boxes, so
-# their origins differ by a few hundredths of an Angstrom -- physically meaningless
-# next to a 0.5 A voxel, but enough to fail an absolute 1e-3 A test and send every map
-# through an interpolating resample it does not need.
+# Fraction of a voxel by which two grids' edges may differ and still count as aligned.
+# Replica boxes are computed independently, so origins differ by sub-voxel amounts that
+# an absolute tolerance would reject, forcing a resample that is not needed.
 _ALIGNMENT_VOXEL_FRACTION = 0.1
 
 
@@ -38,17 +36,14 @@ def _grids_spatially_aligned(g1: Grid, g2: Grid, atol: float = None,
                              voxel_fraction: float = _ALIGNMENT_VOXEL_FRACTION) -> bool:
     """True if two grids share shape, origin, and spacing.
 
-    Equal shape alone is not enough: two maps can have identical dimensions but
-    different origin/spacing, in which case voxel [i, j, k] points to a
-    different physical location in each. Comparing the full per-axis edges
-    captures both origin and spacing in one check.
+    Equal shape alone is not enough: identical dimensions with different origin or
+    spacing put voxel [i, j, k] at a different physical location. Comparing the
+    per-axis edges covers both in one check.
 
-    The comparison is deliberately *sub-voxel* rather than exact. When *atol* is None
-    it defaults to ``voxel_fraction`` x the smaller grid spacing, so grids offset by a
-    small fraction of a voxel are treated as aligned and averaged voxel-wise. The
-    registration error this introduces is bounded by that fraction of a voxel; the
-    alternative -- resampling -- is far more damaging, because interpolation fills
-    out-of-range boundary voxels with a constant (see
+    The comparison is sub-voxel rather than exact: when *atol* is None it defaults to
+    ``voxel_fraction`` x the smaller spacing, so slightly offset grids are averaged
+    voxel-wise instead of resampled. The registration error is bounded by that fraction
+    of a voxel, and resampling is the more damaging option (see
     :func:`combine_dx_maps_with_resampling`).
     """
     if g1.grid.shape != g2.grid.shape:
@@ -110,19 +105,13 @@ def _resample_grid(g: Grid, ref_grid: Grid, fill_value: float = 0.0,
     Deliberately does NOT use :meth:`gridData.Grid.resample`, whose two defaults are
     both wrong for a free-energy map:
 
-    * ``Grid.interpolation_cval`` defaults to ``grid.min()``. Reasonable for a density
-      (min ~ 0 = empty) but catastrophic for an AGFE map, where the minimum is the
-      *most favourable* value: every target voxel falling outside the source grid — i.e.
-      the whole outer voxel layer whenever the origins differ even by a sub-voxel
-      amount — comes back at maximal attraction. That produces a shell of spurious
-      density on all six faces of the box, which merges into one connected cluster
-      holding ~99% of the favourable volume and outranks every real pocket.
-      ``fill_value=0.0`` is the correct neutral (bulk) AGFE.
-    * The interpolation is a cubic spline. gridData's own docs warn that cubic
-      interpolation invents values not present in the data; on sharp wells in a flat
-      background that manufactures favourable voxels at well edges. Linear interpolation
-      cannot overshoot, and ``scipy.ndimage.spline_filter`` refuses order < 2, so the
-      linear path has to go through ``map_coordinates`` directly.
+    * ``Grid.interpolation_cval`` defaults to ``grid.min()``, which for an AGFE map is
+      the *most favourable* value, so every out-of-range voxel comes back at maximal
+      attraction and the box faces fill with spurious density. ``fill_value=0.0`` is
+      the correct neutral (bulk) AGFE.
+    * The interpolation is a cubic spline, which overshoots and invents favourable
+      voxels at well edges. Linear cannot overshoot, and ``scipy.ndimage.spline_filter``
+      refuses order < 2, so the linear path goes through ``map_coordinates`` directly.
 
     Assumes each axis is uniformly spaced, which is true for .dx grids.
     """
@@ -282,11 +271,9 @@ def _smooth_grid_free_energy(gfe,
     """
     Smooths and filters the grid free energy (GFE) map.
 
-    Applies Gaussian smoothing (preserving kcal/mol units) then zeros all
-    voxels with energy >= energy_cutoff.  The zeroing is a display/filtering
-    choice: unfavorable regions are suppressed so that only hot-spots appear
-    in the output map.  No renormalization is applied so that values remain
-    physically comparable across probes, systems, and replicas.
+    Applies Gaussian smoothing (preserving kcal/mol units) then zeros all voxels with
+    energy >= energy_cutoff. The zeroing is a display filter, not a physical operation;
+    no renormalization is applied, so values stay comparable across probes and replicas.
 
     :param gfe: 3D numpy array of grid free energy values (kcal/mol).
     :param energy_cutoff: Cutoff energy (default: 0 kcal/mol). Voxels with
@@ -738,11 +725,10 @@ class GridAnalysis(AnalysisBase):
             _export(fname, self._agfe, gridsize, center, box_size)
 
     def export_raw_atomic_grid_free_energy(self, fname, gridsize=0.5, center=None, box_size=None):
-        """Export the raw (unsmoothed, physical) AGFE map in kcal/mol.
+        """Export the raw (unsmoothed) AGFE map in kcal/mol.
 
-        Values are the direct Boltzmann inversion of the occupancy histogram
-        with no zeroing or rescaling applied, making them suitable for
-        quantitative comparisons across probes, systems, and replicas.
+        Direct Boltzmann inversion of the occupancy histogram, with no zeroing or
+        rescaling, so values stay comparable across probes, systems, and replicas.
         """
         if self.use_atomtypes:
             for atom_type, grid in self._type_agfe_raw.items():

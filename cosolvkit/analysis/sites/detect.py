@@ -25,11 +25,10 @@ from cosolvkit.analysis.core.models import Hotspot
 class HotspotDetector:
     """Detect and rank binding hotspots from cosolvent AGFE density maps.
 
-    Reads the AGFE ``.dx`` maps produced by :meth:`Report.generate_density_maps`,
-    clusters favorable voxels using a pluggable clustering strategy, computes raw
-    per-site features (AGFE affinity, atom-type diversity, volume, ...), and
-    ranks the resulting :class:`Hotspot` objects by ``agfe_min`` ascending
-    (most-negative = rank 1).
+    Reads the AGFE ``.dx`` maps written by :meth:`Report.generate_density_maps`,
+    clusters favorable voxels with a pluggable strategy, computes raw per-site
+    features, and ranks the resulting :class:`Hotspot` objects by ``agfe_min``
+    ascending (most-negative = rank 1).
 
     Parameters
     ----------
@@ -40,30 +39,24 @@ class HotspotDetector:
     universe : MDAnalysis.Universe
         Loaded trajectory universe.
     agfe_cutoff : float
-        AGFE threshold in kcal/mol (default -0.5).  Only voxels strictly below
-        this value are considered favorable.
+        AGFE threshold in kcal/mol; voxels strictly below it are favorable.
     min_cluster_voxels : int
-        Minimum cluster size to retain (default 5).  Scale this with gridsize
-        (e.g. use 3 for a 1.0 Å grid).
+        Minimum cluster size to retain, in voxels.  This is a raw count, so
+        rescale it whenever *gridsize* changes (it scales as 1/gridsize**3).
     top_percentile : float
-        Top percentage of most-favorable voxels used for favorability scoring
-        (default 10.0).
+        Percentage of most-favorable voxels averaged for favorability scoring.
     gridsize : float
-        Voxel size in Angstroms (default 0.5).  Should match the value used
-        in :meth:`Report.generate_density_maps`.
+        Voxel size in Angstroms; must match the value used to generate the maps.
     clustering_strategy : ClusteringStrategy, optional
         Object with a ``cluster(favorable_mask, agfe_array, gridsize)`` method
-        that returns ``(labeled_array, site_labels)``.  Defaults to
-        :class:`ConnectedComponentsClustering` with 6-connectivity.
-        Built-in strategies: :class:`ConnectedComponentsClustering`,
-        :class:`WatershedClustering`, :class:`DBSCANClustering`.
+        returning ``(labeled_array, site_labels)``.  See
+        :mod:`cosolvkit.analysis.sites.clustering` for the built-in strategies.
     compute_survival_probability : bool
-        If ``True``, :meth:`detect_all` runs survival probability analysis for
-        all detected sites (default ``False``).
+        If ``True``, :meth:`detect_all` also runs survival probability analysis
+        for all detected sites.
     survival_kwargs : dict, optional
         Extra keyword arguments forwarded to
-        :meth:`PocketPropertyCalculator.run_survival_probability`
-        (e.g. ``radius``, ``max_tau``, ``intermittency``).
+        :meth:`PocketPropertyCalculator.run_survival_probability`.
     """
 
     def __init__(self, out_path, cosolvent_names, universe,
@@ -121,9 +114,8 @@ class HotspotDetector:
         )
 
     # ------------------------------------------------------------------
-    # out_path and universe properties — setters propagate to property_calculator
-    # so that multi_report.py can mutate them between SP calls without breaking
-    # the calculator's reference.
+    # Setters must propagate to property_calculator: callers may retarget the
+    # detector between runs, and the calculator holds its own reference.
     # ------------------------------------------------------------------
 
     @property
@@ -156,11 +148,9 @@ class HotspotDetector:
     def _load_combined_agfe(self, cosolvent):
         """Load and combine per-atom-type AGFE maps into one grid.
 
-        For ``use_atomtypes=True`` runs: takes the element-wise minimum across
-        all per-type maps (most favorable signal at each voxel).  This finds
-        any voxel favorable for *any* part of the cosolvent.
-        Atom-type composition is then read back per-site as ``favorable_atomtypes``,
-        which binding-site scoring uses for ``chemotype_diversity``.
+        Combines by element-wise minimum, so a voxel is favorable if it is
+        favorable for any atom type.  Which types those were is recovered
+        per-site later as ``favorable_atomtypes``.
 
         Returns
         -------
@@ -215,12 +205,11 @@ class HotspotDetector:
     # ------------------------------------------------------------------
 
     def _voxel_to_angstrom(self, grid, vox_idx):
-        """Convert fractional voxel index (i, j, k) to Angstrom coordinates.
+        """Convert a (possibly fractional) voxel index (i, j, k) to Angstroms.
 
-        ``grid.origin`` is the centre of voxel 0 and ``grid.delta`` is a 1D
-        array ``[dx, dy, dz]`` (gridData always stores delta as a 1D array).
-        For fractional indices from ``center_of_mass`` this gives a continuous
-        linear interpolation.
+        ``grid.origin`` is the centre of voxel 0 and gridData stores
+        ``grid.delta`` as the 1D array ``[dx, dy, dz]``.  Fractional indices,
+        e.g. from ``center_of_mass``, interpolate linearly.
         """
         return np.array(grid.origin) + np.array(vox_idx) * np.array(grid.delta)
 
@@ -239,13 +228,10 @@ class HotspotDetector:
         )
 
     def _preprocess_favorable_mask(self, favorable_mask):
-        """Optionally clean the favorable mask using scikit-image morphology.
+        """Optionally clean the favorable mask with scikit-image morphology.
 
-        Only active when ``use_skimage_cleanup=True``.  Each step is
-        individually gated by its corresponding parameter — set only the ones
-        you need.
-
-        Returns the (possibly modified) boolean mask.
+        Inactive unless ``use_skimage_cleanup=True``; each step is gated on its
+        own parameter being non-``None``.  Returns the boolean mask.
         """
         if not self.use_skimage_cleanup:
             return favorable_mask
@@ -290,7 +276,6 @@ class HotspotDetector:
         agfe_array = combined_grid.grid
         shape = agfe_array.shape
 
-        # --- Threshold ---
         favorable_mask = agfe_array < self.agfe_cutoff
         n_favorable = int(favorable_mask.sum())
         if n_favorable == 0:
@@ -300,7 +285,6 @@ class HotspotDetector:
             )
             return []
 
-        # --- Optional mask preprocessing ---
         favorable_mask = self._preprocess_favorable_mask(favorable_mask)
         n_favorable = int(favorable_mask.sum())
         if n_favorable == 0:
@@ -310,7 +294,6 @@ class HotspotDetector:
             )
             return []
 
-        # --- Cluster favorable voxels ---
         labeled_array, site_labels = self._cluster_voxels(favorable_mask, agfe_array)
 
         if not site_labels:
@@ -320,7 +303,7 @@ class HotspotDetector:
             )
             return []
 
-        # Sanity: warn if one giant cluster dominates
+        # A single cluster swallowing the map means the threshold is too loose.
         largest = max(int((labeled_array == lbl).sum()) for lbl in site_labels)
         if largest > 0.5 * n_favorable:
             self.logger.warning(
@@ -329,8 +312,8 @@ class HotspotDetector:
                 "The map may be degenerate — consider a stricter agfe_cutoff."
             )
 
-        # --- AGFE-weighted centroids (voxel space) ---
-        # center_of_mass with a list index always returns a list of tuples
+        # AGFE-weighted centroids, in voxel space.  Passing a label list makes
+        # center_of_mass return a list of tuples even for a single label.
         coms = center_of_mass(np.abs(agfe_array), labeled_array, site_labels)
 
         # --- Compute raw site features ---
@@ -345,13 +328,10 @@ class HotspotDetector:
             n_top = max(1, int(n_vox * self.top_percentile / 100.0))
             f_raw = float(np.mean(np.sort(voxel_agfe)[:n_top]))
 
-            # Centroid in Angstroms
             centroid_ang = self._voxel_to_angstrom(combined_grid, com_vox)
 
-            # Per-type min AGFE (only types with at least one favorable voxel).
-            # The set of keys IS the site's favorable atom types, so no separate
-            # diversity scalar is needed here; binding-site scoring derives it from
-            # favorable_atomtypes.
+            # Per-type min AGFE, keyed only on types with a favorable voxel here,
+            # so the key set is itself the site's favorable atom types.
             per_type_agfe = {
                 atype: float(np.min(tg.grid[site_mask]))
                 for atype, tg in per_type_grids.items()
@@ -370,9 +350,9 @@ class HotspotDetector:
                 "per_type_agfe": per_type_agfe,
             })
 
-        # --- Rank hotspots by affinity (most-negative agfe_min first) ---
+        # --- Rank by affinity: ascending agfe_min, most-negative = rank 1 ---
         agfe_mins = np.array([sd["agfe_min"] for sd in site_data], dtype=float)
-        order = np.argsort(agfe_mins)  # ascending: most-negative -> rank 1
+        order = np.argsort(agfe_mins)
         sites = []
         for rank, idx in enumerate(order, start=1):
             sd = site_data[idx]
@@ -389,28 +369,25 @@ class HotspotDetector:
                 per_type_agfe=sd["per_type_agfe"],
             ))
 
-        # --- Field descriptors, read from the map rather than the thresholded blob ---
-        # Weighted 0.0 by default; see core/field.py and DEFAULT_BINDING_SITE_WEIGHTS.
+        # --- Field descriptors, read from the map, not the thresholded blob ---
         from cosolvkit.analysis.core.field import (
             attach_buriedness, attach_field_descriptors,
         )
         attach_field_descriptors(sites, agfe_array, combined_grid.origin,
                                  combined_grid.delta)
-        # Enclosure at each centroid.
         if self.universe is not None:
             prot = self.universe.select_atoms("protein and not name H*")
             if prot.n_atoms:
                 attach_buriedness(sites, prot.positions)
 
-        # --- Optional geometry descriptor extraction ---
         if self.compute_regionprops:
             score_image = np.clip(-agfe_array, 0, None)
             self.property_calculator.compute_regionprops(
                 sites, labeled_array, score_image
             )
 
-        # Attach grid spatial metadata so binding-site grouping can compute
-        # overlap in Angstrom space when probes live on different-shaped grids.
+        # Grid metadata lets downstream grouping compute overlap in Angstrom
+        # space, which is required when probes live on different-shaped grids.
         grid_origin = np.array(combined_grid.origin)
         grid_delta = np.array(combined_grid.delta)
         for site in sites:
@@ -430,9 +407,8 @@ class HotspotDetector:
     def detect_all(self):
         """Run hotspot detection for all cosolvents.
 
-        If ``compute_survival_probability=True``, runs survival probability
-        analysis for all detected sites and attaches kinetic metrics to each
-        :class:`Hotspot`.
+        With ``compute_survival_probability=True``, also attaches kinetic
+        metrics to each :class:`Hotspot`.
 
         Returns
         -------
@@ -543,8 +519,8 @@ class HotspotDetector:
                                    max_voxels_per_cluster=3000, top_n=10):
         """See :func:`hotspot_visualization.plot_hotspot_clustering_3d`.
 
-        Requires :meth:`detect` to have been called for *cosolvent* so that
-        the labeled array and combined grid are cached.
+        Requires a prior :meth:`detect` call for *cosolvent* to populate the
+        labeled-array and grid caches.
 
         Parameters
         ----------
@@ -552,11 +528,11 @@ class HotspotDetector:
         sites : list[Hotspot]
             Output of :meth:`detect` for this cosolvent.
         output_path : str, optional
-            If given, write an interactive HTML file to this path.
+            If given, write an interactive HTML file here.
         max_voxels_per_cluster : int
-            Subsampling cap per cluster (default 3000).
+            Subsampling cap per cluster.
         top_n : int
-            Maximum number of sites to plot, in rank order (default 10).
+            Maximum number of sites to plot, in rank order.
         """
         if cosolvent not in self._labeled_arrays:
             raise RuntimeError(
@@ -604,22 +580,18 @@ class HotspotDetector:
     def save_checkpoint(results, out_path):
         """Save hotspot detection results to compressed NPZ checkpoint files.
 
-        One file per cosolvent is written to
-        ``{out_path}/hotspot_checkpoints/hotspot_checkpoint_{cosolvent}.npz``.
-        Each file stores the voxel masks (as a stacked boolean array), centroids,
-        grid spatial metadata, and all scalar/string/list fields as JSON.
-
-        The checkpoint can be reloaded with :meth:`load_checkpoint` to skip
-        re-running the full hotspot detection step when only binding-site
-        parameters need to change.
+        Writes one file per cosolvent to
+        ``{out_path}/hotspot_checkpoints/hotspot_checkpoint_{cosolvent}.npz``
+        holding stacked voxel masks, centroids, grid metadata, and the
+        remaining fields as JSON.  Reload with :meth:`load_checkpoint` to
+        re-run downstream steps without repeating detection.
 
         Parameters
         ----------
         results : dict[str, list[Hotspot]]
             Output of :meth:`detect_all`.
         out_path : str
-            Directory where the ``hotspot_checkpoints/`` sub-directory will be
-            created.
+            Directory in which ``hotspot_checkpoints/`` is created.
         """
         logger = logging.getLogger(__name__)
         chk_dir = os.path.join(out_path, "hotspot_checkpoints")
@@ -667,16 +639,16 @@ class HotspotDetector:
     def load_checkpoint(out_path, cosolvent_names):
         """Load hotspot detection results from NPZ checkpoint files.
 
-        Reconstructs :class:`Hotspot` objects (including ``voxel_mask``
-        and grid metadata) previously saved by :meth:`save_checkpoint`.
+        Rebuilds the :class:`Hotspot` objects, voxel masks and grid metadata
+        written by :meth:`save_checkpoint`.
 
         Parameters
         ----------
         out_path : str
-            Directory that contains the ``hotspot_checkpoints/`` sub-directory.
+            Directory containing ``hotspot_checkpoints/``.
         cosolvent_names : list[str]
-            Cosolvents to load.  A :class:`FileNotFoundError` is raised if the
-            checkpoint file for any requested cosolvent is missing.
+            Cosolvents to load; a missing checkpoint raises
+            :class:`FileNotFoundError`.
 
         Returns
         -------

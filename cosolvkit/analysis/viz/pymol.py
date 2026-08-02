@@ -33,24 +33,26 @@ def generate_pymol_session(out_path: str,
                             selection_string: str = None,
                             reference_pdb: str = None,
                             compute_avg_structure: callable = None):
-    """Generate a PyMol session from the density maps.
+    """Build a PyMol session with one isomesh per density map.
+
+    Writes ``pymol_results_session.pse`` and the replayable ``pymol_session_cmd.pml``.
 
     :param out_path: directory where outputs are written.
     :type out_path: str
     :param cosolvent_names: list of cosolvent residue names.
     :type cosolvent_names: list
-    :param avg_pdb_path: path to the averaged-trajectory PDB used as the reference structure.
+    :param avg_pdb_path: averaged-trajectory PDB used as the reference structure.
     :type avg_pdb_path: str
-    :param density_files: .dx file(s) to load.  If None the final agfe maps from
-        ``out_path`` are used.  Accepts a single path, a directory, or a list.
+    :param density_files: .dx file(s) to load: a path, a directory, or a list.  If
+        None, the final agfe maps in ``out_path`` are used.
     :type density_files: Union[str, list]
-    :param selection_string: PyMol selection string for residues of interest.
+    :param selection_string: PyMol selection shown as sticks and spectrum-coloured
+        by B-factor.
     :type selection_string: str
-    :param reference_pdb: additional reference PDB to load alongside the average structure.
+    :param reference_pdb: additional reference PDB to load alongside the average.
     :type reference_pdb: str
-    :param compute_avg_structure: optional callable invoked when ``avg_pdb_path`` does
-        not exist and no ``reference_pdb`` is provided.  Should generate the file at
-        ``avg_pdb_path`` and return it.
+    :param compute_avg_structure: callable used when ``avg_pdb_path`` is missing and
+        no ``reference_pdb`` is given; must create the file at ``avg_pdb_path``.
     :type compute_avg_structure: callable
     """
     from pymol import cmd
@@ -64,7 +66,7 @@ def generate_pymol_session(out_path: str,
             if os.path.isfile(agfe_file):
                 density_files.append(agfe_file)
             else:
-                # atomtypes mode: collect per-atom-type agfe maps, exclude raw
+                # atomtypes mode: per-atom-type agfe maps, excluding 'raw' ones
                 per_type = sorted(
                     f for f in glob(os.path.join(out_path, f"map_agfe_*_{cosolvent}.dx"))
                     if 'raw' not in os.path.basename(f)
@@ -110,9 +112,7 @@ def generate_pymol_session(out_path: str,
         dens_name = os.path.basename(density).split('.')[0]
 
         dx_data = _read_dx(density)
-        # AGFE maps are capped at 0 from above (unfavorable regions zeroed out),
-        # so we contour at the bottom 1% (most favorable/negative values).
-        # Density maps (z-score) have positive peaks, so we use the top 1%.
+        # see _contour_level_from_dx for the sign convention
         is_agfe = np.max(dx_data.grid) <= 0.0
         dx_01 = np.quantile(dx_data.grid, 0.001 if is_agfe else 0.999)
 
@@ -148,16 +148,15 @@ def generate_pymol_session(out_path: str,
 
 
 # ---------------------------------------------------------------------------
-# Hotspot PyMOL builders — moved verbatim from hotspot_visualization.py
+# Hotspot PyMOL builders
 # ---------------------------------------------------------------------------
 
 
 def _contour_level_from_dx(dx_path):
-    """Return an isomesh contour level appropriate for a DX file.
+    """Return an isomesh contour level for a DX file.
 
-    AGFE maps (all values ≤ 0) are contoured at the 0.1th percentile
-    (most negative / most favourable).  Positive maps (z-score density)
-    use the 99.9th percentile.
+    AGFE maps (all values <= 0, favourable = negative) use the 0.1th percentile;
+    positive maps (z-score density) use the 99.9th.
     """
     data = Grid(dx_path).grid
     is_agfe = np.max(data) <= 0.0
@@ -200,13 +199,10 @@ def visualise_clustering(
 ):
     """Generate a PyMol session to visually inspect clustering results.
 
-    All clusters are encoded in a **single** label DX file (voxel value =
-    cluster ID, 0 = background).  A volume object with a per-cluster colour
-    ramp is used instead of one isomesh per cluster, which avoids writing N
-    files and dramatically reduces I/O for large maps.
-
-    Pseudoatom labels are placed at each site's centroid showing its rank
-    and composite score.
+    All clusters go into a single label DX rendered as one volume with a
+    per-cluster colour ramp, rather than one isomesh per cluster.  A labelled
+    pseudoatom marks each site's centroid.  Writes
+    ``clustering_session_{cosolvent}.pse`` / ``.pml`` and returns the ``.pse`` path.
 
     Parameters
     ----------
@@ -219,14 +215,9 @@ def visualise_clustering(
     out_path : str
         Directory for output files.
     voxel_to_angstrom_fn : callable
-        ``f(grid, vox_idx) -> np.ndarray`` — converts voxel indices to Ångströms.
+        ``f(grid, vox_idx) -> np.ndarray``, voxel indices to Ångströms.
     reference_pdb : str, optional
-        Path to a PDB file to load as structural context.
-
-    Returns
-    -------
-    str
-        Path to the saved ``.pse`` session file.
+        PDB loaded as structural context.
     """
     if not _PYMOL_AVAILABLE:
         raise ImportError(
@@ -246,18 +237,16 @@ def visualise_clustering(
         cmd_string += f"cmd.load('{reference_pdb}', '{struct_name}')\n"
         cmd_string += f"cmd.color('grey50', '{struct_name} and name C*')\n"
 
-    # --- Single DX for all clusters ---
-    # Prefer the rank-label map written by export_results() (voxel = rank).
-    # If not present, write a site-ID label map now.
+    # --- single DX for all clusters ---
+    # Prefer the rank-label map written by export_results (voxel = rank); otherwise
+    # write a site-ID map here.  The ramp values must match whichever is loaded.
     rank_dx = os.path.join(out_path, f"hotspot_labels_{cosolvent}.dx")
     if os.path.isfile(rank_dx):
         dx_path = rank_dx
-        # Ramp values are site ranks (1, 2, ...)
         label_values = [site.rank for site in sorted(results, key=lambda s: s.rank)]
     else:
         dx_path = os.path.join(out_path, f"_cluster_labels_{cosolvent}.dx")
         Grid(labeled_array.astype(float), combined_grid.edges).export(dx_path)
-        # Ramp values are raw site IDs from labeled_array
         label_values = site_labels
 
     map_name = f'cluster_labels_{cosolvent}'
@@ -267,10 +256,9 @@ def visualise_clustering(
     _pymol_cmd.load(dx_path, map_name)
     cmd_string += f"cmd.load('{dx_path}', '{map_name}')\n"
 
-    # Build a volume colour ramp: background (0) transparent; each integer
-    # label gets a distinct opaque colour in a ±0.4 window around its value.
-    # Format: [value, r, g, b, alpha, ...]
-    ramp = [0.0, 1.0, 1.0, 1.0, 0.0]  # background transparent
+    # Volume ramp, flat [value, r, g, b, alpha, ...]: background transparent, each
+    # integer label opaque within a +/-0.4 window so neighbouring labels stay distinct.
+    ramp = [0.0, 1.0, 1.0, 1.0, 0.0]
     for i, v in enumerate(label_values):
         (r, g, b), _ = _PYMOL_CLUSTER_COLORS[i % len(_PYMOL_CLUSTER_COLORS)]
         v = float(v)
@@ -286,7 +274,7 @@ def visualise_clustering(
     cmd_string += f"cmd.volume_ramp_new('{ramp_name}', {ramp})\n"
     cmd_string += f"cmd.volume_color('{vol_name}', '{ramp_name}')\n"
 
-    # --- Centroid pseudoatoms ---
+    # --- centroid pseudoatoms ---
     for lbl in site_labels:
         com_vox = center_of_mass(np.abs(combined_grid.grid), labeled_array, lbl)
         centroid = voxel_to_angstrom_fn(combined_grid, com_vox)
@@ -323,10 +311,11 @@ def visualise_clustering(
 
 
 def add_hotspots_to_pymol_session(results, pse_path, out_path, top_n=10):
-    """Add hotspot pseudoatom spheres to an existing PyMol session file.
+    """Add hotspot pseudoatom spheres to an existing PyMol session.
 
-    The ``.pse`` file is overwritten in-place.  Pseudoatom commands are
-    also appended to the ``.pml`` script (if it exists).
+    Sphere radius scales with cluster size (capped at 4 Å) and colour encodes
+    rank.  The ``.pse`` is overwritten in place and the matching ``.pml``, if
+    present, is appended to.  No-op when PyMol is unavailable.
 
     Parameters
     ----------
@@ -336,7 +325,7 @@ def add_hotspots_to_pymol_session(results, pse_path, out_path, top_n=10):
     out_path : str
         Directory containing the ``.pml`` script (if any).
     top_n : int
-        Maximum sites per cosolvent to add (default 10).
+        Maximum sites per cosolvent to add.
     """
     if not _PYMOL_AVAILABLE:
         logger.warning("PyMol is not available — skipping hotspot session update.")
@@ -394,10 +383,9 @@ _BS_COSOLVENT_COLORS = [
 
 
 def _write_mask_dx(voxel_mask, grid_origin, grid_delta, path):
-    """Write a boolean voxel mask to a ``.dx`` file (1 inside, 0 outside).
+    """Write a boolean voxel mask to *path* as a ``.dx`` (1 inside, 0 outside).
 
-    The grid is placed at ``grid_origin`` (Å) with per-axis spacing
-    ``grid_delta`` (Å).  Returns *path*.
+    Origin and per-axis spacing are in Å.  Returns *path*.
     """
     grid = np.asarray(voxel_mask, dtype=float)
     Grid(
@@ -409,9 +397,8 @@ def _write_mask_dx(voxel_mask, grid_origin, grid_delta, path):
 
 
 def _site_carve_radius(voxel_mask, grid_delta):
-    """Half the mask's bounding-box diagonal (Å) plus a 2 Å pad.
+    """Isomesh carve radius (Å): half the mask bounding-box diagonal plus a 2 Å pad.
 
-    Used to carve the per-cosolvent density isomeshes to the site region.
     Returns ``0.0`` for an empty mask.
     """
     idx = np.argwhere(voxel_mask)
@@ -426,15 +413,13 @@ def generate_binding_site_session(binding_sites, reference_pdb, density_dir,
                                   out_path, top_n_sites=0):
     """Build a PyMol session showing each binding site's pocket + probe densities.
 
-    Per binding site (all sites, or the top ``top_n_sites`` by rank if > 0) a
-    PyMol group ``binding_site_{rank}`` is created containing:
-      * ``bs{rank}_pocket`` — an isomesh (level 0.5) of the site's union voxel
-        mask (the pocket geometry spanning its member hotspots);
-      * ``bs{rank}_{cosolvent}_density`` — for each cosolvent in the site, the
-        AGFE isomesh from ``density_dir/map_agfe_{cosolvent}.dx`` at its contour
-        level, carved to the site region.
+    Each site (all of them, or the top ``top_n_sites`` by rank if > 0) becomes a
+    ``binding_site_{rank}`` group holding an isomesh of its union voxel mask plus
+    one carved AGFE isomesh per member cosolvent, read from
+    ``density_dir/map_agfe_{cosolvent}.dx``; missing maps are skipped with a warning.
+    Note this reinitialises PyMol, discarding any loaded state.
 
-    Writes ``binding_sites_session.pse`` and a replayable
+    Writes ``binding_sites_session.pse`` and the replayable
     ``binding_sites_session.pml`` to *out_path*.  Returns the ``.pse`` path, or
     ``None`` if PyMol is unavailable.
     """
@@ -481,7 +466,7 @@ def generate_binding_site_session(binding_sites, reference_pdb, density_dir,
         lines.append(f"cmd.isomesh('{pocket_mesh}', '{pocket_map}', 0.5)\n")
         lines.append(f"cmd.color('grey50', '{pocket_mesh}')\n")
 
-        # --- carve anchor at the site centroid ---
+        # --- carve anchor: isomesh(..., carve=r) needs a named selection ---
         cx, cy, cz = (float(site.centroid[0]),
                       float(site.centroid[1]),
                       float(site.centroid[2]))

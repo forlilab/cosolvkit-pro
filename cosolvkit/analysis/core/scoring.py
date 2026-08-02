@@ -4,9 +4,7 @@
 # CoSolvKit
 #
 # Scoring helpers: normalization primitives and binding-site ranking.
-# Hotspots are raw-feature objects ranked by agfe_min directly in
-# HotspotDetector.detect(); the composite-score machinery formerly here
-# has been removed.
+# Hotspots themselves are ranked by agfe_min in HotspotDetector.detect(), not here.
 #
 
 import warnings
@@ -50,39 +48,35 @@ def _minmax(arr):
 DEFAULT_BINDING_SITE_WEIGHTS = {
     # Most-negative AGFE at the site (lower is better). See _affinity_values.
     "affinity": 3.0,
-    # How many PROBES hit the site (not atom types — that is chemotype_diversity below).
-    # Effectively a member count, so biased toward big sites, but useful on average.
+    # How many PROBES hit the site. Effectively a member count, so biased toward
+    # large sites.
     "probe_coverage": 2.0,
     "volume": 1.0,
     "kinetics": 1.0,
     "shape": 1.0,
     # Number of favourable pharmacophoric ATOM TYPES (HBD/HBA/Car/Cal/Hal) at the site.
-    # Requires atom-type-split density maps (``density_maps.use_atomtypes: true``);
-    # without them every site has zero favourable atom types and this contributes
-    # nothing. Do not confuse it with probe diversity — that is ``probe_coverage``
-    # (how many probes) and ``probe_chemotype_coverage`` (how many probe chemotypes).
+    # Needs atom-type-split density maps (``density_maps.use_atomtypes: true``);
+    # without them it is zero everywhere and contributes nothing. Not probe diversity:
+    # that is ``probe_coverage`` (how many probes) and ``probe_chemotype_coverage``.
     "chemotype_diversity": 1.0,
-    # Fraction of probe chemotype classes (aromatic/aliphatic/HBD/HBA/anionic/cationic)
-    # represented among the probes that hit the site. Opt-in: weight 0.0 by default,
-    # pending validation across more than one target.
+    # Fraction of probe chemotype classes represented among the probes hitting the
+    # site. Opt-in (0.0).
     "probe_chemotype_coverage": 0.0,
     # Read from the AGFE map as a FIELD at member-hotspot centroids (see core/field.py),
-    # not from the thresholded blob. Opt-in at 0.0, pending a weight sweep.
+    # not from the thresholded blob. Opt-in (0.0).
     "field_contrast": 0.0,
     "field_sharpness": 0.0,
-    # Enclosure proxy: protein heavy atoms within 8 A of the site, averaged (not maxed) over
-    # member hotspots so member count cannot inflate it. Opt-in at 0.0, pending a weight sweep.
+    # Enclosure proxy: nearby protein heavy atoms, averaged (not maxed) over member
+    # hotspots so member count cannot inflate it. Opt-in (0.0).
     "buriedness": 0.0,
 }
 
 # Features whose raw value is "lower is better" -> inverted min-max (most-negative -> 1).
-# `shape` (solidity) is inverted because known sites are LESS convex than novel ones — real
-# pockets are irregular clefts.
+# `shape` (solidity) is inverted because real pockets are irregular clefts, i.e. less convex.
 _BS_INVERTED_FEATURES = {"affinity", "field_contrast", "shape"}
 
-# ``diversity`` was renamed to ``chemotype_diversity`` because it scores atom types, not
-# probes, and readers reliably assumed the latter. Accepted with a warning rather than
-# rejected so that saved weight sets and the dashboard keep working.
+# ``diversity`` scored atom types, not probes, and was renamed. Accepted with a warning
+# rather than rejected so saved weight sets keep working.
 _LEGACY_WEIGHT_ALIASES = {"diversity": "chemotype_diversity"}
 
 
@@ -108,8 +102,8 @@ def _best_member_property(site, name, prefer="min"):
 
 
 #: Use the count-normalised fused affinity instead of best-member ``agfe_min``. Off by
-#: default: it removes the member-count bias but ranked worse. The fused values are still
-#: computed and exported whenever the maps are supplied.
+#: default: it removes the member-count bias but ranked worse. Fused values are still
+#: computed and exported when the maps are supplied.
 USE_FUSED_AFFINITY = False
 
 
@@ -127,9 +121,9 @@ def _mean_member_property(site, name):
 def _affinity_values(binding_sites):
     """Fused, count-normalised affinity when available; best-member ``agfe_min`` otherwise.
 
-    ``agfe_min`` is a best-of-members minimum and so is inflated by member count; the fused
-    value samples every probe at the site's point (see core/site_features.py). The fallback
-    warns, since a count-biased affinity at weight 3.0 dominates the score.
+    ``agfe_min`` is a best-of-members minimum and so is inflated by member count, which
+    matters because affinity carries the largest weight; the fused value instead samples
+    every probe at the site's point (see core/site_features.py).
     """
     if not USE_FUSED_AFFINITY:
         return [s.agfe_min for s in binding_sites]
@@ -173,9 +167,11 @@ def _binding_site_feature_values(binding_sites):
 def normalize_weights(weights):
     """Resolve a user weights dict against the defaults.
 
-    Applies the legacy aliases (with a ``DeprecationWarning``) and rejects any key that
-    is not a real feature — a silently-ignored weight would look like a working knob
-    while doing nothing.
+    Applies legacy aliases (with a ``DeprecationWarning``) and raises on any unknown key,
+    since a silently-ignored weight would look like a working knob.
+
+    :param weights: partial ``{feature: weight}`` dict, or None/empty for the defaults.
+    :return: full weights dict.
     """
     if not weights:
         return dict(DEFAULT_BINDING_SITE_WEIGHTS)
@@ -198,15 +194,15 @@ def normalize_weights(weights):
 
 
 def score_binding_sites(binding_sites, weights=None):
-    """Score and rank binding sites by a signed weighted sum of globally
-    min-max-normalised features (higher = better), in place.
+    """Rank binding sites in place by a weighted sum of normalised features.
 
-    Each weightable feature is normalised across *binding_sites* to [0,1],
-    oriented higher=better (affinity inverts agfe_min). Sites missing a feature
-    (None/non-finite) contribute 0 for it. ``weights`` may be negative and need
-    not sum to 1; missing keys fall back to DEFAULT_BINDING_SITE_WEIGHTS, and an
-    unrecognised key raises (see :func:`normalize_weights`).
+    Each feature is min-max normalised across *binding_sites* and oriented so that
+    higher = better; a site missing a feature (None/non-finite) contributes 0 for it.
     Sets ``.combined`` and ``.rank`` (1 = highest combined).
+
+    :param binding_sites: sites to score; mutated in place.
+    :param weights: partial weights dict; weights may be negative and need not sum
+        to 1 (see :func:`normalize_weights`).
     """
     if not binding_sites:
         return

@@ -2,8 +2,7 @@
 # -*- coding: utf-8 -*-
 #
 # CoSolvKit — binding-site detection: group hotspots (any cosolvent) into
-# pockets by connectivity of the union of their voxel masks. Replaces the
-# Jaccard-community consensus detector.
+# pockets by connectivity of the union of their voxel masks.
 #
 import os
 import json
@@ -35,11 +34,10 @@ def group_hotspots(probe_results, connectivity=26, merge_tolerance_ang=0.0):
 
     probe_results : dict[str, list[Hotspot]]
     merge_tolerance_ang : float
-        Max surface gap (Å) between two hotspots that still merges them. The union
-        is dilated by ``round((merge_tolerance_ang/2)/gridsize)`` voxels (each side
-        grows tol/2) BEFORE connected-components labeling. 0 = literal touch only.
-        Dilation affects grouping only; each group's stored ``union_mask`` is the OR
-        of members' ORIGINAL (undilated) resampled masks.
+        Max surface gap (Å) between two hotspots that still merges them; the union is
+        dilated by tol/2 per side before connected-components labeling. 0 = literal
+        touch only. Dilation affects grouping ONLY — each group's stored ``union_mask``
+        is the OR of members' original (undilated) resampled masks.
     Returns list of dicts: {members, union_mask, ref_origin, ref_delta, ref_shape}.
     """
     hotspots = [h for sites in probe_results.values() for h in sites]
@@ -57,7 +55,7 @@ def group_hotspots(probe_results, connectivity=26, merge_tolerance_ang=0.0):
     for m in resampled:
         union |= m
 
-    # Dilate ONLY for the grouping decision (bridge sub-touch gaps up to the tolerance).
+    # Dilate ONLY for the grouping decision, to bridge gaps up to the tolerance.
     gridsize = float(ref_d[0])
     radius_vox = max(0, int(round((merge_tolerance_ang / 2.0) / gridsize)))
     if radius_vox > 0:
@@ -71,7 +69,7 @@ def group_hotspots(probe_results, connectivity=26, merge_tolerance_ang=0.0):
 
     groups = {}
     for h, m in zip(hotspots, resampled):
-        # assign by the ORIGINAL mask's voxels' labels in the (dilated) labeling
+        # Assign via the ORIGINAL mask's voxels, read from the (dilated) labeling.
         lab_counts = np.bincount(labels[m].ravel())
         if len(lab_counts) <= 1:
             continue  # hotspot has no voxels in the union (shouldn't happen)
@@ -120,19 +118,10 @@ def _union_shape_features(union_mask):
     }
 
 
-# Which survival-probability metric feeds BindingSite.residence (the ``kinetics`` score
-# feature). ``sp_half_life`` -- the lag at which survival falls to 0.5.
-#
-# Chosen on a benchmark against 220 crystallographic ligand positions vs 660
-# buriedness-matched decoys, profiled at those FIXED points (not at hotspot centroids):
-# sp_half_life reached AUC 0.899/0.883 with between-replica rho 0.66/0.68 at two zone radii,
-# while sp_plateau -- an earlier choice here -- came LAST at AUC 0.504/0.505 with rho ~0.0.
-# sp_mrt and sp_tau_single are statistically indistinguishable from sp_half_life; half-life is
-# preferred for being the most directly interpretable of the three.
-#
-# The earlier reasoning for sp_plateau (that MRT is right-censored at tau_max) was measured at
-# hotspot centroids, which sit a median 1.4 A from the ligand they represent; at correct
-# locations censoring is not the limiting problem and the ranking of metrics inverts.
+# Survival-probability metric feeding BindingSite.residence (the ``kinetics`` score
+# feature): the lag at which survival falls to 0.5. Higher = longer residence = better.
+# sp_mrt and sp_tau_single perform equivalently; half-life is the most interpretable.
+# sp_plateau is a poor discriminator and should not be substituted here.
 KINETICS_METRIC = "sp_half_life"
 
 
@@ -165,8 +154,7 @@ def build_binding_site(site_id, group, n_total_cosolvents,
                        chemotype_map=None, n_total_probe_chemotypes=None):
     """Aggregate a group of member hotspots into a BindingSite.
 
-    Members need not carry AGFE data: hotspots built from something other than a
-    density map (e.g. crystallographic ligand copies used as ground truth) yield a
+    Members need not carry AGFE data: hotspots not derived from a density map yield a
     site with ``agfe_min=None``, an unweighted centroid and an empty pharmacophore.
     """
     from cosolvkit.analysis.core.models import BindingSite
@@ -176,8 +164,7 @@ def build_binding_site(site_id, group, n_total_cosolvents,
     ref_d = np.asarray(group["ref_delta"], dtype=float)
     union = group["union_mask"]
 
-    # Affinity-weighted centroid of member centroids (weight |agfe_min|); falls back
-    # to the plain mean when members have no AGFE to weight by.
+    # Centroid of member centroids weighted by |agfe_min|, or plain mean without AGFE.
     cents = np.array([m.centroid for m in members], dtype=float)
     agfe_vals = _finite_values(members, "agfe_min")
     if len(agfe_vals) == len(members):
@@ -263,7 +250,6 @@ class BindingSiteDetector:
             for i, g in enumerate(groups)
         ]
         if self.field_maps:
-            # Count-normalised: sample every probe at each site's point, fuse across probes.
             from cosolvkit.analysis.core.site_features import (
                 ProbeFieldSampler, fused_site_features,
             )
@@ -278,9 +264,9 @@ def identify_binding_sites(probe_results, connectivity=26, weights=None,
                            field_maps=None):
     """Group per-cosolvent hotspots into ranked cross-cosolvent binding sites.
 
-    *field_maps* is ``{cosolvent: (agfe_array, origin, delta)}``. Supplying it lets the scorer
-    use count-normalised features fused over every probe at each site's point, instead of a
-    best-of-members maximum biased by member count; omitting it warns.
+    *field_maps* is ``{cosolvent: (agfe_array, origin, delta)}``. Supplying it lets the
+    scorer use count-normalised features fused over every probe at each site's point,
+    instead of a best-of-members maximum biased by member count; omitting it warns.
     """
     return BindingSiteDetector(
         probe_results, connectivity=connectivity, weights=weights,
@@ -306,8 +292,8 @@ def export_binding_sites(sites, out_path):
     with open(os.path.join(out_path, "binding_sites_pharmacophore.json"), "w") as fh:
         json.dump(pharm, fh, indent=2)
 
-    # Label map: voxel value = binding-site rank (0 = background). Sites share the
-    # reference grid from grouping (same voxel_mask shape + grid_origin/grid_delta).
+    # Label map: voxel value = binding-site rank (0 = background). All sites share the
+    # reference grid from grouping (same mask shape and grid_origin/grid_delta).
     if sites and sites[0].voxel_mask is not None and sites[0].grid_delta is not None:
         try:
             from gridData import Grid

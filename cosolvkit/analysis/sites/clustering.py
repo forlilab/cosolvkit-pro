@@ -16,9 +16,17 @@ from sklearn.cluster import DBSCAN
 
 
 def min_cluster_voxels_for_volume(volume_ang3, gridsize):
-    """Voxel count matching a physical minimum cluster volume (A^3), at least 1.
+    """Voxel count matching a physical minimum cluster volume, at least 1.
 
-    A voxel-count threshold changes physical meaning when *gridsize* changes; this does not.
+    ``min_cluster_voxels`` is a raw count, so its physical meaning scales as
+    ``1 / gridsize**3``; a volume threshold is grid-independent.
+
+    Parameters
+    ----------
+    volume_ang3 : float
+        Minimum cluster volume in A^3.
+    gridsize : float
+        Voxel edge length in A; must be positive.
     """
     if gridsize is None or float(gridsize) <= 0:
         raise ValueError(f"gridsize must be positive, got {gridsize!r}")
@@ -31,11 +39,10 @@ class ConnectedComponentsClustering:
     Parameters
     ----------
     min_cluster_voxels : int
-        Minimum number of voxels a cluster must contain to be retained.
+        Minimum voxels a cluster must contain to be retained.
     connectivity : {6, 26}
-        Voxel adjacency rule.  6 (default) connects only face-sharing voxels;
-        26 also connects edge- and corner-sharing voxels, which reduces
-        fragmentation across narrow bridges.
+        Voxel adjacency: 6 links face-sharing voxels only; 26 also links
+        edge- and corner-sharing ones, reducing fragmentation across bridges.
     """
 
     def __init__(self, min_cluster_voxels=10, connectivity=26):
@@ -57,19 +64,18 @@ class ConnectedComponentsClustering:
 class WatershedClustering:
     """Cluster favorable voxels with a watershed transform on the AGFE values.
 
-    Treats the AGFE map as a height field and floods from local minima
-    (most-favorable voxels) outward.  This separates touching pockets that
-    connected-components would merge into a single large cluster.
+    Floods the AGFE map as a height field from its local minima, separating
+    touching pockets that connected-components would merge.
 
     Parameters
     ----------
     min_cluster_voxels : int
-        Minimum number of voxels a cluster must contain to be retained.
+        Minimum voxels a cluster must contain to be retained.
     min_distance : int
-        Minimum distance (in voxels) between seed local minima (default 3).
+        Minimum separation, in voxels, between seed minima.
     compactness : float
-        Compactness parameter forwarded to ``skimage.segmentation.watershed``
-        (default 0).  Larger values produce more compact, ball-shaped regions.
+        Forwarded to ``skimage.segmentation.watershed``; larger values give
+        more compact, ball-shaped regions.
     """
 
     def __init__(self, min_cluster_voxels=10, min_distance=3, compactness=0.0):
@@ -78,8 +84,7 @@ class WatershedClustering:
         self.compactness = compactness
 
     def cluster(self, favorable_mask, agfe_array, gridsize):
-        # Seeds: local minima of AGFE (most-negative = most-favorable)
-        # peak_local_max on the negated AGFE finds local minima
+        # Seeds are AGFE minima (most-negative = most favorable), i.e. maxima of -AGFE.
         neg_agfe = -agfe_array
         masked_neg = np.where(favorable_mask, neg_agfe, -np.inf)
         coords = peak_local_max(
@@ -108,34 +113,28 @@ class WatershedClustering:
 class SkimageWatershedClustering:
     """Marker-controlled watershed using h_maxima seeds on the AGFE score field.
 
-    Builds a positive score image from the AGFE map, finds local maxima with
-    h_maxima (or peak_local_max for distance mode), then runs a
-    marker-controlled watershed.  Handles merged pockets better than plain
-    connected-components and is more robust than generic peak-detection when
-    the density map is smooth.
+    More robust than generic peak detection on smooth maps, and unlike plain
+    connected-components it splits merged pockets.
 
     Parameters
     ----------
     min_cluster_voxels : int
-        Clusters smaller than this are discarded after watershed (default 10).
+        Clusters smaller than this are discarded after watershed.
     h : float
-        h-maxima suppression height in score units.  Only local maxima that
-        are at least *h* above their surrounding baseline become markers
-        (default 0.5).  Increase to merge nearby sub-peaks; decrease to split
-        them more aggressively.
+        h-maxima suppression height, in score units: a local maximum seeds a
+        region only if it rises at least *h* above its surrounding baseline.
+        Increase to merge nearby sub-peaks, decrease to split them.
     smoothing_sigma : float or None
-        If given, apply a Gaussian filter with this sigma (in voxels) to the
-        score image before computing h_maxima.  Useful to suppress salt-and-
-        pepper noise before seeding (default None = disabled).
+        Gaussian sigma, in voxels, applied to the score image before seeding
+        to suppress speckle noise.  ``None`` disables smoothing.
     min_distance : int
-        Minimum distance (in voxels) between seed maxima.  Only used when
-        ``watershed_mode="distance"`` (default 3).
+        Minimum separation, in voxels, between seed maxima.  ``"distance"``
+        mode only.
     watershed_mode : {"score", "distance"}
-        ``"score"`` (default): watershed on the clipped AGFE score field
-        ``clip(-agfe, 0, None)``.  Seeds from h_maxima.
-        ``"distance"``: watershed on the Euclidean distance transform of the
-        favorable mask.  Seeds from local maxima in the distance field.  This
-        tends to split blobs more evenly than score-based seeding.
+        ``"score"``: watershed the clipped AGFE score ``clip(-agfe, 0, None)``,
+        seeded by h_maxima.  ``"distance"``: watershed the Euclidean distance
+        transform of the favorable mask, seeded by its local maxima, which
+        splits blobs more evenly.
     """
 
     def __init__(self, min_cluster_voxels=10, h=0.5,
@@ -152,17 +151,15 @@ class SkimageWatershedClustering:
     def cluster(self, favorable_mask, agfe_array, gridsize):
         if self.watershed_mode == "score":
             score = np.clip(-agfe_array, 0, None)
-            # Zero out voxels outside the favorable mask so h_maxima only
-            # finds peaks inside the region of interest.
+            # h_maxima takes no mask, so zero the outside to confine peaks.
             score_masked = score * favorable_mask
 
             if self.smoothing_sigma is not None:
                 score_masked = gaussian(score_masked, sigma=self.smoothing_sigma)
-                # Re-apply mask after smoothing to avoid bleed-out artifacts
+                # The Gaussian bleeds past the mask edge; re-apply it.
                 score_masked = score_masked * favorable_mask
 
             maxima_mask = h_maxima(score_masked, h=self.h)
-            # Restrict markers to the favorable region
             maxima_mask = maxima_mask & favorable_mask
             markers, _ = label(maxima_mask)
 
@@ -201,18 +198,16 @@ class SkimageWatershedClustering:
 class DBSCANClustering:
     """Cluster favorable voxels with DBSCAN on their Angstrom coordinates.
 
-    Purely spatial: ignores AGFE intensity, depends only on whether favorable
-    voxels are within ``eps_angstrom`` of each other.  Independent of voxel
-    adjacency rules.
+    Purely spatial: ignores AGFE intensity and voxel adjacency rules, keying
+    only on whether favorable voxels lie within ``eps_angstrom`` of each other.
 
     Parameters
     ----------
     min_cluster_voxels : int
-        Minimum number of voxels a cluster must contain to be retained
-        (maps to DBSCAN ``min_samples``).
+        Minimum voxels a cluster must contain to be retained (DBSCAN
+        ``min_samples``).
     eps_angstrom : float
-        Neighbourhood radius in Angstroms (default 1.5).  Roughly 2–3× the
-        grid spacing works well for a 0.5 Å grid.
+        Neighbourhood radius in Angstroms; a small multiple of the grid spacing.
     """
 
     def __init__(self, min_cluster_voxels=10, eps_angstrom=1.5):
@@ -249,10 +244,10 @@ class DBSCANClustering:
 def build_clustering_strategy(clustering_cfg, gridsize=None):
     """Build a clustering-strategy instance from a ``ClusteringConfig``.
 
-    Maps ``clustering_cfg.strategy`` to the matching class and constructs it
-    with ``min_cluster_voxels`` plus any ``clustering_cfg.strategy_kwargs``. When *gridsize*
-    is given and the config sets ``min_cluster_volume_ang3``, the voxel threshold is derived
-    from that physical volume instead.
+    Constructs the class named by ``clustering_cfg.strategy`` with
+    ``min_cluster_voxels`` plus any ``strategy_kwargs``.  If *gridsize* is given
+    and the config sets ``min_cluster_volume_ang3``, the voxel threshold is
+    derived from that volume instead.
 
     Raises
     ------
