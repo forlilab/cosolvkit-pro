@@ -94,18 +94,12 @@ def synthetic_universe():
 @pytest.mark.skipif(not HAS_MDA, reason="MDAnalysis not available")
 class TestGridAnalysisNonAtomtype:
 
-    def test_run_completes(self, synthetic_universe, tmp_cwd):
+    def test_run_completes_and_builds_a_3d_histogram(self, synthetic_universe, tmp_cwd):
         from cosolvkit.analysis.density_analysis import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
-        assert analysis._nframes == 5
-
-    def test_grid_shape_is_set_after_run(self, synthetic_universe, tmp_cwd):
-        from cosolvkit.analysis.density_analysis import GridAnalysis
-        ag = synthetic_universe.select_atoms("resname BEN")
-        analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
-        analysis.run()
+        assert analysis._nframes == 5      # matches the trajectory length
         assert hasattr(analysis, "_histogram")
         assert analysis._histogram.grid.ndim == 3
 
@@ -169,17 +163,6 @@ class TestGridAnalysisNonAtomtype:
         g = Grid(out_path)
         assert g.grid.ndim == 3
         assert np.all(np.isfinite(g.grid))
-
-    def test_nframes_counted_correctly(self, tmp_cwd):
-        """Verify _nframes matches the trajectory length."""
-        if not HAS_MDA:
-            pytest.skip("MDAnalysis not available")
-        from cosolvkit.analysis.density_analysis import GridAnalysis
-        u = _make_universe(n_frames=3)
-        ag = u.select_atoms("resname BEN")
-        analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
-        analysis.run()
-        assert analysis._nframes == 3
 
     def test_use_atomtypes_without_definitions_exits(self, synthetic_universe, tmp_cwd):
         """use_atomtypes=True with atomtypes_definitions=None → SystemExit."""

@@ -67,22 +67,17 @@ def _make_detector(tmp_path, cosolvent="BEN", agfe_cutoff=-1.0, min_cluster_voxe
 
 class TestDetect:
 
-    def test_hotspot_detected(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        d = _make_detector(tmp_path)
-        sites = d.detect("BEN")
-        assert len(sites) >= 1
-
-    def test_top_site_rank_is_one(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        sites = _make_detector(tmp_path).detect("BEN")
-        assert sites[0].rank == 1
-
-    def test_top_site_agfe_below_cutoff(self, tmp_path):
+    def test_detect_populates_site_fields(self, tmp_path):
+        """One detect() call, all the per-site fields it must fill in."""
         _make_agfe_grid(tmp_path, "BEN", hotspot_val=-2.0)
-        d = _make_detector(tmp_path, agfe_cutoff=-1.0)
-        sites = d.detect("BEN")
+        sites = _make_detector(tmp_path, agfe_cutoff=-1.0).detect("BEN")
+        assert len(sites) >= 1
+        assert sites[0].rank == 1
+        assert sites[0].cosolvent == "BEN"
         assert sites[0].agfe_min < -1.0
+        assert sites[0].grid_origin is not None
+        assert sites[0].grid_delta is not None
+        assert len(sites[0].grid_origin) == 3
 
     def test_centroid_inside_hotspot_region(self, tmp_path):
         _make_agfe_grid(tmp_path, "BEN")
@@ -107,18 +102,6 @@ class TestDetect:
         with pytest.raises(FileNotFoundError):
             d.detect("NMA")
 
-    def test_grid_metadata_attached_to_sites(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        sites = _make_detector(tmp_path).detect("BEN")
-        assert sites[0].grid_origin is not None
-        assert sites[0].grid_delta is not None
-        assert len(sites[0].grid_origin) == 3
-
-    def test_cosolvent_stored_on_site(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        sites = _make_detector(tmp_path).detect("BEN")
-        assert sites[0].cosolvent == "BEN"
-
     def test_rank_by_agfe_min(self, tmp_path):
         # two blobs, different depths -> deeper (more negative) ranks first
         import numpy as np
@@ -139,26 +122,17 @@ class TestDetect:
 
 class TestExportResults:
 
-    def test_csv_written(self, tmp_path):
+    def test_per_cosolvent_and_combined_files_written(self, tmp_path):
         _make_agfe_grid(tmp_path, "BEN")
         d = _make_detector(tmp_path)
         results = {"BEN": d.detect("BEN")}
         d.export_results(results, label_map=False)
         assert (tmp_path / "hotspot_sites_BEN.csv").exists()
-
-    def test_json_written(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        d = _make_detector(tmp_path)
-        results = {"BEN": d.detect("BEN")}
-        d.export_results(results, label_map=False)
-        assert (tmp_path / "hotspot_sites_BEN.json").exists()
-
-    def test_combined_tsv_written(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        d = _make_detector(tmp_path)
-        results = {"BEN": d.detect("BEN")}
-        d.export_results(results, label_map=False)
         assert (tmp_path / "hotspot_sites_all.tsv").exists()
+        with open(tmp_path / "hotspot_sites_BEN.json") as f:
+            data = json.load(f)
+        assert isinstance(data, list)
+        assert len(data) >= 1
 
     def test_csv_has_expected_columns(self, tmp_path):
         import pandas as pd
@@ -171,16 +145,6 @@ class TestExportResults:
                     "centroid_x", "centroid_y", "centroid_z",
                     "agfe_min", "agfe_mean_top_pct"):
             assert col in df.columns, f"Missing column: {col}"
-
-    def test_json_is_valid(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        d = _make_detector(tmp_path)
-        results = {"BEN": d.detect("BEN")}
-        d.export_results(results, label_map=False)
-        with open(tmp_path / "hotspot_sites_BEN.json") as f:
-            data = json.load(f)
-        assert isinstance(data, list)
-        assert len(data) >= 1
 
     def test_label_map_written(self, tmp_path):
         _make_agfe_grid(tmp_path, "BEN")
@@ -200,66 +164,30 @@ class TestExportResults:
 
 class TestCheckpoint:
 
-    def test_roundtrip_site_count(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        d = _make_detector(tmp_path)
-        results = {"BEN": d.detect("BEN")}
-        HotspotDetector.save_checkpoint(results, str(tmp_path))
-        loaded = HotspotDetector.load_checkpoint(str(tmp_path), ["BEN"])
-        assert len(loaded["BEN"]) == len(results["BEN"])
-
-    def test_roundtrip_voxel_mask_shape(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        d = _make_detector(tmp_path)
-        results = {"BEN": d.detect("BEN")}
-        HotspotDetector.save_checkpoint(results, str(tmp_path))
-        loaded = HotspotDetector.load_checkpoint(str(tmp_path), ["BEN"])
-        orig = results["BEN"][0].voxel_mask
-        restored = loaded["BEN"][0].voxel_mask
-        assert orig.shape == restored.shape
-        assert np.array_equal(orig, restored)
-
-    def test_roundtrip_grid_metadata(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        d = _make_detector(tmp_path)
-        results = {"BEN": d.detect("BEN")}
-        HotspotDetector.save_checkpoint(results, str(tmp_path))
-        loaded = HotspotDetector.load_checkpoint(str(tmp_path), ["BEN"])
-        orig = results["BEN"][0]
-        restored = loaded["BEN"][0]
-        assert np.allclose(orig.grid_origin, restored.grid_origin, atol=1e-4)
-        assert np.allclose(orig.grid_delta, restored.grid_delta, atol=1e-4)
-
-    def test_roundtrip_centroid(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        d = _make_detector(tmp_path)
-        results = {"BEN": d.detect("BEN")}
-        HotspotDetector.save_checkpoint(results, str(tmp_path))
-        loaded = HotspotDetector.load_checkpoint(str(tmp_path), ["BEN"])
-        orig = results["BEN"][0].centroid
-        restored = loaded["BEN"][0].centroid
-        assert np.allclose(orig, restored, atol=0.01)
-
-    def test_roundtrip_custom_properties(self, tmp_path):
+    def test_roundtrip_preserves_sites(self, tmp_path):
+        """save -> load must return the same sites, masks, grid frame and extras."""
         _make_agfe_grid(tmp_path, "BEN")
         d = _make_detector(tmp_path)
         results = {"BEN": d.detect("BEN")}
         results["BEN"][0].add_property("my_metric", 42.0)
         HotspotDetector.save_checkpoint(results, str(tmp_path))
+
+        npz = tmp_path / "hotspot_checkpoints" / "hotspot_checkpoint_BEN.npz"
+        assert npz.exists()
+
         loaded = HotspotDetector.load_checkpoint(str(tmp_path), ["BEN"])
-        assert loaded["BEN"][0].properties.get("my_metric") == pytest.approx(42.0)
+        assert len(loaded["BEN"]) == len(results["BEN"])
+        orig, restored = results["BEN"][0], loaded["BEN"][0]
+        assert orig.voxel_mask.shape == restored.voxel_mask.shape
+        assert np.array_equal(orig.voxel_mask, restored.voxel_mask)
+        assert np.allclose(orig.grid_origin, restored.grid_origin, atol=1e-4)
+        assert np.allclose(orig.grid_delta, restored.grid_delta, atol=1e-4)
+        assert np.allclose(orig.centroid, restored.centroid, atol=0.01)
+        assert restored.properties.get("my_metric") == pytest.approx(42.0)
 
     def test_load_missing_cosolvent_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             HotspotDetector.load_checkpoint(str(tmp_path), ["NOSUCHCOSOLVENT"])
-
-    def test_npz_file_created(self, tmp_path):
-        _make_agfe_grid(tmp_path, "BEN")
-        d = _make_detector(tmp_path)
-        results = {"BEN": d.detect("BEN")}
-        HotspotDetector.save_checkpoint(results, str(tmp_path))
-        npz = tmp_path / "hotspot_checkpoints" / "hotspot_checkpoint_BEN.npz"
-        assert npz.exists()
 
     def test_empty_results_no_checkpoint_file(self, tmp_path):
         """Empty site list → no checkpoint file written (debug-logged, not error)."""
@@ -273,17 +201,10 @@ class TestCheckpoint:
 # ---------------------------------------------------------------------------
 
 class TestCsvSlim:
-    def test_main_csv_has_no_geom_columns(self, tmp_path):
+    def test_geom_columns_go_to_the_sidecar_only(self, tmp_path):
         # build a detector whose sites carry geom_* via properties
-        from cosolvkit.analysis.hotspots_detection import HotspotDetector
-        import numpy as np
-        from gridData import Grid
-        arr = np.zeros((20, 20, 20)); arr[5:10, 5:10, 5:10] = -2.0
-        edges = [np.linspace(0, 10, 21)] * 3
-        Grid(arr, edges=edges).export(str(tmp_path / "map_agfe_BEN.dx"))
-        det = HotspotDetector(out_path=str(tmp_path), cosolvent_names=["BEN"], universe=None,
-                              agfe_cutoff=-1.0, min_cluster_voxels=10,
-                              compute_survival_probability=False)
+        _make_agfe_grid(tmp_path, "BEN")
+        det = _make_detector(tmp_path)
         sites = det.detect("BEN")
         sites[0].add_property("geom_solidity", 0.42)  # simulate a geom_* column
         det.export_results({"BEN": sites}, label_map=False)
@@ -291,20 +212,6 @@ class TestCsvSlim:
         main = pd.read_csv(tmp_path / "hotspot_sites_BEN.csv")
         assert not any(c.startswith("geom_") for c in main.columns)
         assert "agfe_min" in main.columns
-
-    def test_geom_sidecar_written_with_site_id(self, tmp_path):
-        from cosolvkit.analysis.hotspots_detection import HotspotDetector
-        import numpy as np
-        from gridData import Grid
-        arr = np.zeros((20, 20, 20)); arr[5:10, 5:10, 5:10] = -2.0
-        edges = [np.linspace(0, 10, 21)] * 3
-        Grid(arr, edges=edges).export(str(tmp_path / "map_agfe_BEN.dx"))
-        det = HotspotDetector(out_path=str(tmp_path), cosolvent_names=["BEN"], universe=None,
-                              agfe_cutoff=-1.0, min_cluster_voxels=10,
-                              compute_survival_probability=False)
-        sites = det.detect("BEN")
-        sites[0].add_property("geom_solidity", 0.42)
-        det.export_results({"BEN": sites}, label_map=False)
 
         sidecar = pd.read_csv(tmp_path / "hotspot_sites_geom_BEN.csv")
         assert "site_id" in sidecar.columns

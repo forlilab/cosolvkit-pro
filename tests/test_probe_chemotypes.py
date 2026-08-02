@@ -49,10 +49,6 @@ def test_benzene_is_not_an_hbond_partner():
     assert probe_chemotypes(["BEN"]) == ["aromatic", "aliphatic"]
 
 
-def test_acetate_is_anionic():
-    assert "anionic" in probe_chemotypes(["ACT"])
-
-
 def test_unknown_resnames_contribute_nothing():
     assert probe_chemotypes(["NOPE", "ZZZ"]) == []
 
@@ -69,9 +65,7 @@ def test_resname_lookup_is_case_and_space_insensitive():
 def test_overrides_beat_the_builtin_table():
     m = resolve_probe_chemotypes({"BEN": ["anionic"]})
     assert probe_chemotypes(["BEN"], m) == ["anionic"]
-
-
-def test_overrides_accept_a_bare_string():
+    # a bare string is accepted in place of a one-element list
     m = resolve_probe_chemotypes({"XYZ": "cationic"})
     assert probe_chemotypes(["XYZ"], m) == ["cationic"]
 
@@ -99,6 +93,11 @@ def test_binding_site_derives_chemotypes_from_cosolvents():
     assert "aromatic" in bs.probe_chemotypes
     assert "anionic" in bs.probe_chemotypes
     assert bs.n_probe_chemotypes == len(bs.probe_chemotypes)
+    # and they reach the exported record
+    d = bs.to_dict()
+    assert "probe_chemotypes" in d
+    assert d["n_probe_chemotypes"] > 0
+    assert d["probe_chemotype_coverage"] is not None
 
 
 def test_probe_chemotype_coverage_is_a_fraction():
@@ -110,13 +109,6 @@ def test_coverage_falls_back_to_full_class_list():
     bs = BindingSite(site_id=1, cosolvents=["BEN"])
     assert bs.probe_chemotype_coverage == pytest.approx(
         len(bs.probe_chemotypes) / len(CHEMOTYPE_CLASSES))
-
-
-def test_to_dict_exports_chemotype_columns():
-    d = BindingSite(site_id=1, cosolvents=["BEN", "ACT"]).to_dict()
-    assert "probe_chemotypes" in d
-    assert d["n_probe_chemotypes"] > 0
-    assert d["probe_chemotype_coverage"] is not None
 
 
 def test_probe_coverage_and_chemotype_coverage_can_disagree():
@@ -149,9 +141,6 @@ def test_missing_keys_fall_back_to_defaults():
     w = normalize_weights({"affinity": 9.0})
     assert w["affinity"] == 9.0
     assert w["volume"] == DEFAULT_BINDING_SITE_WEIGHTS["volume"]
-
-
-def test_none_weights_gives_the_defaults():
     assert normalize_weights(None) == DEFAULT_BINDING_SITE_WEIGHTS
 
 

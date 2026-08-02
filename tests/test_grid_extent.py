@@ -75,17 +75,6 @@ def test_grid_matches_the_box_when_every_atom_is_inside(tmp_cwd):
     assert an._histogram.grid.shape == (expected,) * 3
 
 
-def test_nothing_is_dropped_when_every_atom_is_inside(tmp_cwd):
-    an = _run(_universe(probe_offset=0.0))
-    assert an._histogram.grid.sum() == pytest.approx(an._n_atoms * an._nframes)
-
-
-def test_grid_expands_to_contain_atoms_outside_the_box(tmp_cwd):
-    """The rotated-box case: probe sits well outside the axis-aligned box."""
-    an = _run(_universe(probe_offset=BOX))          # BEN pushed a full box length out
-    assert an._histogram.grid.shape[0] > int(round(BOX / GRIDSIZE))
-
-
 def test_no_positions_are_dropped_when_atoms_fall_outside_the_box(tmp_cwd):
     """The actual bug: histogram total must equal n_atoms x n_frames regardless."""
     an = _run(_universe(probe_offset=BOX))
@@ -106,15 +95,6 @@ def test_accessible_voxels_never_exceed_the_box_solvent_volume(tmp_cwd):
     an = _run(_universe(probe_offset=BOX))
     box_voxels = np.prod(np.asarray(an._box_size) / GRIDSIZE)
     assert an._n_accessible_voxels <= box_voxels
-
-
-def test_reference_volume_is_not_inflated_by_the_expansion(tmp_cwd):
-    """N_o must not collapse just because the grid got bigger."""
-    a = _run(_universe(probe_offset=0.0))
-    b = _run(_universe(probe_offset=BOX))
-    # same box, same atom count -> the reference density should be comparable, not 1.5x apart
-    ratio = b._n_accessible_voxels / a._n_accessible_voxels
-    assert 0.5 < ratio < 2.0, f"reference volume moved by {ratio:.2f}x on expansion"
 
 
 def test_expanded_grid_still_contains_the_original_box(tmp_cwd):

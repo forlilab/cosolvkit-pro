@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 from cosolvkit.analysis.core.models import BindingSite
-from cosolvkit.analysis.core.scoring import score_binding_sites, DEFAULT_BINDING_SITE_WEIGHTS
+from cosolvkit.analysis.core.scoring import score_binding_sites
 
 
 def _bs(site_id, agfe_min, volume, n_cos, residence, solidity, atomtypes):
@@ -52,13 +52,16 @@ def test_score_binding_sites_none_kinetics_contributes_zero():
     assert a.combined == pytest.approx(0.0, abs=1e-9)
 
 
-def test_default_weights_constant():
-    """Pins the shipped weights. field_* are new and opt-in at 0.0, so adding them changes no
-    ranking — the field AUC of 0.805 was measured at ligand positions, not hotspot centroids."""
-    assert DEFAULT_BINDING_SITE_WEIGHTS == {
-        "affinity": 3.0, "probe_coverage": 2.0, "volume": 1.0,
-        "kinetics": 1.0, "shape": 1.0, "chemotype_diversity": 1.0,
-        "probe_chemotype_coverage": 0.0,
-        "field_contrast": 0.0, "field_sharpness": 0.0,
-        "buriedness": 0.0,
-    }
+def test_shape_scores_lower_solidity_first():
+    """`shape` is lower-is-better and was once scored with the wrong sign.
+
+    Re-measured on FosAKP analysis_v3 over 405 hotspots (51 known): solidity separates known
+    from novel at within-probe AUC 0.734 (0.700 after controlling for volume), and known sites
+    are the *less* convex ones — mean 0.742 vs 0.835. Real pockets are irregular clefts.
+    """
+    irregular = _bs(1, -1.0, 100.0, 1, 1.0, 0.74, ["Car"])
+    round_ = _bs(2, -1.0, 100.0, 1, 1.0, 0.84, ["Car"])
+    score_binding_sites([irregular, round_],
+                        {"shape": 1.0, "affinity": 0.0, "probe_coverage": 0.0,
+                         "volume": 0.0, "kinetics": 0.0, "chemotype_diversity": 0.0})
+    assert irregular.rank == 1

@@ -49,20 +49,6 @@ def universe():
     return _make_universe()
 
 
-def test_config_exposes_export_raw_defaulting_on():
-    from cosolvkit.analysis.config import DensityMapsConfig
-    assert DensityMapsConfig().export_raw is True
-
-
-def test_raw_map_is_written_alongside_the_clamped_one(universe, tmp_cwd, tmp_path):
-    out = tmp_path / "out"
-    r = _report(universe, out)
-    r.generate_density_maps(cosolvent_names=[COSOLVENT], use_atomtypes=False,
-                            gridsize=1.0, temperature=300.0, export_raw=True)
-    assert os.path.isfile(out / f"map_agfe_{COSOLVENT}.dx")
-    assert os.path.isfile(out / f"map_agfe_raw_{COSOLVENT}.dx")
-
-
 def test_raw_export_can_be_switched_off(universe, tmp_cwd, tmp_path):
     out = tmp_path / "out"
     r = _report(universe, out)
@@ -78,24 +64,16 @@ def test_raw_map_keeps_the_positive_values_the_clamp_destroys(universe, tmp_cwd,
     r = _report(universe, out)
     r.generate_density_maps(cosolvent_names=[COSOLVENT], use_atomtypes=False,
                             gridsize=1.0, temperature=300.0, export_raw=True)
-    clamped = Grid(str(out / f"map_agfe_{COSOLVENT}.dx")).grid
-    raw = Grid(str(out / f"map_agfe_raw_{COSOLVENT}.dx")).grid
+    clamped = Grid(str(out / f"map_agfe_{COSOLVENT}.dx"))
+    raw = Grid(str(out / f"map_agfe_raw_{COSOLVENT}.dx"))
 
-    assert clamped.max() == pytest.approx(0.0, abs=1e-9), "shipped map should be capped at 0"
-    assert raw.max() > 0.0, "raw map must retain depleted (positive) voxels"
-    assert np.any(raw > 0) and not np.any(clamped > 0)
-
-
-def test_raw_and_clamped_share_one_grid_so_they_can_be_compared(universe, tmp_cwd, tmp_path):
-    out = tmp_path / "out"
-    r = _report(universe, out)
-    r.generate_density_maps(cosolvent_names=[COSOLVENT], use_atomtypes=False,
-                            gridsize=1.0, temperature=300.0, export_raw=True)
-    a = Grid(str(out / f"map_agfe_{COSOLVENT}.dx"))
-    b = Grid(str(out / f"map_agfe_raw_{COSOLVENT}.dx"))
-    assert a.grid.shape == b.grid.shape
-    np.testing.assert_allclose(a.origin, b.origin)
-    np.testing.assert_allclose(a.delta, b.delta)
+    assert clamped.grid.max() == pytest.approx(0.0, abs=1e-9), "shipped map capped at 0"
+    assert raw.grid.max() > 0.0, "raw map must retain depleted (positive) voxels"
+    assert np.any(raw.grid > 0) and not np.any(clamped.grid > 0)
+    # The two must live on one grid, or the displacement field cannot be differenced.
+    assert clamped.grid.shape == raw.grid.shape
+    np.testing.assert_allclose(clamped.origin, raw.origin)
+    np.testing.assert_allclose(clamped.delta, raw.delta)
 
 
 def test_existing_raw_map_does_not_block_regeneration_check(universe, tmp_cwd, tmp_path):

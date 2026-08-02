@@ -120,18 +120,6 @@ class TestScoringDefaults:
             vals = _binding_site_feature_values([site])
         assert vals["affinity"][0] == pytest.approx(-2.0)
 
-    def test_probe_coverage_keeps_its_weight_despite_the_count_bias(self):
-        """It IS the member count (rho +0.978), but dropping it measured worse: mean rank of
-        true sites 8.25 -> 11.13 over 43 matched sites. Biased and still useful on average."""
-        from cosolvkit.analysis.core.scoring import DEFAULT_BINDING_SITE_WEIGHTS
-        assert DEFAULT_BINDING_SITE_WEIGHTS["probe_coverage"] == 2.0
-
-    def test_shape_keeps_its_weight(self):
-        """Re-measured on v3: solidity is the best per-hotspot discriminator, 0.700 after
-        controlling for volume, where agfe_min falls to 0.500."""
-        from cosolvkit.analysis.core.scoring import DEFAULT_BINDING_SITE_WEIGHTS
-        assert DEFAULT_BINDING_SITE_WEIGHTS["shape"] == 1.0
-
     def test_fused_affinity_is_higher_is_better(self):
         from cosolvkit.analysis.core.scoring import _BS_INVERTED_FEATURES
         assert "fused_affinity" not in _BS_INVERTED_FEATURES

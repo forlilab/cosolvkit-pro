@@ -7,37 +7,23 @@ site's shape term downstream instead of being recorded as missing.
 """
 
 import json
-import math
 
 import numpy as np
 
 from cosolvkit.analysis.sites.properties import _serialize_regionprop_value
 
 
-def test_positive_infinity_becomes_none():
-    assert _serialize_regionprop_value(float("inf")) is None
+def test_non_finite_scalars_become_none():
+    """The bug: solidity = area/0 came back as +inf and reached the CSV and the JSON."""
+    for v in (float("inf"), float("-inf"), float("nan"),
+              np.float64("inf"), np.float64("nan")):
+        assert _serialize_regionprop_value(v) is None
 
 
-def test_negative_infinity_becomes_none():
-    assert _serialize_regionprop_value(float("-inf")) is None
-
-
-def test_nan_becomes_none():
-    assert _serialize_regionprop_value(float("nan")) is None
-
-
-def test_numpy_non_finite_becomes_none():
-    assert _serialize_regionprop_value(np.float64("inf")) is None
-    assert _serialize_regionprop_value(np.float64("nan")) is None
-
-
-def test_finite_floats_are_untouched():
+def test_finite_values_keep_their_value_and_type():
     assert _serialize_regionprop_value(0.75) == 0.75
     assert _serialize_regionprop_value(np.float64(-2.5)) == -2.5
-    assert _serialize_regionprop_value(0.0) == 0.0
-
-
-def test_integers_stay_integers():
+    assert _serialize_regionprop_value(0.0) == 0.0, "0.0 must not be confused with missing"
     v = _serialize_regionprop_value(np.int64(7))
     assert v == 7 and isinstance(v, int)
 
@@ -65,9 +51,3 @@ def test_slice_handling_is_preserved():
     assert _serialize_regionprop_value((slice(0, 2, None), slice(3, 4, None))) == [
         [0, 2, None], [3, 4, None]
     ]
-
-
-def test_math_isfinite_agrees_for_every_finite_case():
-    for v in (0.0, 1.0, -1.0, 1e-12, 1e12):
-        assert _serialize_regionprop_value(v) is not None
-        assert math.isfinite(_serialize_regionprop_value(v))

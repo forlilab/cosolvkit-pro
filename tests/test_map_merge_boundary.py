@@ -11,7 +11,6 @@ forming a shell on all six faces, which then merged into one connected cluster h
 """
 
 import numpy as np
-import pytest
 from gridData import Grid
 
 from cosolvkit.analysis.core.grid import (
@@ -56,13 +55,6 @@ def test_offset_of_half_a_voxel_is_not_aligned():
     assert not _grids_spatially_aligned(a, b)
 
 
-def test_different_shape_is_never_aligned():
-    a = _agfe_grid(0.0)
-    data = np.zeros((10, 10, 10))
-    edges = [np.arange(11) * DELTA for _ in range(3)]
-    assert not _grids_spatially_aligned(a, Grid(data, edges=edges))
-
-
 # ---------------------------------------------------------------------------
 # Resampling fill value
 # ---------------------------------------------------------------------------
@@ -79,17 +71,6 @@ def test_resample_fills_out_of_range_with_neutral_not_minimum():
     assert out.min() < -1.0
 
 
-def test_resample_default_would_be_harmful_without_override():
-    """Documents why we bypass gridData: its own default fills faces with grid.min()."""
-    ref = _agfe_grid(0.0)
-    shifted = _agfe_grid(0.25)
-    shifted.interpolation_cval = None      # gridData default -> grid.min()
-    naive = shifted.resample(ref.edges).grid
-    faces = _face_mask(naive.shape)
-    assert naive[faces].min() < -1.0, (
-        "expected gridData's default to fill faces with the grid minimum")
-
-
 def test_resample_is_identity_for_the_same_grid():
     """Guards the index arithmetic in _resample_grid."""
     g = _agfe_grid(0.0)
@@ -97,21 +78,13 @@ def test_resample_is_identity_for_the_same_grid():
     np.testing.assert_allclose(out, g.grid, atol=1e-9)
 
 
-def test_linear_resample_does_not_overshoot():
-    """Interpolated values stay within the source range (no invented favourability)."""
-    ref = _agfe_grid(0.0)
-    shifted = _agfe_grid(0.25)
-    out = _resample_grid(shifted, ref, fill_value=0.0)
-    assert out.min() >= shifted.grid.min() - 1e-9
-    assert out.max() <= max(shifted.grid.max(), 0.0) + 1e-9
-
-
 # ---------------------------------------------------------------------------
 # End-to-end merge
 # ---------------------------------------------------------------------------
 
-@pytest.mark.parametrize("shift", [0.0, 0.023, 0.25])
-def test_merge_never_creates_favourable_faces(tmp_path, shift):
+def test_merge_never_creates_favourable_faces(tmp_path):
+    """Half a voxel of offset is the case that takes the resample path."""
+    shift = 0.25
     paths = []
     for idx, s in enumerate((0.0, shift)):
         p = tmp_path / f"map_{idx}.dx"

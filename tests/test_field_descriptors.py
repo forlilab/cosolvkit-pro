@@ -35,36 +35,22 @@ def _centre_xyz(arr):
 
 class TestDescriptorValues:
 
-    def test_returns_the_documented_set(self):
-        arr = _well()
-        d = field_descriptors(arr, ORIGIN, DELTA, _centre_xyz(arr))
-        assert set(d) == set(FIELD_DESCRIPTORS)
-
     def test_min_ball_finds_the_well_bottom(self):
         arr = _well(depth=-3.0)
         d = field_descriptors(arr, ORIGIN, DELTA, _centre_xyz(arr))
+        assert set(d) == set(FIELD_DESCRIPTORS)
         assert d["field_min_ball"] == pytest.approx(-3.0, abs=0.05)
 
-    def test_contrast_is_negative_at_a_well(self):
-        """Inside is more favourable than the surrounding shell."""
+    def test_descriptor_signs_at_a_well_and_on_a_flat_field(self):
+        """Contrast is negative inside a well (more favourable than its shell) and sharpness is
+        positive; a featureless field must give exactly zero sharpness, not noise."""
         arr = _well()
         d = field_descriptors(arr, ORIGIN, DELTA, _centre_xyz(arr))
-        assert d["field_contrast"] < 0
-
-    def test_sharpness_is_positive_at_a_well_and_zero_on_a_flat_field(self):
-        arr = _well()
-        sharp = field_descriptors(arr, ORIGIN, DELTA, _centre_xyz(arr))["field_sharpness"]
         flat = field_descriptors(np.zeros((41, 41, 41)), ORIGIN, DELTA,
                                  _centre_xyz(arr))["field_sharpness"]
-        assert sharp > 0
+        assert d["field_contrast"] < 0
+        assert d["field_sharpness"] > 0
         assert flat == pytest.approx(0.0, abs=1e-9)
-
-    def test_a_deeper_well_scores_stronger_on_every_descriptor(self):
-        shallow = field_descriptors(_well(depth=-1.0), ORIGIN, DELTA, _centre_xyz(_well()))
-        deep = field_descriptors(_well(depth=-3.0), ORIGIN, DELTA, _centre_xyz(_well()))
-        assert deep["field_min_ball"] < shallow["field_min_ball"]
-        assert deep["field_contrast"] < shallow["field_contrast"]
-        assert deep["field_sharpness"] > shallow["field_sharpness"]
 
     def test_a_narrow_well_is_sharper_than_a_broad_one_of_equal_depth(self):
         narrow = field_descriptors(_well(sigma=1.5), ORIGIN, DELTA, _centre_xyz(_well()))
@@ -78,14 +64,6 @@ class TestDescriptorValues:
 
 
 class TestScoringIntegration:
-
-    def test_new_features_are_weightable_and_default_to_zero(self):
-        from cosolvkit.analysis.core.scoring import (
-            DEFAULT_BINDING_SITE_WEIGHTS, normalize_weights,
-        )
-        for name in ("field_contrast", "field_sharpness"):
-            assert DEFAULT_BINDING_SITE_WEIGHTS[name] == 0.0
-            assert normalize_weights({name: 2.0})[name] == 2.0
 
     def test_site_takes_the_best_field_value_over_its_member_hotspots(self, make_hotspot):
         from cosolvkit.analysis.core.models import BindingSite

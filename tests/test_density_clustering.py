@@ -23,16 +23,13 @@ GRIDSIZE = 0.5  # Å per voxel — used by DBSCAN to convert to Angstroms
 
 class TestConnectedComponentsClustering:
 
-    def test_two_blobs_found(self, two_blob_mask, two_blob_agfe):
-        cc = ConnectedComponentsClustering(min_cluster_voxels=10, connectivity=26)
-        labeled, labels = cc.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
-        assert len(labels) == 2
-
-    def test_small_blob_filtered_by_min_voxels(self, two_blob_mask, two_blob_agfe):
-        # min_cluster_voxels=30 filters the 8-voxel tiny blob, keeps the 125-voxel blobs
-        cc = ConnectedComponentsClustering(min_cluster_voxels=30, connectivity=26)
-        _, labels = cc.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
-        assert len(labels) == 2
+    def test_two_blobs_found_tiny_blob_filtered(self, two_blob_mask, two_blob_agfe):
+        # The two 125-voxel blobs survive; the 8-voxel tiny blob is filtered at
+        # either threshold.
+        for min_voxels in (10, 30):
+            cc = ConnectedComponentsClustering(min_cluster_voxels=min_voxels, connectivity=26)
+            _, labels = cc.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
+            assert len(labels) == 2, min_voxels
 
     def test_all_blobs_filtered_out(self, two_blob_mask, two_blob_agfe):
         cc = ConnectedComponentsClustering(min_cluster_voxels=200, connectivity=26)
@@ -49,14 +46,10 @@ class TestConnectedComponentsClustering:
         with pytest.raises(ValueError):
             ConnectedComponentsClustering(connectivity=18)
 
-    def test_labeled_array_shape_matches_mask(self, two_blob_mask, two_blob_agfe):
+    def test_labeled_array_shape_and_background(self, two_blob_mask, two_blob_agfe):
         cc = ConnectedComponentsClustering(min_cluster_voxels=10)
         labeled, _ = cc.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
         assert labeled.shape == two_blob_mask.shape
-
-    def test_labeled_array_background_is_zero(self, two_blob_mask, two_blob_agfe):
-        cc = ConnectedComponentsClustering(min_cluster_voxels=10)
-        labeled, _ = cc.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
         assert labeled[0, 0, 0] == 0  # corner is background
 
     def test_empty_mask_gives_no_clusters(self, two_blob_agfe):
@@ -83,18 +76,14 @@ class TestWatershedClustering:
 
     def test_two_separated_blobs_found(self, two_blob_mask, two_blob_agfe):
         ws = WatershedClustering(min_cluster_voxels=10, min_distance=3)
-        _, labels = ws.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
+        labeled, labels = ws.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
         assert len(labels) >= 2
+        assert labeled.shape == two_blob_mask.shape
 
     def test_min_voxels_filtering(self, two_blob_mask, two_blob_agfe):
         ws = WatershedClustering(min_cluster_voxels=200)
         _, labels = ws.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
         assert len(labels) == 0
-
-    def test_output_shape(self, two_blob_mask, two_blob_agfe):
-        ws = WatershedClustering(min_cluster_voxels=10)
-        labeled, _ = ws.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
-        assert labeled.shape == two_blob_mask.shape
 
     def test_empty_mask(self, two_blob_agfe):
         empty = np.zeros((20, 20, 20), dtype=bool)
@@ -111,8 +100,9 @@ class TestSkimageWatershedClustering:
 
     def test_score_mode_finds_blobs(self, two_blob_mask, two_blob_agfe):
         sw = SkimageWatershedClustering(min_cluster_voxels=10, h=0.5, watershed_mode="score")
-        _, labels = sw.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
+        labeled, labels = sw.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
         assert len(labels) >= 1
+        assert labeled.shape == two_blob_mask.shape
 
     def test_distance_mode_finds_blobs(self, two_blob_mask, two_blob_agfe):
         sw = SkimageWatershedClustering(min_cluster_voxels=10, h=0.5, watershed_mode="distance")
@@ -128,11 +118,6 @@ class TestSkimageWatershedClustering:
         sw = SkimageWatershedClustering(min_cluster_voxels=10, h=100.0)
         _, labels = sw.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
         assert len(labels) <= 1
-
-    def test_output_shape(self, two_blob_mask, two_blob_agfe):
-        sw = SkimageWatershedClustering(min_cluster_voxels=10)
-        labeled, _ = sw.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
-        assert labeled.shape == two_blob_mask.shape
 
     def test_min_voxels_filtering(self, two_blob_mask, two_blob_agfe):
         sw = SkimageWatershedClustering(min_cluster_voxels=200, h=0.5)
@@ -154,23 +139,9 @@ class TestDBSCANClustering:
     def test_two_separated_blobs(self, two_blob_mask, two_blob_agfe):
         # Blobs A and B are ~3.5 Å apart; eps=1.5 Å keeps them separate
         db = DBSCANClustering(min_cluster_voxels=10, eps_angstrom=1.5)
-        _, labels = db.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
+        labeled, labels = db.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
         assert len(labels) >= 2
-
-    def test_output_shape(self, two_blob_mask, two_blob_agfe):
-        db = DBSCANClustering(min_cluster_voxels=5, eps_angstrom=1.5)
-        labeled, _ = db.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
         assert labeled.shape == two_blob_mask.shape
-
-    def test_min_voxels_filters_small_cluster(self, two_blob_mask, two_blob_agfe):
-        # The 8-voxel tiny blob should be filtered by min_cluster_voxels=10
-        db = DBSCANClustering(min_cluster_voxels=10, eps_angstrom=1.5)
-        _, labels = db.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
-        # Blobs A and B have 125 voxels each, well above threshold
-        for lbl in labels:
-            count = int((db.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)[0] == lbl).sum())
-            # Can't easily get per-cluster count here — just check total label count
-        assert len(labels) >= 1
 
     def test_empty_mask_gives_no_clusters(self, two_blob_agfe):
         empty = np.zeros((20, 20, 20), dtype=bool)

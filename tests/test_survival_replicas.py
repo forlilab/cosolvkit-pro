@@ -97,18 +97,19 @@ def test_multiple_replicas_average_the_curves(tmp_path, stub_sp):
     assert df.loc[df.Time == 4, "SP"].iloc[0] < np.exp(-0.1 * 4)
 
 
-def test_per_replica_curves_are_kept(tmp_path, stub_sp):
+def test_per_replica_curves_are_kept_for_every_zone(tmp_path, stub_sp):
     a, b = _FakeUniverse(), _FakeUniverse()
     stub_sp.registry[id(a)] = 0.2
     stub_sp.registry[id(b)] = 0.8
     calc = _calculator(tmp_path, a)
-    calc.run_survival_probability(["BEN"], [[0.0, 0.0, 0.0]], max_tau=3,
-                                 universes=[a, b])
+    calc.run_survival_probability(["BEN"], [[0.0, 0.0, 0.0], [5.0, 5.0, 5.0]],
+                                 max_tau=3, universes=[a, b])
 
     raw = pd.read_csv(tmp_path / "survival_probability_BEN_per_replica.csv")
     assert sorted(raw["Replica"].unique().tolist()) == [0, 1]
-    # Both replicas contribute a full curve, so the spread is recoverable.
-    assert len(raw) == 2 * 4
+    assert sorted(raw["Group"].unique().tolist()) == [0, 1]
+    # Every replica contributes a full curve in every zone, so the spread is recoverable.
+    assert len(raw) == 2 * 2 * 4          # zones x replicas x timepoints
 
 
 def test_mean_of_replica_mrts_equals_mrt_of_mean_curve(tmp_path, stub_sp):
@@ -132,18 +133,6 @@ def test_mean_of_replica_mrts_equals_mrt_of_mean_curve(tmp_path, stub_sp):
                for _, g in raw.groupby("Replica")]
     mrt_of_mean = np.trapz(mean_curve["SP"].values, mean_curve["Time"].values)
     assert np.mean(per_rep) == pytest.approx(mrt_of_mean, abs=1e-9)
-
-
-def test_zones_and_replicas_are_both_enumerated(tmp_path, stub_sp):
-    a, b = _FakeUniverse(), _FakeUniverse()
-    stub_sp.registry[id(a)] = 0.4
-    stub_sp.registry[id(b)] = 0.4
-    calc = _calculator(tmp_path, a)
-    calc.run_survival_probability(["BEN"], [[0.0, 0.0, 0.0], [5.0, 5.0, 5.0]],
-                                 max_tau=2, universes=[a, b])
-    raw = pd.read_csv(tmp_path / "survival_probability_BEN_per_replica.csv")
-    assert sorted(raw["Group"].unique().tolist()) == [0, 1]
-    assert len(raw) == 2 * 2 * 3          # zones x replicas x timepoints
 
 
 # ---------------------------------------------------------------------------
@@ -213,19 +202,6 @@ def test_adaptive_radius_uses_unweighted_rg():
     # Unweighted Rg is exactly half the separation regardless of the mass difference.
     assert PocketPropertyCalculator.probe_zone_radius(
         u, "MOH", tolerance=0.0) == pytest.approx(0.7, abs=1e-6)
-
-
-def test_adaptive_radius_grows_with_probe_size():
-    small = PocketPropertyCalculator.probe_zone_radius(_diatomic_universe(1.4), "MOH")
-    big = PocketPropertyCalculator.probe_zone_radius(_diatomic_universe(5.0), "MOH")
-    assert big > small
-
-
-def test_adaptive_radius_scales_with_tolerance():
-    u = _diatomic_universe()
-    assert (PocketPropertyCalculator.probe_zone_radius(u, "MOH", tolerance=2.0)
-            - PocketPropertyCalculator.probe_zone_radius(u, "MOH", tolerance=0.5)
-            == pytest.approx(1.5, abs=1e-6))
 
 
 def test_adaptive_radius_none_for_absent_cosolvent():

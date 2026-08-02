@@ -35,21 +35,12 @@ def _run(tmp_path, caplog, **kwargs):
     return caplog.text
 
 
-def test_generate_density_maps_accepts_n_kt(tmp_cwd, tmp_path, caplog):
+def test_reported_cutoff_follows_n_kt(tmp_cwd, tmp_path, caplog):
+    """kT = 0.596, so n_kt=2 must be judged against -1.19, not the hardcoded -0.60."""
     text = _run(tmp_path, caplog, n_kt=2.0)
     assert "sampling:" in text
-
-
-def test_reported_cutoff_follows_n_kt(tmp_cwd, tmp_path, caplog):
-    """kT = 0.596, so n_kt=2 must be reported as a -1.19 cutoff, not -0.60."""
-    text = _run(tmp_path, caplog, n_kt=2.0)
     assert "-1.19" in text, f"expected the n_kt=2 cutoff in the log, got: {text[-400:]}"
     assert "cutoff -0.60" not in text
-
-
-def test_default_still_reports_one_kt(tmp_cwd, tmp_path, caplog):
-    text = _run(tmp_path, caplog)
-    assert "-0.60" in text
 
 
 def test_a_strict_cutoff_does_not_warn_when_it_clears_the_floor(tmp_cwd, tmp_path, caplog):

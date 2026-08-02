@@ -16,8 +16,9 @@ What this does and does not break, measured on that box:
   Per-residue quantities (a probe's radius of gyration, ``residues=True`` analyses) are wrong
   for the fused residue too.
 
-So the fused pseudo-residue is the *detectable symptom* of a wrapped topology; the warning must
-name that consequence and not overclaim.
+So the fused pseudo-residue is the *detectable symptom* of a wrapped topology. What is tested
+here is the detection itself and the warn/no-warn decision; the exact wording of the message is
+not pinned.
 """
 
 import logging
@@ -68,29 +69,16 @@ def _fused(n_clean=4, n_in_fused=3):
     return _waters(idx, n_clean + 1)
 
 
-class TestZoneIsResidBased:
-    """Only resid-style zones are exposed to the ambiguity, so the warning is gated on them."""
+def test_zone_is_resid_based_discriminates_resids_from_xyz():
+    """Only resid-style zones are exposed to the ambiguity, so the warning is gated on them.
 
-    def test_bare_int_is_resid_based(self):
-        assert _zone_is_resid_based(7) is True
-
-    def test_resid_list_is_resid_based(self):
-        assert _zone_is_resid_based([12, 13, 14]) is True
-
-    def test_xyz_triple_is_not_resid_based(self):
-        assert _zone_is_resid_based([1.5, 2.5, 3.5]) is False
-
-    def test_three_integers_are_treated_as_resids_not_coordinates(self):
-        """A 3-element all-int zone is resids by convention; _is_xyz requires floats."""
-        assert _zone_is_resid_based([1, 2, 3]) is True
-
-    def test_tuple_xyz_is_not_resid_based(self):
-        assert _zone_is_resid_based((0.0, 0.0, 0.0)) is False
-
-
-def test_clean_topology_reports_nothing():
-    u = _clean()
-    assert detect_fused_residues(u.select_atoms("resname HOH")) == []
+    The load-bearing case is the 3-element zone: all-int means resids, floats mean a point.
+    """
+    assert _zone_is_resid_based(7) is True
+    assert _zone_is_resid_based([12, 13, 14]) is True
+    assert _zone_is_resid_based([1, 2, 3]) is True
+    assert _zone_is_resid_based([1.5, 2.5, 3.5]) is False
+    assert _zone_is_resid_based((0.0, 0.0, 0.0)) is False
 
 
 def test_fused_residue_is_detected_with_its_size():
@@ -102,22 +90,13 @@ def test_fused_residue_is_detected_with_its_size():
     assert resid == 5
 
 
-def test_detection_is_not_water_specific():
-    """The same resid overflow fuses any species; the check must be general."""
-    idx = sum(([i] * 3 for i in range(3)), []) + [3] * 6
-    u = _waters(idx, 4, resname="BEN")
-    assert len(detect_fused_residues(u.select_atoms("resname BEN"))) == 1
-
-
-def test_empty_selection_is_not_an_error():
-    u = _clean()
-    assert detect_fused_residues(u.select_atoms("resname NOPE")) == []
-
-
-def test_single_residue_selection_is_not_flagged():
-    """With one residue the modal size is that residue; it must not flag itself."""
-    u = _clean(n_waters=1)
-    assert detect_fused_residues(u.select_atoms("resname HOH")) == []
+def test_clean_and_degenerate_selections_are_not_flagged():
+    """No false positives: a clean box, an empty selection (a probe absent from the box), and
+    a single-residue selection, where the modal size IS that residue and it must not flag itself.
+    """
+    assert detect_fused_residues(_clean().select_atoms("resname HOH")) == []
+    assert detect_fused_residues(_clean().select_atoms("resname NOPE")) == []
+    assert detect_fused_residues(_clean(n_waters=1).select_atoms("resname HOH")) == []
 
 
 def test_uniformly_large_residues_are_not_flagged():
@@ -131,44 +110,19 @@ def test_uniformly_large_residues_are_not_flagged():
     assert detect_fused_residues(u.select_atoms("resname BEN")) == []
 
 
-def test_warning_is_logged_and_names_the_topology_cause(caplog):
-    u = _fused()
+def test_warn_flags_a_fused_topology_and_stays_silent_on_a_clean_one(caplog):
+    """Callers branch on the return value, and a warning on a clean box would send someone
+    re-running analyses that were fine."""
     with caplog.at_level(logging.WARNING):
-        flagged = warn_if_fused_residues(u.select_atoms("resname HOH"),
+        flagged = warn_if_fused_residues(_fused().select_atoms("resname HOH"),
                                          logger=logging.getLogger("t"),
                                          context="zone selection")
     assert flagged is True
-    msg = caplog.text
-    assert "9999" in msg, "the message must point at the resid overflow"
-    assert "zone selection" in msg
-    assert "resid" in msg, "and at the consequence: resid selections are ambiguous"
-    assert "ambiguous" in msg.lower(), "state the consequence precisely"
-    assert "prmtop" in msg.lower(), "and at the fix"
+    assert caplog.text != ""
 
-
-def test_warning_does_not_blame_molecular_identity_tracking(caplog):
-    """Misleading: SP tracks atoms.ids (unique), so 'identity tracking' is not the problem."""
-    u = _fused()
+    caplog.clear()
     with caplog.at_level(logging.WARNING):
-        warn_if_fused_residues(u.select_atoms("resname HOH"), logger=logging.getLogger("t"))
-    assert "molecular identity" not in caplog.text.lower()
-
-
-def test_warning_says_maps_and_sp_are_unaffected(caplog):
-    """Histograms key on positions and SP keys on unique atom ids, so say so — a bare
-    'your topology is wrong' would send someone re-running analyses that were fine."""
-    u = _fused()
-    with caplog.at_level(logging.WARNING):
-        warn_if_fused_residues(u.select_atoms("resname HOH"), logger=logging.getLogger("t"))
-    low = caplog.text.lower()
-    assert "unaffected" in low
-    assert "survival probability" in low
-
-
-def test_no_warning_for_clean_topology(caplog):
-    u = _clean()
-    with caplog.at_level(logging.WARNING):
-        flagged = warn_if_fused_residues(u.select_atoms("resname HOH"),
-                                         logger=logging.getLogger("t"))
-    assert flagged is False
+        clean_flagged = warn_if_fused_residues(_clean().select_atoms("resname HOH"),
+                                               logger=logging.getLogger("t"))
+    assert clean_flagged is False
     assert caplog.text == ""

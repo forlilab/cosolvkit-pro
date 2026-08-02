@@ -15,8 +15,8 @@ def test_default_strategy_is_skimage_watershed():
     assert strat.min_cluster_voxels == 20
 
 
+# skimage_watershed is omitted: it is the default and is covered above.
 @pytest.mark.parametrize("name,cls", [
-    ("skimage_watershed", SkimageWatershedClustering),
     ("connected_components", ConnectedComponentsClustering),
     ("watershed", WatershedClustering),
     ("dbscan", DBSCANClustering),

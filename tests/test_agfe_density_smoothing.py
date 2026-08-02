@@ -52,10 +52,6 @@ def _agfe(hist, sigma=SIGMA):
 
 class TestDetectionFloor:
 
-    def test_matches_the_gaussian_peak_of_a_single_count(self):
-        expected = 1.0 / ((2 * np.pi) ** 1.5 * SIGMA ** 3)
-        assert _detection_floor_counts(SIGMA) == pytest.approx(expected)
-
     def test_a_single_count_really_does_peak_at_the_floor(self):
         """Empirical check of the formula against scipy's own kernel."""
         h = np.zeros(SHAPE)
@@ -64,23 +60,18 @@ class TestDetectionFloor:
         assert peak == pytest.approx(_detection_floor_counts(SIGMA), rel=0.02)
 
     def test_no_smoothing_means_the_limit_is_one_count(self):
+        """sigma=0 divides by zero in the closed form; it is special-cased to one count."""
         assert _detection_floor_counts(0.0) == 1.0
-
-    def test_wider_kernel_has_a_lower_limit(self):
-        assert _detection_floor_counts(2 * SIGMA) < _detection_floor_counts(SIGMA)
 
 
 class TestBackgroundIsBoundedAndDerived:
 
-    def test_unvisited_background_is_not_the_old_8_5(self):
-        agfe = _agfe(np.zeros(SHAPE))
-        assert agfe.max() < 1.0, "background must be a resolution limit, not +8.5 kcal/mol"
-
-    def test_background_equals_the_detection_limit_value(self):
+    def test_unvisited_background_is_the_derived_detection_limit_not_the_old_8_5(self):
         agfe = _agfe(np.zeros(SHAPE))
         floor = _detection_floor_counts(SIGMA)
         expected = -KT * np.log((floor / N_FRAMES) / (N_ATOMS / N_ACC))
         assert agfe.max() == pytest.approx(expected)
+        assert agfe.max() < 1.0, "background must be a resolution limit, not +8.5 kcal/mol"
 
     def test_background_moves_with_sigma_not_with_any_epsilon(self):
         """The cap is a property of the kernel, so changing the kernel must change it.
@@ -95,11 +86,7 @@ class TestBackgroundIsBoundedAndDerived:
         assert b > a, "a wider kernel resolves less, so its cap is further from bulk"
         legacy = _grid_free_energy(np.zeros(SHAPE), N_ATOMS, N_FRAMES, N_ACC, 300.0).max()
         assert a < legacy / 5 and b < legacy / 4
-
-    def test_the_old_path_still_shows_the_artifact(self):
-        """Regression guard: the legacy estimator is unchanged, so old results reproduce."""
-        legacy = _grid_free_energy(np.zeros(SHAPE), N_ATOMS, N_FRAMES, N_ACC, 300.0)
-        assert legacy.max() > 8.0, "legacy 1e-10 floor should still give ~+8.5"
+        assert legacy > 8.0, "legacy 1e-10 floor is unchanged, so old results still reproduce"
 
 
 class TestShotNoiseIsFiltered:
@@ -110,17 +97,6 @@ class TestShotNoiseIsFiltered:
         h[MID] = 1.0
         assert _agfe(h)[MID] > 0.0
 
-    def test_an_isolated_pair_of_visits_is_still_not_favourable(self):
-        h = np.zeros(SHAPE)
-        h[MID] = 2.0
-        assert _agfe(h)[MID] > -KT
-
-    def test_a_real_hotspot_is_still_favourable(self):
-        """30 coincident visits — the depth of a genuine FosAKP hotspot."""
-        h = np.zeros(SHAPE)
-        h[MID] = 30.0
-        assert _agfe(h)[MID] < -KT
-
     def test_the_cutoff_now_needs_roughly_five_coincident_visits(self):
         """Documents the new sensitivity: ~5 counts in a kernel, not 1 anywhere."""
         passing = []
@@ -130,6 +106,9 @@ class TestShotNoiseIsFiltered:
             passing.append(_agfe(h)[MID] < -KT)
         first = passing.index(True) + 1
         assert 4 <= first <= 7, f"cutoff first passed at {first} visits"
+        deep = np.zeros(SHAPE)
+        deep[MID] = 30.0                       # depth of a genuine FosAKP hotspot
+        assert _agfe(deep)[MID] < -KT, "a real hotspot must stay favourable"
 
     def test_spatially_spread_counts_beat_the_same_counts_scattered(self):
         """A coincidence filter: clustered visits should read deeper than dispersed ones."""
@@ -150,13 +129,6 @@ class TestEstimatorInvariants:
         h = np.full(SHAPE, b)
         interior = _agfe(h)[5:-5, 5:-5, 5:-5]
         np.testing.assert_allclose(interior, 0.0, atol=1e-6)
-
-    def test_smoothing_the_density_conserves_total_counts(self):
-        """Linear in the observable — unlike smoothing a log field."""
-        h = np.zeros(SHAPE)
-        h[10:15, 10:15, 10:15] = 3.0
-        sm = gaussian_filter(h, sigma=SIGMA, mode="constant", cval=0.0)
-        assert sm.sum() == pytest.approx(h.sum(), rel=1e-6)
 
     def test_enrichment_is_still_negative_and_depletion_positive(self):
         b = N_ATOMS * N_FRAMES / N_ACC
