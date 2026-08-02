@@ -71,9 +71,8 @@ REGIONPROPS_ALL = [
 def detect_fused_residues(atomgroup):
     """Residues holding more selected atoms than the modal residue, as (resid, n_atoms).
 
-    The PDB resid field maxes out at 9999, so a box with >9999 waters wraps and merges the
-    overflow into one pseudo-residue. Position histograms do not care, but anything tracking
-    molecular identity does.
+    Symptom of a wrapped topology: the PDB resid field maxes at 9999, so the overflow is
+    merged into one pseudo-residue.
     """
     if atomgroup is None or atomgroup.n_atoms == 0:
         return []
@@ -105,8 +104,8 @@ def warn_if_fused_residues(atomgroup, logger=None, context=""):
 
 
 def _finite_or_none(val):
-    """inf/nan are not valid JSON. QHull returns convex_area 0 for blobs it cannot hull
-    (~10 voxels), so solidity comes back as inf; record it as missing instead."""
+    """Float, or None if non-finite (not valid JSON). QHull returns convex_area 0 for tiny
+    blobs it cannot hull, making solidity inf."""
     f = float(val)
     return f if np.isfinite(f) else None
 

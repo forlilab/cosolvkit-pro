@@ -250,10 +250,8 @@ def _grid_free_energy(hist, n_atoms, n_frames, n_accessible_voxels, temperature=
 def _detection_floor_counts(sigma_voxels, ndim: int = 3) -> float:
     """Smallest pooled count a Gaussian kernel of width *sigma_voxels* can represent.
 
-    A single observation smoothed by the kernel peaks at ``1/((2*pi)^(d/2) * sigma^d)``, so
-    anything below that is less than one observation's worth — the resolution limit of the map.
-    Without smoothing the limit is one count. Unlike the old ``N = max(N, 1e-10)`` floor this is
-    derived from the kernel rather than chosen.
+    A single observation smoothed by the kernel peaks at ``1/((2*pi)^(d/2) * sigma^d)``.
+    Without smoothing the limit is one count.
     """
     if sigma_voxels <= 0:
         return 1.0
@@ -264,21 +262,10 @@ def _grid_free_energy_density_smoothed(hist, n_atoms, n_frames, n_accessible_vox
                                        sigma_voxels, temperature=300.0):
     """AGFE from a Gaussian-smoothed OCCUPANCY histogram.
 
-    Smoothing belongs on the density, not on the energy. The kernel width is ``atom_radius/3``,
-    i.e. it represents the physical size of an atom — a statement about where density is. Density
-    also averages linearly, and the log of a locally-averaged density is a well-defined free
-    energy, whereas an average of logs is not.
-
-    Doing it in this order removes the need for the ``N = max(N, 1e-10)`` floor, whose only job
-    was to keep ``log(0)`` finite but which set the unvisited background to +8.5 kcal/mol and then
-    let the Gaussian filter mix that arbitrary constant into every neighbourhood — making the
-    favourable set depend on the choice of epsilon. Here the only bound is the kernel's own
-    resolution limit (:func:`_detection_floor_counts`), and it is applied *after* smoothing so it
-    cannot propagate.
-
-    Side effect worth knowing: an isolated single visit now reads as slightly UNFAVOURABLE,
-    because one count spread over the kernel is below bulk density. The -1 kT cutoff therefore
-    needs ~5 coincident visits instead of a single one anywhere.
+    Smoothing the density and then inverting avoids the ``log(0)`` floor: the only bound is
+    the kernel's resolution limit (:func:`_detection_floor_counts`), applied after smoothing.
+    Note an isolated single visit reads as slightly UNFAVOURABLE, since one count spread over
+    the kernel is below bulk density; -1 kT needs ~5 coincident visits.
     """
     hist = np.asarray(hist, dtype=float)
     counts = (gaussian_filter(hist, sigma=sigma_voxels, mode="constant", cval=0.0)
@@ -424,11 +411,10 @@ class GridAnalysis(AnalysisBase):
         hbins = np.round(self._box_size / self._gridsize).astype(int)
         self._delta = self._box_size / hbins
 
-        # An aligned trajectory rotates coordinates but not the box vectors, so wrapped solvent
-        # occupies a ROTATED box while this grid is axis-aligned. Positions then fall outside a
-        # box-sized grid and np.histogramdd discards them silently (16% of atom-frames on FosAKP).
-        # Pad the grid outward in whole voxels so the interior still lines up with the
-        # unpadded grid, leaving ordinary wrapped trajectories bit-identical.
+        # An aligned trajectory rotates coordinates but not the box vectors, so solvent occupies
+        # a rotated box while this grid is axis-aligned and np.histogramdd silently discards the
+        # positions falling outside. Pad outward in whole voxels, keeping the interior aligned
+        # with the unpadded grid.
         flat = self._positions.reshape(-1, 3)
         box_lo, box_hi = self._center - sd, self._center + sd
         self._frac_outside_box = float(
@@ -571,10 +557,8 @@ class GridAnalysis(AnalysisBase):
             protein_mask = protein_hist > 0
             mask = mask & ~protein_mask
 
-        # Count the reference volume only inside the box-sized central region. A padded grid
-        # sweeps corners the rotated box passes through, and any voxel solvent ever touched is
-        # marked accessible, so counting the whole grid would inflate the reference and deflate
-        # N_o. Restricting to the box region makes N_o independent of the padding.
+        # Count the reference volume only inside the box-sized central region, so N_o does not
+        # depend on the padding.
         delta = getattr(self, "_delta", np.full(3, self._gridsize, dtype=float))
         box_lo = np.asarray(self._center) - np.asarray(self._box_size) / 2.0
         box_hi = np.asarray(self._center) + np.asarray(self._box_size) / 2.0
@@ -671,9 +655,7 @@ class GridAnalysis(AnalysisBase):
                         temperature):
         """(raw, display) AGFE arrays for one occupancy histogram.
 
-        ``raw`` is the full unclipped field; ``display`` has unfavourable voxels zeroed. In
-        ``"density"`` space ``raw`` is already smoothed (the smoothing happens on the counts,
-        before the log); in legacy ``"energy"`` space ``raw`` is the unsmoothed inversion.
+        ``raw`` is the full unclipped field; ``display`` has unfavourable voxels zeroed.
         """
         if smoothing and smoothing_space == "density":
             raw = _grid_free_energy_density_smoothed(
@@ -697,11 +679,9 @@ class GridAnalysis(AnalysisBase):
         :param temperature: Temperature in Kelvin (default 300K)
         :param atom_radius: Atomic radius for smoothing (default 1.4A)
         :param smoothing: Apply smoothing to the free energy map (default True)
-        :param smoothing_space: ``"density"`` (default) smooths the occupancy histogram and then
-            inverts it, which is the physically correct order and needs no ``log(0)`` floor.
-            ``"energy"`` reproduces the legacy behaviour: invert first with ``N`` floored at
-            1e-10, then smooth the energy field — which mixes an arbitrary +8.5 kcal/mol
-            background into every neighbourhood. Kept only for reproducing earlier results.
+        :param smoothing_space: ``"density"`` (default) smooths the occupancy histogram then
+            inverts it. ``"energy"`` is the legacy path: invert with ``N`` floored at 1e-10,
+            then smooth the energy field. Kept only to reproduce earlier results.
 
         """
         if smoothing_space not in ("density", "energy"):

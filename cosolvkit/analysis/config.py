@@ -53,8 +53,8 @@ class DensityMapsConfig:
     atomtypes_file: Optional[str] = None
     gridsize:       float         = 0.5
     temperature:    float         = 300.0
-    # Also write map_agfe_raw_*.dx, the unclamped AGFE. The shipped map zeroes every
-    # voxel >= 0, which erases depletion and makes two maps impossible to difference.
+    # Also write map_agfe_raw_*.dx (unclamped AGFE); map_agfe_*.dx zeroes voxels >= 0,
+    # which erases depletion.
     export_raw:     bool          = True
 
 
@@ -69,9 +69,8 @@ class ClusteringConfig:
     strategy:            str  = "skimage_watershed"  # skimage_watershed | connected_components | watershed | dbscan
     strategy_kwargs:     Dict = field(default_factory=dict)
     min_cluster_voxels:  int  = 20
-    # Preferred over min_cluster_voxels: a voxel count changes physical meaning with gridsize
-    # (10 voxels = 1.25 A^3 at 0.5 A but 5.12 A^3 at 0.8 A), so a resolution change silently
-    # alters which clusters survive. When set, this wins.
+    # Preferred over min_cluster_voxels, whose physical meaning changes with gridsize.
+    # When set, this wins.
     min_cluster_volume_ang3: Optional[float] = None
     use_skimage_cleanup: bool = False
     cleanup_min_size:    int  = 1

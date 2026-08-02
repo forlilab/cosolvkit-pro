@@ -413,8 +413,7 @@ class BindingSite:
         self.rank = None
 
     def add_property(self, name, value):
-        """Attach an arbitrary property, e.g. the fused field features written by
-        :func:`cosolvkit.analysis.core.site_features.fused_site_features`."""
+        """Attach an arbitrary property, e.g. a fused field feature."""
         self.properties[name] = value
 
     @property

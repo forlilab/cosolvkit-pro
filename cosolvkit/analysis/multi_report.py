@@ -157,7 +157,7 @@ class MultiReport:
                 gridsize=cfg.density_maps.gridsize,
                 temperature=cfg.density_maps.temperature,
                 export_raw=cfg.density_maps.export_raw,
-                # The sampling verdict is only meaningful against the cutoff detection will use.
+                # Sampling verdict must use the cutoff detection will use.
                 n_kt=cfg.hotspots.n_kt,
             )
 
@@ -265,8 +265,8 @@ class MultiReport:
     def _save_hotspot_checkpoint(self, results):
         """Write the hotspot checkpoint if enabled.
 
-        Called twice per run: once after detection (crash-safe, geometry only) and again after
-        ``fit_survival_probability`` so the persisted copy carries the ``sp_*`` metrics.
+        Called twice per run: after detection (geometry only) and after
+        ``fit_survival_probability``, so the persisted copy carries the ``sp_*`` metrics.
         """
         if not self.config.checkpoint.save_hotspots:
             return
@@ -412,8 +412,7 @@ class MultiReport:
             # Restore out_path to merged dir for subsequent operations
             detector.out_path = self._merged_dir
 
-            # Re-save now that fit_survival_probability has attached the sp_* metrics;
-            # the checkpoint written after detection holds only geom_*.
+            # Re-save now that fit_survival_probability has attached the sp_* metrics.
             self._save_hotspot_checkpoint(results)
 
         for cosolvent, sites in results.items():
@@ -432,8 +431,8 @@ class MultiReport:
             from cosolvkit.analysis.sites.binding_sites import (
                 identify_binding_sites, export_binding_sites,
             )
-            # Supply the merged maps so site features are fused over every probe rather than
-            # summarised as a best-of-members maximum (which tracks member count at rho -0.82).
+            # Merged maps let site features be fused over every probe instead of a
+            # best-of-members maximum, which tracks member count.
             binding_sites = identify_binding_sites(
                 results, connectivity=bs_cfg.connectivity,
                 weights=bs_cfg.weights, merge_tolerance_ang=bs_cfg.merge_tolerance_ang,

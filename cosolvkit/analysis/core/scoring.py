@@ -48,14 +48,10 @@ def _minmax(arr):
 # ---------------------------------------------------------------------------
 
 DEFAULT_BINDING_SITE_WEIGHTS = {
-    # Fused across every probe at the site's point when the maps are available, falling back
-    # (loudly) to best-member agfe_min otherwise. See _affinity_values.
+    # Most-negative AGFE at the site (lower is better). See _affinity_values.
     "affinity": 3.0,
-    # Correlates with member count at rho +0.978 (it IS the count, scaled), and member count is
-    # anti-predictive for the sites that matter here (the 23-fragment main pocket is hit by 4
-    # probes, a 6-fragment site by 13). Dropping it to 0.0 was tried and MEASURED WORSE: over 43
-    # matched sites in 18 probes the mean rank of true sites went 8.25 -> 11.13 and top5
-    # 0.167 -> 0.111. The count is a biased but on-average-useful ranking signal, so it stays.
+    # How many PROBES hit the site (not atom types — that is chemotype_diversity below).
+    # Effectively a member count, so biased toward big sites, but useful on average.
     "probe_coverage": 2.0,
     "volume": 1.0,
     "kinetics": 1.0,
@@ -70,27 +66,18 @@ DEFAULT_BINDING_SITE_WEIGHTS = {
     # represented among the probes that hit the site. Opt-in: weight 0.0 by default,
     # pending validation across more than one target.
     "probe_chemotype_coverage": 0.0,
-    # Read from the AGFE map as a FIELD at member-hotspot centroids (see core/field.py), not
-    # from the thresholded blob. At fixed query points these reach AUC 0.805 versus 0.50-0.70
-    # for blob geometry. Opt-in at 0.0: that AUC was measured at crystallographic ligand
-    # positions, and a hotspot centroid sits a median 1.4 A away, so enabling them should be a
-    # weight sweep rather than an assumption.
+    # Read from the AGFE map as a FIELD at member-hotspot centroids (see core/field.py),
+    # not from the thresholded blob. Opt-in at 0.0, pending a weight sweep.
     "field_contrast": 0.0,
     "field_sharpness": 0.0,
-    # Protein heavy atoms within 8 A of the site — an enclosure proxy. Opt-in at 0.0 pending a
-    # weight sweep, but the most promising addition available: it is the only feature measured to
-    # be INDEPENDENT of the size/depth axis (rho +0.044 with volume, versus -0.948 for
-    # field_min_ball), and volume+buriedness reaches 0.726 against competing hotspots vs 0.697
-    # for volume alone. Aggregated as the MEAN over member hotspots, never the max, so member
-    # count cannot inflate it.
+    # Enclosure proxy: protein heavy atoms within 8 A of the site, averaged (not maxed) over
+    # member hotspots so member count cannot inflate it. Opt-in at 0.0, pending a weight sweep.
     "buriedness": 0.0,
 }
 
 # Features whose raw value is "lower is better" -> inverted min-max (most-negative -> 1).
-# `shape` (solidity) is here on measurement, not intuition: on analysis_v3 (405 hotspots, 51
-# known) solidity separates known from novel at within-probe AUC 0.734 and 0.700 after
-# controlling for volume — the strongest feature we have, where agfe_min falls to 0.500 — and
-# known sites are LESS convex (mean 0.742 vs 0.835). Real pockets are irregular clefts.
+# `shape` (solidity) is inverted because known sites are LESS convex than novel ones — real
+# pockets are irregular clefts.
 _BS_INVERTED_FEATURES = {"affinity", "field_contrast", "shape"}
 
 # ``diversity`` was renamed to ``chemotype_diversity`` because it scores atom types, not
@@ -108,8 +95,7 @@ def _site_property(site, name):
 def _best_member_property(site, name, prefer="min"):
     """Best value of *name* over a site's member hotspots, or None if none carry it.
 
-    Field descriptors live on hotspots (that is where the map was in hand), so a site takes its
-    strongest member: most-negative for contrast, largest for sharpness.
+    *prefer* is ``"min"`` (most-negative, e.g. contrast) or ``"max"`` (e.g. sharpness).
     """
     vals = []
     for hs in getattr(site, "member_hotspots", None) or []:
@@ -121,17 +107,15 @@ def _best_member_property(site, name, prefer="min"):
     return min(vals) if prefer == "min" else max(vals)
 
 
-#: Use the count-normalised fused affinity instead of best-member ``agfe_min``.
-#: Default False on measurement: it removes the count bias (rho(n_hotspots, score) +0.77 -> -0.44)
-#: but ranked WORSE on FosAKP (mean rank of true sites 8.25 -> 11.13 over 43 matched sites). The
-#: fused values are still computed and exported whenever the maps are supplied, so a weight sweep
-#: or a second target can revisit this without a code change.
+#: Use the count-normalised fused affinity instead of best-member ``agfe_min``. Off by
+#: default: it removes the member-count bias but ranked worse. The fused values are still
+#: computed and exported whenever the maps are supplied.
 USE_FUSED_AFFINITY = False
 
 
 def _mean_member_property(site, name):
-    """Mean of *name* over member hotspots, or None. Mean rather than max: a best-of-members
-    summary is inflated by member count (rho -0.82 on this benchmark)."""
+    """Mean of *name* over member hotspots, or None. Mean, not max: a best-of-members
+    summary is inflated by member count."""
     vals = []
     for hs in getattr(site, "member_hotspots", None) or []:
         v = (getattr(hs, "properties", None) or {}).get(name)
@@ -143,11 +127,9 @@ def _mean_member_property(site, name):
 def _affinity_values(binding_sites):
     """Fused, count-normalised affinity when available; best-member ``agfe_min`` otherwise.
 
-    ``agfe_min`` is the most-negative value over a site's member hotspots, which correlates with
-    member count at rho -0.82 on this benchmark — best-of-n inflation, not quality. The fused
-    value samples every probe at the site's point (see core/site_features.py) so its denominator
-    is constant. Falling back is loud, because a silently count-biased affinity at weight 3.0 is
-    most of the score.
+    ``agfe_min`` is a best-of-members minimum and so is inflated by member count; the fused
+    value samples every probe at the site's point (see core/site_features.py). The fallback
+    warns, since a count-biased affinity at weight 3.0 dominates the score.
     """
     if not USE_FUSED_AFFINITY:
         return [s.agfe_min for s in binding_sites]
@@ -175,7 +157,7 @@ def _binding_site_feature_values(binding_sites):
                                 for s in binding_sites],
         "probe_chemotype_coverage": [getattr(s, "probe_chemotype_coverage", None)
                                      for s in binding_sites],
-        # Fused (count-normalised) when present, else best-of-members as a documented fallback.
+        # Fused (count-normalised) when present, else best-of-members.
         "field_contrast":  [_site_property(s, "fused_contrast")
                             if _site_property(s, "fused_contrast") is not None
                             else _best_member_property(s, "field_contrast", prefer="min")

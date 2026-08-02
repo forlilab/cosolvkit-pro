@@ -141,10 +141,9 @@ class Report:
 
     def _log_sampling_adequacy(self, analysis, cosolvent, gridsize, temperature,
                                atom_radius=1.4, n_kt=1.0):
-        """Report whether this map is better sampled than its own Poisson noise.
+        """Log whether this map is better sampled than its own Poisson noise.
 
-        A dilute probe collects a fraction of one count per voxel, so a single visit can look
-        like a deep well. *n_kt* mirrors the default hotspot cutoff.
+        *n_kt* must match the hotspot cutoff the maps will be thresholded at.
         """
         from cosolvkit.analysis.core.sampling import sampling_report
         try:

@@ -1,19 +1,13 @@
 """Descriptors read from the AGFE map as a continuous FIELD, at a point.
 
-Measured against crystallographic ground truth on FosAKP, descriptors sampled this way reach
-AUC 0.805 at fixed query points, while descriptors of the thresholded-and-clustered blob sit at
-0.50-0.70 and swing across segmentation settings by as much as their whole effect. Nothing here
-depends on a cutoff or a clustering, so the values cannot move when those settings change.
-
-Field descriptors are the better *scoring* substrate but not a better *detector*: a prototype
-that generated candidates from field minima instead of segmentation tied or lost on recall@top5.
-So these are meant to score points the pipeline already proposed.
+Nothing here depends on a cutoff or a clustering, so the values cannot move when those
+settings change. These are a *scoring* substrate, not a *detector*: they score points the
+pipeline already proposed.
 """
 
 import numpy as np
 
-# Sampling radii in Angstroms. Chosen to match the offline evaluation that produced the AUCs
-# above, so pipeline values are directly comparable to it.
+# Sampling radii in Angstroms.
 _MIN_BALL_R = 3.0
 _CONTRAST_R, _CONTRAST_SHELL = 3.0, 2.0
 _SHARP_R, _SHARP_SHELL_LO, _SHARP_SHELL_HI = 1.5, 2.0, 3.0
@@ -45,8 +39,7 @@ def _ball(arr, origin, delta, xyz, radius):
 def field_descriptors(agfe, origin, delta, xyz):
     """Field descriptors at *xyz*, as ``{name: float or None}``.
 
-    ``None`` for every descriptor when the point lies outside the grid, so a caller can attach
-    the result unconditionally and let the scorer treat missing values as no contribution.
+    ``None`` for every descriptor when the point lies outside the grid.
     """
     out = {name: None for name in FIELD_DESCRIPTORS}
 
@@ -78,10 +71,8 @@ def field_descriptors(agfe, origin, delta, xyz):
 def buriedness(points, protein_xyz, radius=8.0):
     """Protein heavy atoms within *radius* of each point — a simple enclosure proxy.
 
-    Worth having because it is **independent** of the density terms, not because it is strong on
-    its own: measured against competing hotspots, buriedness scores 0.686 and volume 0.697, but
-    rho(volume, buriedness) = +0.044 while rho(volume, field_min_ball) = -0.948. Combining volume
-    and buriedness reaches 0.726; adding the field term does not help.
+    Worth having because it is independent of the density terms, not because it is strong on
+    its own.
     """
     pts = np.atleast_2d(np.asarray(points, dtype=float))
     prot = np.asarray(protein_xyz, dtype=float)

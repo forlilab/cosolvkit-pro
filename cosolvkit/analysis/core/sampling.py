@@ -3,12 +3,7 @@
 AGFE is ``-kT * ln(c / b)`` with ``c`` the counts in a voxel and ``b`` the expected counts if
 occupancy were uniform. For a dilute cosolvent ``b`` is a small fraction of one count, so a
 single visit is already a deep-looking well and the map's precision is set by Poisson statistics
-rather than by trajectory length in any intuitive way.
-
-Concretely, on a 100 ns FosAKP benzene run (444 probe atoms, 1000 frames, 2.92M accessible
-voxels): ``b`` = 0.152 counts/voxel, one visit reads -1.12 kcal/mol, and the deepest voxel in
-the whole map is ~30 visits. The favourability cutoff of -1 kT is reached at 0.41 counts, i.e.
-below one observation. :func:`sampling_report` makes that comparison explicit.
+rather than by trajectory length. :func:`sampling_report` makes that comparison explicit.
 
 Nothing here changes a map; it only measures one.
 """
@@ -44,7 +39,6 @@ def effective_pooled_voxels(sigma_voxels, ndim=3):
     """Independent voxels averaged by a Gaussian kernel of width *sigma_voxels*.
 
     ``1 / sum(w_i^2)`` for normalised Gaussian weights, which is ``(2*sqrt(pi)*sigma)^ndim``.
-    The pipeline smooths with sigma = (atom_radius/3)/gridsize = 0.933 voxels, pooling ~36.
     """
     if sigma_voxels <= 0:
         return 1.0
@@ -55,8 +49,7 @@ def agfe_noise_sigma(pooled_counts, temperature=300.0):
     """Poisson uncertainty on AGFE, ``kT / sqrt(counts)``.
 
     Approximate: the pipeline smooths the AGFE field rather than the histogram, so this treats
-    the smoothed value as an average of *pooled_counts* independent observations. It is the
-    right order of magnitude, which is all that is needed to compare against a cutoff.
+    the smoothed value as an average of *pooled_counts* independent observations.
     """
     kt = BOLTZMANN_CONSTANT_KB * temperature
     if pooled_counts <= 0:

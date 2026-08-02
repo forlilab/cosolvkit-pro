@@ -390,14 +390,13 @@ class HotspotDetector:
             ))
 
         # --- Field descriptors, read from the map rather than the thresholded blob ---
-        # Done here because this is where the AGFE array is in hand. Weighted 0.0 by default;
-        # see core/field.py and DEFAULT_BINDING_SITE_WEIGHTS.
+        # Weighted 0.0 by default; see core/field.py and DEFAULT_BINDING_SITE_WEIGHTS.
         from cosolvkit.analysis.core.field import (
             attach_buriedness, attach_field_descriptors,
         )
         attach_field_descriptors(sites, agfe_array, combined_grid.origin,
                                  combined_grid.delta)
-        # Enclosure at each centroid: the one axis measured independent of size/depth.
+        # Enclosure at each centroid.
         if self.universe is not None:
             prot = self.universe.select_atoms("protein and not name H*")
             if prot.n_atoms:

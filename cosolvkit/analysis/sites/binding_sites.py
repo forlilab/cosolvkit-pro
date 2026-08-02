@@ -278,10 +278,9 @@ def identify_binding_sites(probe_results, connectivity=26, weights=None,
                            field_maps=None):
     """Group per-cosolvent hotspots into ranked cross-cosolvent binding sites.
 
-    *field_maps* is ``{cosolvent: (agfe_array, origin, delta)}``. Supplying it lets the scorer use
-    **count-normalised** features fused over every probe at each site's point, instead of a
-    best-of-members maximum that correlates with member count at rho -0.82. Without it the
-    fallback is used and a warning is emitted.
+    *field_maps* is ``{cosolvent: (agfe_array, origin, delta)}``. Supplying it lets the scorer
+    use count-normalised features fused over every probe at each site's point, instead of a
+    best-of-members maximum biased by member count; omitting it warns.
     """
     return BindingSiteDetector(
         probe_results, connectivity=connectivity, weights=weights,
