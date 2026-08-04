@@ -59,26 +59,26 @@ hotspots:
   n_kt:           1.0             # AGFE cutoff = -1 kT (~ -0.60 kcal/mol at 300 K)
   top_percentile: 10.0
   survival_kwargs:
-    sp_top_n:      0              # 0 = disable survival probability for this example
+    sp_top_n:      10              # 0 = disable survival probability for this example
     radius:        6.0
     max_tau:       100
     intermittency: 2
   clustering:
     strategy:            "skimage_watershed"
     strategy_kwargs:     {}
-    min_cluster_voxels:  20
+    min_cluster_voxels:  10
     use_skimage_cleanup: true
     cleanup_min_size:    1
     cleanup_hole_size:   2
 
 # -----------------------------------------------------------------
 # binding_sites: connected-component grouping of hotspots into sites
-# (most useful with >= 2 probes, which this example now has).
+# (most useful with >= 2 probes).
 # -----------------------------------------------------------------
 binding_sites:
   enabled:      true
   connectivity: 26      # 6 (face-sharing) or 26 (also diagonal-touching voxels)
-  weights:      null    # null → default binding-site weights
+  weights:      null    # null → default binding-site weights. 
 
 # -----------------------------------------------------------------
 # checkpoint: save hotspot results so binding-site detection can be
@@ -93,4 +93,4 @@ checkpoint:
 # -----------------------------------------------------------------
 pymol:
   enabled:     true
-  top_n_sites: 0
+  top_n_sites: 5
