@@ -66,18 +66,37 @@ DEFAULT_BINDING_SITE_WEIGHTS = {
     # not from the thresholded blob. Opt-in (0.0).
     "field_contrast": 0.0,
     "field_sharpness": 0.0,
-    # Enclosure proxy: nearby protein heavy atoms, averaged (not maxed) over member
-    # hotspots so member count cannot inflate it. Opt-in (0.0).
-    "buriedness": 0.0,
+    # Normalised enclosure: fraction of a ball around the site that solvent can reach, averaged
+    # over member hotspots. Prefer this over `buriedness`, which is an unbounded atom count whose
+    # AUC rises monotonically with its radius (0.524 -> 0.806 over 4-20 A on FosAKP) and therefore
+    # reports centrality rather than enclosure. This one is bounded in [0,1], plateaus with radius,
+    # is nearly volume-independent (|rho| <= 0.13 vs volume), and retains AUC 0.685 after
+    # residualising on buriedness AND volume. Inverted: LOWER accessible fraction = more enclosed.
+    # Requires the accessible-volume mask, so it is only populated when the detector can find
+    # `solvent_accessible_map.dx`. Opt-in (0.0) pending validation on a second target.
+    "accessible_fraction": 0.0,
 }
 
 # Features whose raw value is "lower is better" -> inverted min-max (most-negative -> 1).
 # `shape` (solidity) is inverted because real pockets are irregular clefts, i.e. less convex.
-_BS_INVERTED_FEATURES = {"affinity", "field_contrast", "shape"}
+_BS_INVERTED_FEATURES = {"affinity", "field_contrast", "shape",
+                         "accessible_fraction"}   # lower = more enclosed
 
 # ``diversity`` scored atom types, not probes, and was renamed. Accepted with a warning
 # rather than rejected so saved weight sets keep working.
 _LEGACY_WEIGHT_ALIASES = {"diversity": "chemotype_diversity"}
+
+# Weights that have been REMOVED. Accepted-with-warning and dropped rather than raising, so a
+# saved weight set keeps loading; deliberately NOT aliased to a replacement, because the
+# replacement measures a different quantity on a different scale with the opposite sign, and
+# silently remapping would change a score without telling anyone.
+#   buriedness -> superseded by `accessible_fraction`. It was a raw, unbounded count of protein
+#   heavy atoms in an 8 A ball whose AUC rose monotonically with its radius (0.524 at 4 A to
+#   0.806 at 20 A, counting a quarter of the protein at the top), so it reported centrality
+#   rather than enclosure.
+_RETIRED_WEIGHTS = {
+    "buriedness": "accessible_fraction",
+}
 
 
 def _site_property(site, name):
@@ -156,7 +175,8 @@ def _binding_site_feature_values(binding_sites):
                             if _site_property(s, "fused_contrast") is not None
                             else _best_member_property(s, "field_contrast", prefer="min")
                             for s in binding_sites],
-        "buriedness":     [_mean_member_property(s, "buriedness") for s in binding_sites],
+        "accessible_fraction": [_mean_member_property(s, "accessible_fraction")
+                                for s in binding_sites],
         "field_sharpness": [_site_property(s, "fused_sharpness")
                             if _site_property(s, "fused_sharpness") is not None
                             else _best_member_property(s, "field_sharpness", prefer="max")
@@ -177,6 +197,15 @@ def normalize_weights(weights):
         return dict(DEFAULT_BINDING_SITE_WEIGHTS)
     resolved = {}
     for key, value in weights.items():
+        if key in _RETIRED_WEIGHTS:
+            warnings.warn(
+                f"Binding-site weight {key!r} has been REMOVED and is ignored; use "
+                f"{_RETIRED_WEIGHTS[key]!r} instead. It is not an alias -- the replacement is "
+                "normalised, bounded and inverted, so port the weight deliberately rather than "
+                "copying its value across.",
+                DeprecationWarning, stacklevel=3,
+            )
+            continue
         canonical = _LEGACY_WEIGHT_ALIASES.get(key, key)
         if canonical != key:
             warnings.warn(
@@ -222,6 +251,29 @@ def score_binding_sites(binding_sites, weights=None):
             for pos, i in enumerate(finite_idx):
                 full[i] = normed[pos]
         norm[feat] = full
+
+    # A weight on a feature that is constant across every site cannot change the ranking.
+    # Two of the default weights have historically been in exactly this state --
+    # `chemotype_diversity` is identically zero without `density_maps.use_atomtypes: true`, and
+    # `kinetics` without `sp_top_n > 0` -- so the weight vector claimed to use six features while
+    # ranking on four. Warn rather than silently mis-describe the model.
+    for feat, vals in raw.items():
+        w = weights.get(feat, 0.0)
+        if w == 0.0:
+            continue
+        finite = [v for v in vals if v is not None and np.isfinite(v)]
+        if not finite:
+            warnings.warn(
+                f"Binding-site weight {feat!r}={w} has no effect: the feature is missing on "
+                f"every site. Set the weight to 0.0 or supply the data it needs.",
+                RuntimeWarning, stacklevel=2)
+        elif len(binding_sites) > 1 and np.ptp(np.asarray(finite, dtype=float)) == 0.0:
+            warnings.warn(
+                f"Binding-site weight {feat!r}={w} has no effect: the feature is constant "
+                f"({finite[0]!r}) across all {len(binding_sites)} sites, so it cannot change the "
+                f"ranking. For 'chemotype_diversity' this usually means "
+                f"'density_maps.use_atomtypes' is not enabled; for 'kinetics', 'sp_top_n' is 0.",
+                RuntimeWarning, stacklevel=2)
 
     for i, site in enumerate(binding_sites):
         site.combined = float(sum(weights.get(f, 0.0) * norm[f][i] for f in raw))

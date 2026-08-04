@@ -10,6 +10,7 @@ import os
 import json
 import glob as glob_module
 import logging
+import warnings
 import numpy as np
 import pandas as pd
 from gridData import Grid
@@ -371,14 +372,25 @@ class HotspotDetector:
 
         # --- Field descriptors, read from the map, not the thresholded blob ---
         from cosolvkit.analysis.core.field import (
-            attach_buriedness, attach_field_descriptors,
+            attach_accessible_fraction, attach_field_descriptors,
         )
         attach_field_descriptors(sites, agfe_array, combined_grid.origin,
                                  combined_grid.delta)
-        if self.universe is not None:
-            prot = self.universe.select_atoms("protein and not name H*")
-            if prot.n_atoms:
-                attach_buriedness(sites, prot.positions)
+        # `accessible_fraction` is the enclosure feature (normalised, bounded, plateaus with
+        # radius); it replaced `buriedness`, which was removed. It needs the accessible-volume
+        # mask that GridAnalysis writes next to the AGFE maps. Attach it when that map is
+        # present; stay silent when it is not, so a run that never generated one behaves
+        # exactly as before.
+        mask_path = os.path.join(self.out_path, "solvent_accessible_map.dx")
+        if os.path.isfile(mask_path):
+            try:
+                mg = self._load_dx(mask_path)
+                attach_accessible_fraction(sites, np.asarray(mg.grid) > 0.5,
+                                           np.asarray(mg.origin, dtype=float),
+                                           np.asarray(mg.delta, dtype=float))
+            except Exception as exc:
+                warnings.warn(f"could not attach accessible_fraction from {mask_path}: {exc}",
+                              RuntimeWarning)
 
         if self.compute_regionprops:
             score_image = np.clip(-agfe_array, 0, None)
