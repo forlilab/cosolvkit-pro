@@ -461,12 +461,19 @@ class GridAnalysis(AnalysisBase):
         # Get grid edges and origin.
         #
         # The voxel is exactly the requested gridsize. It used to be box_size / round(box_size /
-        # gridsize), which made the in-memory voxel depend on the replica's mean NPT box (on FosAKP
-        # 0.80065-0.80142 for a nominal 0.8). Note this did NOT reach the stored maps: `_export` is
-        # called with center/box_size, so it goes through `_subset_grid`, which rebuilds the grid
-        # with `delta=gridsize` exactly -- every map in analysis_v3/analysis_250ns reads back at
-        # exactly 0.8. Making delta exact here removes the discrepancy at the source instead, and
-        # is what lets grids share one lattice.
+        # gridsize), which made the voxel depend on the replica's mean NPT box (on FosAKP
+        # 0.80142303 for a nominal 0.8, from a mean box of 73.73092).
+        #
+        # That produced a genuine if small inconsistency: `self._edges` were spaced by that value
+        # and `np.histogramdd` binned at it, but the resulting Grid was then labelled
+        # `Grid(hist, origin=origin, delta=self._gridsize)` -- i.e. declared to be 0.8-spaced. The
+        # exported map therefore claimed a 0.8 voxel while its contents were binned at 0.80142, a
+        # 0.18% scale error that accumulates away from the origin: ~0.22 A by the far edge of a
+        # 153-voxel axis. (This is why every stored map in analysis_v3/analysis_250ns reads back at
+        # exactly delta 0.8 despite the box-dependent binning.)
+        #
+        # Making delta exactly gridsize removes the discrepancy at the source: the same value now
+        # bins the positions and labels the grid, and it is a precondition for a shared lattice.
         sd = self._box_size / 2.
         self._delta = np.full(3, float(self._gridsize), dtype=float)
 

@@ -93,13 +93,15 @@ def test_delta_equals_the_requested_gridsize_even_for_an_incommensurate_box(tmp_
     """``delta = box_size / round(box_size / gridsize)`` made the voxel box-dependent.
 
     A 20.3 A box at 1.0 A voxels gave delta = 1.015; on FosAKP the nominal 0.8 came out as
-    0.80065-0.80142 depending on the replica's mean NPT box.
+    0.80142303 from a mean box of 73.73092.
 
-    This never reached the stored maps -- ``_export`` is called with center/box_size, so it
-    goes through ``_subset_grid``, which rebuilds the grid with ``delta=gridsize`` exactly,
-    and all 180 maps in analysis_v3/analysis_250ns read back at exactly 0.8. So this is not
-    what forced the historical resamples (differing SHAPE was). It is fixed at the source
-    anyway, because an exact delta is a precondition for a shared lattice.
+    The concrete harm was an inconsistency rather than a misalignment: ``self._edges`` were
+    spaced by that value and ``np.histogramdd`` binned at it, but the Grid was then labelled
+    ``delta=self._gridsize`` (0.8). Every stored map therefore claims a 0.8 voxel while its
+    contents were binned at 0.80142 -- a 0.18% scale error accumulating to ~0.22 A by the far
+    edge of a 153-voxel axis. Binning and labelling now use one value.
+
+    Note this is NOT what forced the historical resamples; differing SHAPE was.
     """
     an = _run(_universe(box=20.3))
     assert np.allclose(an._delta, GRIDSIZE, atol=1e-12), (
