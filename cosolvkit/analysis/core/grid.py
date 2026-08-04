@@ -15,7 +15,6 @@ import numpy as np
 from typing import List, Union
 
 from scipy.ndimage import gaussian_filter, binary_dilation
-from scipy.interpolate import RegularGridInterpolator
 from gridData import Grid
 
 from MDAnalysis.analysis.base import AnalysisBase
@@ -358,58 +357,18 @@ def _smooth_grid_free_energy(gfe,
 def _grid_density(hist):
     return (hist - np.mean(hist)) / np.std(hist)
 
-def _subset_grid(grid, center, box_size, gridsize=0.5):
+def _export(fname, grid):
+    """Write *grid* to an OpenDX .dx file, unchanged.
 
-    #FIXME I think this part of the code is never triggered, not sure if we need this
+    The voxel size, origin and shape are properties of *grid*; there is nothing to configure
+    here. This used to take ``gridsize``/``center``/``box_size`` and, when given a centre and a
+    box, resample onto a sub-grid via ``_subset_grid``. That path was unreachable -- the only
+    live caller (``report.py``) passes a filename alone -- so ``gridsize`` was a silent no-op
+    that several callers passed in the belief that it set the voxel size. Removed rather than
+    documented, since a resample-on-write is not something this function should offer.
+    """
+    grid.export(fname)
 
-    # Create grid interpolator
-    # Number of midpoints is equal to the number of grid points
-    grid_interpn = RegularGridInterpolator(grid.midpoints, grid.grid)
-
-    # Create sub grid coordinates
-    # We get first the edges of the grid box, and after the midpoints
-    # So this we are sure (I guess) that the sub grid is well centered on center
-    # There might be a better way of doing this... Actually I tried, but didn't worked very well.
-    x, y, z = center
-    sd = box_size / 2.
-    hbins = np.round(box_size / gridsize).astype(int)
-    edges = (np.linspace(0, box_size[0], num=hbins[0] + 1, endpoint=True) + (x - sd[0]),
-             np.linspace(0, box_size[1], num=hbins[1] + 1, endpoint=True) + (y - sd[1]),
-             np.linspace(0, box_size[2], num=hbins[2] + 1, endpoint=True) + (z - sd[2]))
-    midpoints = (edges[0][:-1] + np.diff(edges[0]) / 2.,
-                 edges[1][:-1] + np.diff(edges[1]) / 2.,
-                 edges[2][:-1] + np.diff(edges[2]) / 2.)
-    X, Y, Z = np.meshgrid(midpoints[0], midpoints[1], midpoints[2])
-    xyzs = np.stack((X.ravel(), Y.ravel(), Z.ravel()), axis=-1)
-    # Configuration of the sub grid
-    origin_subgrid = (midpoints[0][0], midpoints[1][0], midpoints[2][0])
-    shape_subgrid = (midpoints[0].shape[0], midpoints[1].shape[0], midpoints[2].shape[0])
-
-    # Do interpolation
-    sub_grid_values = grid_interpn(xyzs)
-    sub_grid_values = sub_grid_values.reshape(shape_subgrid)
-    sub_grid_values = np.swapaxes(sub_grid_values, 0, 1)
-    sub_grid = Grid(sub_grid_values, origin=origin_subgrid, delta=gridsize)
-
-    return sub_grid
-
-def _export(fname, grid, gridsize=0.5, center=None, box_size=None):
-    assert (center is None and box_size is None) or (center is not None and box_size is not None), \
-           "Both center and box size have to be defined, or none of them."
-
-    if center is None and box_size is None:
-        grid.export(fname)
-    elif center is not None and box_size is not None:
-        center = np.array(center)
-        box_size = np.array(box_size)
-
-        assert np.ravel(center).size == 3, "Error: center should contain only (x, y, z)."
-        assert np.ravel(box_size).size == 3, "Error: grid size should contain only (a, b, c)."
-        assert (box_size > 0).all(), "Error: grid size cannot contain negative numbers."
-
-        sub_grid = _subset_grid(grid, center, box_size, gridsize)
-        sub_grid.export(fname)
-    return
 
 class GridAnalysis(AnalysisBase):
     """GridAnalysis class to generate density grids
@@ -801,32 +760,32 @@ class GridAnalysis(AnalysisBase):
 
         return
 
-    def export_histogram(self, fname, gridsize=0.5, center=None, box_size=None):
+    def export_histogram(self, fname):
         """ Export histogram maps
         """
-        _export(fname, self._histogram, gridsize, center, box_size)
+        _export(fname, self._histogram)
 
-    def export_density(self, fname, gridsize=0.5, center=None, box_size=None):
+    def export_density(self, fname):
         """ Export density maps, either for the total density or for each atom type
         """
         if self.use_atomtypes:
             for atom_type, grid in self._type_histograms.items():
                 density_fname = fname.replace('map_rawdensity', f'map_density_{atom_type}')
-                _export(density_fname, grid, gridsize, center, box_size)
+                _export(density_fname, grid)
         else:
-            _export(fname, self._density, gridsize, center, box_size)
+            _export(fname, self._density)
 
-    def export_atomic_grid_free_energy(self, fname, gridsize=0.5, center=None, box_size=None):
+    def export_atomic_grid_free_energy(self, fname):
         """ Export atomic grid free energy, either for the total free energy or for each atom type
         """
         if self.use_atomtypes:
             for atom_type, grid in self._type_histograms.items():
                 gfe_fname = fname.replace('map_agfe', f'map_agfe_{atom_type}')
-                _export(gfe_fname, grid, gridsize, center, box_size)
+                _export(gfe_fname, grid)
         else:
-            _export(fname, self._agfe, gridsize, center, box_size)
+            _export(fname, self._agfe)
 
-    def export_raw_atomic_grid_free_energy(self, fname, gridsize=0.5, center=None, box_size=None):
+    def export_raw_atomic_grid_free_energy(self, fname):
         """Export the raw (unsmoothed) AGFE map in kcal/mol.
 
         Direct Boltzmann inversion of the occupancy histogram, with no zeroing or
@@ -835,9 +794,9 @@ class GridAnalysis(AnalysisBase):
         if self.use_atomtypes:
             for atom_type, grid in self._type_agfe_raw.items():
                 gfe_fname = fname.replace('map_agfe_raw', f'map_agfe_raw_{atom_type}')
-                _export(gfe_fname, grid, gridsize, center, box_size)
+                _export(gfe_fname, grid)
         else:
-            _export(fname, self._agfe_raw, gridsize, center, box_size)
+            _export(fname, self._agfe_raw)
 
 
 from scipy.ndimage import map_coordinates as _map_coordinates
