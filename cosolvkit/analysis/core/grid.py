@@ -461,10 +461,12 @@ class GridAnalysis(AnalysisBase):
         # Get grid edges and origin.
         #
         # The voxel is exactly the requested gridsize. It used to be box_size / round(box_size /
-        # gridsize), which made the voxel depend on the replica's mean NPT box: on FosAKP the box
-        # varied by 0.072 A between replicas, giving deltas differing by ~8e-4 A. Accumulated over
-        # ~150 voxels that is a 0.12 A edge mismatch, past the 0.1-voxel alignment tolerance, so
-        # sibling replicas were declared misaligned and resampled.
+        # gridsize), which made the in-memory voxel depend on the replica's mean NPT box (on FosAKP
+        # 0.80065-0.80142 for a nominal 0.8). Note this did NOT reach the stored maps: `_export` is
+        # called with center/box_size, so it goes through `_subset_grid`, which rebuilds the grid
+        # with `delta=gridsize` exactly -- every map in analysis_v3/analysis_250ns reads back at
+        # exactly 0.8. Making delta exact here removes the discrepancy at the source instead, and
+        # is what lets grids share one lattice.
         sd = self._box_size / 2.
         self._delta = np.full(3, float(self._gridsize), dtype=float)
 
@@ -489,9 +491,19 @@ class GridAnalysis(AnalysisBase):
         # no interpolation. Previously the origin was pinned to box_lo - pad_lo * delta, where
         # pad_lo came from flat.min(axis=0) -- the single most extreme excursion of any probe atom
         # over the trajectory. That extreme-value statistic moved the origin by 8-10 A across
-        # replicas of one system (protein CA alignment spread, for comparison: 0.01 A) and grew
-        # with trajectory length, so every merge paid trilinear interpolation and merging two
-        # independent solvations scored below either one alone.
+        # replicas of one system (protein CA alignment spread, for comparison: 0.01 A), varied the
+        # SHAPE by 19-27 voxels, and grew with trajectory length. Because shapes differed, every
+        # merge was forced down the resampling path (18/18 probes, both generations).
+        #
+        # Scope of the damage, measured on the stored maps rather than assumed: pad_lo is an
+        # INTEGER voxel count, so the origins differ by whole voxels plus only the drift in box_lo
+        # (0.04-0.09 A). The *fractional* misregistration was mean 0.023 voxel = 0.019 A, 95th
+        # 0.054, max 0.236, with 99-100% of pairs inside the 0.1-voxel tolerance. Trilinear
+        # interpolation at those offsets is nearly a no-op, so this bug did NOT materially corrupt
+        # existing results. What it did cost is real but narrower: grids of differing extent were
+        # combined with fill_value=0.0 under a plain mean, so voxels only some replicas reached
+        # were diluted toward bulk (see the coverage-aware branch in
+        # `combine_dx_maps_with_resampling`), plus the fragility of never being able to stack maps.
         lo = np.floor(need_lo / self._delta) * self._delta
         hi = np.ceil(need_hi / self._delta) * self._delta
         nbins = np.maximum(1, np.round((hi - lo) / self._delta).astype(int))
