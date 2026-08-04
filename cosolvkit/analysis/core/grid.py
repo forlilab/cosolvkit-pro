@@ -9,6 +9,7 @@
 import os
 import sys
 import logging
+import warnings
 from glob import glob
 import numpy as np
 from typing import List, Union
@@ -131,6 +132,54 @@ def _resample_grid(g: Grid, ref_grid: Grid, fill_value: float = 0.0,
                            mode="constant", cval=fill_value)
 
 
+def _lattice_commensurate(grids: List[Grid], voxel_fraction: float = 1e-3) -> bool:
+    """True if all *grids* share a voxel size and differ only by integer index shifts.
+
+    Commensurate grids can be combined by array indexing alone. This is the normal case
+    since :meth:`GridAnalysis._conclude` snaps every grid onto the global ``k * gridsize``
+    lattice; it is checked rather than assumed so that maps written by older versions
+    (whose origin depended on the probe's extreme excursion) still fall back to resampling.
+    """
+    if not grids:
+        return False
+    ref = grids[0]
+    delta = np.asarray(ref.delta, dtype=float)
+    if not np.all(delta > 0):
+        return False
+    tol = voxel_fraction * float(np.min(delta))
+    for g in grids:
+        if not np.allclose(np.asarray(g.delta, dtype=float), delta, atol=tol):
+            return False
+        off = (np.asarray(g.origin, dtype=float)
+               - np.asarray(ref.origin, dtype=float)) / delta
+        if not np.allclose(off, np.round(off), atol=voxel_fraction):
+            return False
+    return True
+
+
+def _place_on_reference(g: Grid, ref_grid: Grid) -> np.ndarray:
+    """Copy *g* into *ref_grid*'s index window by integer offset; uncovered voxels are NaN.
+
+    Exact: no interpolation, so voxel values are carried over bit-for-bit. NaN marks "this
+    replica's grid did not reach here" so that aggregation can skip it instead of averaging
+    a real value against a fill constant.
+    """
+    delta = np.asarray(ref_grid.delta, dtype=float)
+    off = np.round((np.asarray(g.origin, dtype=float)
+                    - np.asarray(ref_grid.origin, dtype=float)) / delta).astype(int)
+    out = np.full(ref_grid.grid.shape, np.nan, dtype=float)
+    src, dst = [], []
+    for d in range(3):
+        n_src, n_ref = g.grid.shape[d], ref_grid.grid.shape[d]
+        lo, hi = max(0, off[d]), min(n_ref, off[d] + n_src)
+        if hi <= lo:
+            return out  # grids do not overlap on this axis
+        dst.append(slice(lo, hi))
+        src.append(slice(lo - off[d], hi - off[d]))
+    out[tuple(dst)] = g.grid[tuple(src)]
+    return out
+
+
 def combine_dx_maps_with_resampling(
     filepaths: List[str],
     method: str = 'mean',
@@ -140,9 +189,8 @@ def combine_dx_maps_with_resampling(
 ) -> Grid:
     """Combine .dx maps from simulations that may have different box sizes.
 
-    When box sizes differ (common when different cosolvent probes are run in
-    independent simulations), grids are first resampled onto a common set of
-    edges before aggregation.  When all shapes already match, the fast path
+    When box sizes differ grids are first resampled onto a common set of
+    edges before aggregation. When all shapes already match, the fast path
     is taken (no resampling overhead).
 
     :param filepaths: Paths to .dx files, one per simulation replica/probe.
@@ -178,11 +226,15 @@ def combine_dx_maps_with_resampling(
             "Valid values: 'first', 'largest', 'smallest'."
         )
 
-    # Gate the fast path on full spatial alignment, not just shape: two maps can
-    # share dimensions but differ in origin/spacing, which would otherwise skip
-    # resampling and average misaligned voxels.
+    # Gate the fast path on full spatial alignment
     if all(_grids_spatially_aligned(g, ref_grid) for g in grids):
         resampled = [g.grid for g in grids]
+        exact = True
+    elif _lattice_commensurate(grids):
+        # Same lattice, different extents: crop/pad by integer offset. Exact, and the only
+        # path that lets maps from independently solvated systems be pooled without loss.
+        resampled = [_place_on_reference(g, ref_grid) for g in grids]
+        exact = True
     else:
         resampled = []
         for g in grids:
@@ -190,19 +242,33 @@ def combine_dx_maps_with_resampling(
                 resampled.append(g.grid)
             else:
                 resampled.append(_resample_grid(g, ref_grid, fill_value=fill_value))
+        exact = False
 
-    agg_fn = {
-        'mean': np.mean,
-        'max': np.max,
-        'min': np.min,
-        'sum': np.sum,
-        'median': np.median,
-    }.get(method)
+    if exact:
+        agg_fn = {
+            'mean': np.nanmean, 'max': np.nanmax, 'min': np.nanmin,
+            'sum': np.nansum, 'median': np.nanmedian,
+        }.get(method)
+    else:
+        agg_fn = {
+            'mean': np.mean, 'max': np.max, 'min': np.min,
+            'sum': np.sum, 'median': np.median,
+        }.get(method)
 
     if agg_fn is None:
         raise ValueError(f"Unsupported combination method: {method!r}")
 
-    combined_data = agg_fn(np.stack(resampled), axis=0)
+    stacked = np.stack(resampled)
+    if exact:
+        # Aggregate only over grids that actually reach each voxel, so a voxel covered by
+        # one replica is not pulled toward `fill_value` by the others. Voxels no grid
+        # reaches fall back to fill_value (neutral bulk AGFE).
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            combined_data = agg_fn(stacked, axis=0)
+        combined_data = np.where(np.isfinite(combined_data), combined_data, fill_value)
+    else:
+        combined_data = agg_fn(stacked, axis=0)
     combined_grid = Grid(combined_data, ref_grid.edges)
     combined_grid.export(out_fname)
     return combined_grid
@@ -392,40 +458,52 @@ class GridAnalysis(AnalysisBase):
         self._box_size = np.mean(self._dimensions, axis=0)
         self._center = np.mean(self._centers, axis=0)
 
-        # Get grid edges and origin
-        x, y, z = self._center
+        # Get grid edges and origin.
+        #
+        # The voxel is exactly the requested gridsize. It used to be box_size / round(box_size /
+        # gridsize), which made the voxel depend on the replica's mean NPT box: on FosAKP the box
+        # varied by 0.072 A between replicas, giving deltas differing by ~8e-4 A. Accumulated over
+        # ~150 voxels that is a 0.12 A edge mismatch, past the 0.1-voxel alignment tolerance, so
+        # sibling replicas were declared misaligned and resampled.
         sd = self._box_size / 2.
-        hbins = np.round(self._box_size / self._gridsize).astype(int)
-        self._delta = self._box_size / hbins
+        self._delta = np.full(3, float(self._gridsize), dtype=float)
 
         # An aligned trajectory rotates coordinates but not the box vectors, so solvent occupies
         # a rotated box while this grid is axis-aligned and np.histogramdd silently discards the
-        # positions falling outside. Pad outward in whole voxels, keeping the interior aligned
-        # with the unpadded grid.
+        # positions falling outside. The grid must therefore span the union of the periodic box
+        # and the observed extent.
         flat = self._positions.reshape(-1, 3)
         box_lo, box_hi = self._center - sd, self._center + sd
         self._frac_outside_box = float(
             np.mean(np.any((flat < box_lo) | (flat > box_hi), axis=1))
         ) if flat.size else 0.0
 
-        pad_lo = np.ceil(np.maximum(0.0, box_lo - (flat.min(axis=0) - self._delta))
-                         / self._delta).astype(int) if flat.size else np.zeros(3, int)
-        pad_hi = np.ceil(np.maximum(0.0, (flat.max(axis=0) + self._delta) - box_hi)
-                         / self._delta).astype(int) if flat.size else np.zeros(3, int)
+        need_lo, need_hi = box_lo.copy(), box_hi.copy()
+        if flat.size:
+            need_lo = np.minimum(need_lo, flat.min(axis=0) - self._delta)
+            need_hi = np.maximum(need_hi, flat.max(axis=0) + self._delta)
 
-        if not (pad_lo.any() or pad_hi.any()):
-            self._edges = (np.linspace(0, self._box_size[0], num=hbins[0] + 1, endpoint=True) + (x - sd[0]),
-                        np.linspace(0, self._box_size[1], num=hbins[1] + 1, endpoint=True) + (y - sd[1]),
-                        np.linspace(0, self._box_size[2], num=hbins[2] + 1, endpoint=True) + (z - sd[2]))
-        else:
-            nbins = hbins + pad_lo + pad_hi
-            lo = box_lo - pad_lo * self._delta
-            self._edges = tuple(lo[d] + np.arange(nbins[d] + 1) * self._delta[d]
-                                for d in range(3))
+        # Snap the edges outward onto the global lattice k * gridsize. The extent stays
+        # demand-driven, but the *registration* no longer is: any two grids of the same protein
+        # are related by an integer index shift, so their maps combine by array arithmetic with
+        # no interpolation. Previously the origin was pinned to box_lo - pad_lo * delta, where
+        # pad_lo came from flat.min(axis=0) -- the single most extreme excursion of any probe atom
+        # over the trajectory. That extreme-value statistic moved the origin by 8-10 A across
+        # replicas of one system (protein CA alignment spread, for comparison: 0.01 A) and grew
+        # with trajectory length, so every merge paid trilinear interpolation and merging two
+        # independent solvations scored below either one alone.
+        lo = np.floor(need_lo / self._delta) * self._delta
+        hi = np.ceil(need_hi / self._delta) * self._delta
+        nbins = np.maximum(1, np.round((hi - lo) / self._delta).astype(int))
+        self._edges = tuple(lo[d] + np.arange(nbins[d] + 1) * self._delta[d]
+                            for d in range(3))
+
+        if self._frac_outside_box > 0:
+            box_bins = tuple(np.round(self._box_size / self._delta).astype(int))
             self.logger.warning(
                 f"{100 * self._frac_outside_box:.2f}% of positions fell outside the "
-                f"box-sized grid (aligned trajectory in an axis-aligned grid); grid padded "
-                f"{tuple(hbins)} -> {tuple(nbins)} voxels so none are discarded."
+                f"box-sized grid (aligned trajectory in an axis-aligned grid); grid spans "
+                f"{box_bins} -> {tuple(nbins)} voxels so none are discarded."
             )
         origin = (self._edges[0][0], self._edges[1][0], self._edges[2][0])
 
@@ -575,7 +653,12 @@ class GridAnalysis(AnalysisBase):
         if export:
             mask_grid = mask.astype(float)
             grid = Grid(mask_grid, edges=self._edges)
-            grid.export(f"solvent_accessible_map.dx")
+            # Write beside the other maps, not into whatever the current working directory
+            # happens to be. The previous hardcoded relative filename scattered multi-hundred-MB
+            # copies of this map into unrelated directories.
+            out_dir = getattr(self, "_out_dir", None) or os.getcwd()
+            os.makedirs(out_dir, exist_ok=True)
+            grid.export(os.path.join(out_dir, "solvent_accessible_map.dx"))
 
         return
 

@@ -69,10 +69,20 @@ def _run(u):
 
 
 def test_grid_matches_the_box_when_every_atom_is_inside(tmp_cwd):
-    """Backwards compatibility: ordinary wrapped trajectories must be unaffected."""
+    """Backwards compatibility: ordinary wrapped trajectories must not be inflated.
+
+    Edges are snapped outward onto the global ``k * gridsize`` lattice so that maps of one
+    protein are mutually registered (see ``test_grid_registration.py``), which costs at most
+    one voxel per axis when the box does not happen to start on a lattice point. The
+    intent of this test is that a wrapped trajectory is not *materially* inflated -- the
+    original concern was a ~1.5x inflation of the accessible reference volume -- and one
+    voxel of margin does not touch it, because ``N_o`` is counted inside the box only
+    (``_build_accessible_mask``, and the test below).
+    """
     an = _run(_universe(probe_offset=0.0))
     expected = int(round(BOX / GRIDSIZE))
-    assert an._histogram.grid.shape == (expected,) * 3
+    assert all(expected <= n <= expected + 1 for n in an._histogram.grid.shape), \
+        f"grid {an._histogram.grid.shape} is not the box ({expected}) plus at most one voxel"
 
 
 def test_no_positions_are_dropped_when_atoms_fall_outside_the_box(tmp_cwd):
