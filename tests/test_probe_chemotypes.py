@@ -46,7 +46,13 @@ def test_hydrophobes_span_fewer_classes_than_a_charge_pair():
 
 
 def test_benzene_is_not_an_hbond_partner():
-    assert probe_chemotypes(["BEN"]) == ["aromatic", "aliphatic"]
+    """Benzene is aromatic and hydrophobic, and neither donates nor accepts.
+
+    It was tagged ``aliphatic``, which is wrong on its face: benzene has no non-aromatic carbon.
+    ``aliphatic`` means a saturated carbon skeleton, ``hydrophobic`` means an apolar surface --
+    see ``tests/test_probe_chemotype_chemistry.py``, which now derives this from the structure.
+    """
+    assert probe_chemotypes(["BEN"]) == ["aromatic", "hydrophobic"]
 
 
 def test_unknown_resnames_contribute_nothing():
