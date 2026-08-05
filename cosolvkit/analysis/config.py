@@ -61,18 +61,37 @@ class MiscConfig:
 
 @dataclass
 class ClusteringConfig:
-    strategy:            str  = "skimage_watershed"  # skimage_watershed | connected_components | watershed | dbscan
+    strategy:            str  = "skimage_watershed"  # skimage_watershed | connected_components
     strategy_kwargs:     Dict = field(default_factory=dict)
-    min_cluster_voxels:  int  = 20
-    # Overrides min_cluster_voxels when set; gridsize-independent, so prefer it.
-    min_cluster_volume_ang3: Optional[float] = None
+    # THE size threshold, and the only default for it. Expressed as a volume because a voxel count
+    # means different physical things at different gridsizes: 10 voxels is 1.25 A^3 at 0.5 A but
+    # 5.12 A^3 at 0.8 A, and that silent 4x change once dropped a real hotspot (see
+    # tests/test_min_cluster_volume.py).
+    #
+    # 20 A^3 is the van der Waals volume of one heavy atom (C ~ 20.4 A^3) = ~39 voxels at 0.8 A:
+    # the smallest blob that can plausibly hold an atom rather than being shot noise.
+    #
+    # Measured on FosAKP (18 probes, scripts/sweep_min_cluster_volume.py). Ground-truth site
+    # coverage and spurious-hotspot count vs this threshold:
+    #     1.25 A^3 (deployed)  7/7 sites   325 novel hotspots  (100%)
+    #     5.0                  7/7         247                 ( 76%)
+    #    10.0                  7/7         200                 ( 62%)
+    #    20.0  <- default      7/7         148                 ( 46%)
+    #    40.0                  6/7 (!)      96                 ( 30%)
+    # 20 A^3 is the largest threshold that still recovers every ground-truth site, and it removes
+    # more than half the spurious hotspots. 40 A^3 looks defensible on atom volume alone but loses
+    # a real site, so it is not.
+    min_cluster_volume_ang3: float = 20.0
+    # Escape hatch: a literal voxel count that WINS over the volume when set. Leave None unless you
+    # need grid-dependent behaviour, e.g. reproducing an older run.
+    min_cluster_voxels:  Optional[int] = None
     use_skimage_cleanup: bool = False
     cleanup_min_size:    int  = 1
     cleanup_hole_size:   int  = 2
 
     def resolve_min_cluster_voxels(self, gridsize):
-        """Voxel threshold to use, honouring ``min_cluster_volume_ang3`` if set."""
-        if self.min_cluster_volume_ang3 is None:
+        """Voxel threshold: the explicit count if one was given, else derived from the volume."""
+        if self.min_cluster_voxels is not None:
             return int(self.min_cluster_voxels)
         from cosolvkit.analysis.sites.clustering import min_cluster_voxels_for_volume
         return min_cluster_voxels_for_volume(self.min_cluster_volume_ang3, gridsize)

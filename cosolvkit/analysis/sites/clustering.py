@@ -46,7 +46,7 @@ class ConnectedComponentsClustering:
         edge- and corner-sharing ones, reducing fragmentation across bridges.
     """
 
-    def __init__(self, min_cluster_voxels=10, connectivity=26):
+    def __init__(self, min_cluster_voxels, connectivity=26):
         if connectivity not in (6, 26):
             raise ValueError("connectivity must be 6 or 26")
         self.min_cluster_voxels = min_cluster_voxels
@@ -90,7 +90,7 @@ class SkimageWatershedClustering:
         splits blobs more evenly.
     """
 
-    def __init__(self, min_cluster_voxels=10, h=0.5,
+    def __init__(self, min_cluster_voxels, h=0.5,
                  smoothing_sigma=None, min_distance=None,
                  watershed_mode="score"):
         if watershed_mode not in ("score", "distance"):
@@ -154,13 +154,15 @@ class SkimageWatershedClustering:
         return labeled_array, site_labels
 
 
-def build_clustering_strategy(clustering_cfg, gridsize=None):
+def build_clustering_strategy(clustering_cfg, gridsize):
     """Build a clustering-strategy instance from a ``ClusteringConfig``.
 
-    Constructs the class named by ``clustering_cfg.strategy`` with
-    ``min_cluster_voxels`` plus any ``strategy_kwargs``.  If *gridsize* is given
-    and the config sets ``min_cluster_volume_ang3``, the voxel threshold is
-    derived from that volume instead.
+    Constructs the class named by ``clustering_cfg.strategy`` with the resolved
+    ``min_cluster_voxels`` plus any ``strategy_kwargs``.
+
+    *gridsize* is REQUIRED: the size threshold is configured as a volume, so it cannot be turned
+    into a voxel count without it. It used to default to None, and passing nothing silently ignored
+    ``min_cluster_volume_ang3`` and fell back to a raw count.
 
     Raises
     ------
@@ -183,8 +185,5 @@ def build_clustering_strategy(clustering_cfg, gridsize=None):
             f"valid options: {sorted(registry)}"
         )
     kwargs = dict(clustering_cfg.strategy_kwargs or {})
-    n_vox = clustering_cfg.min_cluster_voxels
-    resolve = getattr(clustering_cfg, "resolve_min_cluster_voxels", None)
-    if resolve is not None and gridsize is not None:
-        n_vox = resolve(gridsize)
+    n_vox = clustering_cfg.resolve_min_cluster_voxels(gridsize)
     return registry[strategy](min_cluster_voxels=n_vox, **kwargs)

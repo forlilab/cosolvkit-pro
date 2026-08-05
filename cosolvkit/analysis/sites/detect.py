@@ -39,9 +39,13 @@ class HotspotDetector:
         Loaded trajectory universe.
     agfe_cutoff : float
         AGFE threshold in kcal/mol; voxels strictly below it are favorable.
-    min_cluster_voxels : int
-        Minimum cluster size to retain, in voxels.  This is a raw count, so
-        rescale it whenever *gridsize* changes (it scales as 1/gridsize**3).
+    min_cluster_volume_ang3 : float
+        Minimum cluster size to retain, as a VOLUME. Grid-independent, which a voxel count is
+        not. Default 20 A^3 = one heavy atom's van der Waals volume; see ClusteringConfig for
+        the measured ground-truth-coverage tradeoff behind that number.
+    min_cluster_voxels : int, optional
+        Literal voxel count, overriding *min_cluster_volume_ang3* when given. For reproducing
+        older runs; prefer the volume.
     top_percentile : float
         Percentage of most-favorable voxels averaged for favorability scoring.
     gridsize : float
@@ -60,7 +64,8 @@ class HotspotDetector:
 
     def __init__(self, out_path, cosolvent_names, universe,
                  agfe_cutoff=-0.5,
-                 min_cluster_voxels=1,
+                 min_cluster_volume_ang3=20.0,
+                 min_cluster_voxels=None,
                  top_percentile=10.0,
                  gridsize=0.5,
                  clustering_strategy=None,
@@ -79,7 +84,6 @@ class HotspotDetector:
         self.cosolvent_names = cosolvent_names
         self._universe = universe
         self.agfe_cutoff = agfe_cutoff
-        self.min_cluster_voxels = min_cluster_voxels
         self.top_percentile = top_percentile
         self.gridsize = gridsize
         # One construction path. This used to hand-build the strategy here while
@@ -89,8 +93,14 @@ class HotspotDetector:
         else:
             from cosolvkit.analysis.config import ClusteringConfig
             self.clustering_strategy = build_clustering_strategy(
-                ClusteringConfig(min_cluster_voxels=min_cluster_voxels)
+                ClusteringConfig(min_cluster_volume_ang3=min_cluster_volume_ang3,
+                                 min_cluster_voxels=min_cluster_voxels),
+                gridsize=self.gridsize,
             )
+        # Read the threshold back off the strategy that will actually apply it. Keeping a separate
+        # copy let the detector report one number while a supplied strategy filtered on another.
+        self.min_cluster_voxels = getattr(self.clustering_strategy, "min_cluster_voxels", None)
+        self.min_cluster_volume_ang3 = min_cluster_volume_ang3
         self.compute_survival_probability = compute_survival_probability
         self.survival_kwargs = survival_kwargs or {}
         self.use_skimage_cleanup = use_skimage_cleanup

@@ -31,14 +31,23 @@ class TestVoxelsForVolume:
 
 class TestConfigWiring:
 
-    def test_volume_setting_overrides_the_voxel_count(self):
+    def test_the_volume_is_the_default_and_is_grid_independent(self):
         from cosolvkit.analysis.config import ClusteringConfig
-        c = ClusteringConfig(min_cluster_voxels=999, min_cluster_volume_ang3=1.25)
-        assert c.resolve_min_cluster_voxels(0.5) == 10
-        assert c.resolve_min_cluster_voxels(0.8) == 2
+        c = ClusteringConfig()
+        assert c.min_cluster_volume_ang3 == 20.0
+        assert c.min_cluster_voxels is None
+        for gs in (0.5, 0.8, 1.0):
+            n = c.resolve_min_cluster_voxels(gs)
+            assert abs(n * gs ** 3 - 20.0) < gs ** 3, f"threshold moved at gridsize {gs}"
 
-    def test_voxel_count_is_used_when_no_volume_is_given(self):
+    def test_an_explicit_voxel_count_wins_over_the_volume(self):
+        """Precedence is the reverse of what it was, because the volume now has a DEFAULT.
+
+        Previously volume-when-set beat the count, which was fine while the volume defaulted to
+        None. Now that it always has a value, that rule would make an explicitly requested count
+        impossible to honour, so the explicit count wins and the volume is the fallback.
+        """
         from cosolvkit.analysis.config import ClusteringConfig
-        c = ClusteringConfig(min_cluster_voxels=17)
+        c = ClusteringConfig(min_cluster_voxels=17, min_cluster_volume_ang3=1.25)
         assert c.resolve_min_cluster_voxels(0.5) == 17
-        assert c.resolve_min_cluster_voxels(0.8) == 17, "unchanged by gridsize, as before"
+        assert c.resolve_min_cluster_voxels(0.8) == 17, "an explicit count is grid-dependent"

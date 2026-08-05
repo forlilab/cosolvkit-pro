@@ -42,7 +42,7 @@ class TestConnectedComponentsClustering:
 
     def test_invalid_connectivity_raises(self):
         with pytest.raises(ValueError):
-            ConnectedComponentsClustering(connectivity=18)
+            ConnectedComponentsClustering(min_cluster_voxels=10, connectivity=18)
 
     def test_labeled_array_shape_and_background(self, two_blob_mask, two_blob_agfe):
         cc = ConnectedComponentsClustering(min_cluster_voxels=10)
@@ -85,7 +85,7 @@ class TestSkimageWatershedClustering:
 
     def test_invalid_watershed_mode_raises(self):
         with pytest.raises(ValueError, match="watershed_mode"):
-            SkimageWatershedClustering(watershed_mode="bogus")
+            SkimageWatershedClustering(min_cluster_voxels=10, watershed_mode="bogus")
 
     def test_large_h_reduces_cluster_count(self, two_blob_mask, two_blob_agfe):
         """Very large h suppresses all maxima → 0 or 1 cluster."""

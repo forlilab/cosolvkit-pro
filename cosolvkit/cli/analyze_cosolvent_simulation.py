@@ -114,7 +114,7 @@ def _run_legacy(args, logger):
         hotspot_results = report.load_hotspot_checkpoint()
     else:
         hotspot_results = report.generate_hotspot_report(
-            min_cluster_voxels=20,
+            min_cluster_volume_ang3=20.0,
             agfe_cutoff=-1.0,
             top_n_plot=10,
         )

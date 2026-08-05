@@ -262,7 +262,7 @@ class Report:
     def generate_hotspot_report(self,
                                cosolvent_names:list=None,
                                agfe_cutoff:float=-1.0,
-                               min_cluster_voxels:int=20,
+                               min_cluster_volume_ang3:float=20.0,
                                top_percentile:float=10.0,
                                gridsize:float=0.5,
                                top_n_plot:int=10,
@@ -284,7 +284,8 @@ class Report:
 
         :param cosolvent_names: cosolvents to analyse; defaults to all.
         :param agfe_cutoff: AGFE threshold in kcal/mol (negative = favorable).
-        :param min_cluster_voxels: minimum cluster size to retain.
+        :param min_cluster_volume_ang3: minimum cluster size to retain, in A^3
+            (grid-independent; one heavy atom at the 20.0 default).
         :param top_percentile: top-N% of voxels used for the favorability score.
         :param gridsize: voxel size in Angstrom; must match generate_density_maps.
         :param top_n_plot: number of sites shown in the 3D plot, in rank order.
@@ -301,7 +302,7 @@ class Report:
             cosolvent_names=cosolvent_names,
             universe=self.universe,
             agfe_cutoff=agfe_cutoff,
-            min_cluster_voxels=min_cluster_voxels,
+            min_cluster_volume_ang3=min_cluster_volume_ang3,
             top_percentile=top_percentile,
             gridsize=gridsize,
         )
