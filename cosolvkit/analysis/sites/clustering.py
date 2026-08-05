@@ -6,13 +6,14 @@
 # Pluggable clustering strategies for hotspot detection
 #
 
+import warnings
+
 import numpy as np
 from scipy.ndimage import label, distance_transform_edt
 from skimage.segmentation import watershed
 from skimage.feature import peak_local_max
 from skimage.morphology import h_maxima
 from skimage.filters import gaussian
-from sklearn.cluster import DBSCAN
 
 
 def min_cluster_voxels_for_volume(volume_ang3, gridsize):
@@ -61,55 +62,6 @@ class ConnectedComponentsClustering:
         return labeled_array, site_labels
 
 
-class WatershedClustering:
-    """Cluster favorable voxels with a watershed transform on the AGFE values.
-
-    Floods the AGFE map as a height field from its local minima, separating
-    touching pockets that connected-components would merge.
-
-    Parameters
-    ----------
-    min_cluster_voxels : int
-        Minimum voxels a cluster must contain to be retained.
-    min_distance : int
-        Minimum separation, in voxels, between seed minima.
-    compactness : float
-        Forwarded to ``skimage.segmentation.watershed``; larger values give
-        more compact, ball-shaped regions.
-    """
-
-    def __init__(self, min_cluster_voxels=10, min_distance=3, compactness=0.0):
-        self.min_cluster_voxels = min_cluster_voxels
-        self.min_distance = min_distance
-        self.compactness = compactness
-
-    def cluster(self, favorable_mask, agfe_array, gridsize):
-        # Seeds are AGFE minima (most-negative = most favorable), i.e. maxima of -AGFE.
-        neg_agfe = -agfe_array
-        masked_neg = np.where(favorable_mask, neg_agfe, -np.inf)
-        coords = peak_local_max(
-            masked_neg,
-            min_distance=self.min_distance,
-            labels=favorable_mask,
-        )
-        seed_mask = np.zeros(agfe_array.shape, dtype=bool)
-        seed_mask[tuple(coords.T)] = True
-        markers, _ = label(seed_mask)
-
-        labeled_array = watershed(
-            agfe_array,
-            markers=markers,
-            mask=favorable_mask,
-            compactness=self.compactness,
-        )
-        n_raw = int(labeled_array.max())
-        site_labels = [
-            lbl for lbl in range(1, n_raw + 1)
-            if int((labeled_array == lbl).sum()) >= self.min_cluster_voxels
-        ]
-        return labeled_array, site_labels
-
-
 class SkimageWatershedClustering:
     """Marker-controlled watershed using h_maxima seeds on the AGFE score field.
 
@@ -127,9 +79,10 @@ class SkimageWatershedClustering:
     smoothing_sigma : float or None
         Gaussian sigma, in voxels, applied to the score image before seeding
         to suppress speckle noise.  ``None`` disables smoothing.
-    min_distance : int
-        Minimum separation, in voxels, between seed maxima.  ``"distance"``
-        mode only.
+    min_distance : int or None
+        Minimum separation, in voxels, between seed maxima. ``"distance"`` mode ONLY -- in
+        ``"score"`` mode seeds come from h_maxima and this is ignored, so passing it there
+        warns rather than silently doing nothing. Defaults to 3 in distance mode.
     watershed_mode : {"score", "distance"}
         ``"score"``: watershed the clipped AGFE score ``clip(-agfe, 0, None)``,
         seeded by h_maxima.  ``"distance"``: watershed the Euclidean distance
@@ -138,14 +91,20 @@ class SkimageWatershedClustering:
     """
 
     def __init__(self, min_cluster_voxels=10, h=0.5,
-                 smoothing_sigma=None, min_distance=3,
+                 smoothing_sigma=None, min_distance=None,
                  watershed_mode="score"):
         if watershed_mode not in ("score", "distance"):
             raise ValueError("watershed_mode must be 'score' or 'distance'")
+        if watershed_mode == "score" and min_distance is not None:
+            warnings.warn(
+                "min_distance is ignored in watershed_mode='score' (seeds come from h_maxima); "
+                "set `h` to control splitting, or use watershed_mode='distance'.",
+                RuntimeWarning, stacklevel=2,
+            )
         self.min_cluster_voxels = min_cluster_voxels
         self.h = h
         self.smoothing_sigma = smoothing_sigma
-        self.min_distance = min_distance
+        self.min_distance = 3 if min_distance is None else min_distance
         self.watershed_mode = watershed_mode
 
     def cluster(self, favorable_mask, agfe_array, gridsize):
@@ -195,52 +154,6 @@ class SkimageWatershedClustering:
         return labeled_array, site_labels
 
 
-class DBSCANClustering:
-    """Cluster favorable voxels with DBSCAN on their Angstrom coordinates.
-
-    Purely spatial: ignores AGFE intensity and voxel adjacency rules, keying
-    only on whether favorable voxels lie within ``eps_angstrom`` of each other.
-
-    Parameters
-    ----------
-    min_cluster_voxels : int
-        Minimum voxels a cluster must contain to be retained (DBSCAN
-        ``min_samples``).
-    eps_angstrom : float
-        Neighbourhood radius in Angstroms; a small multiple of the grid spacing.
-    """
-
-    def __init__(self, min_cluster_voxels=10, eps_angstrom=1.5):
-        self.min_cluster_voxels = min_cluster_voxels
-        self.eps_angstrom = eps_angstrom
-
-    def cluster(self, favorable_mask, agfe_array, gridsize):
-        vox_coords = np.argwhere(favorable_mask).astype(float)
-        if len(vox_coords) == 0:
-            return np.zeros(agfe_array.shape, dtype=int), []
-        ang_coords = vox_coords * gridsize
-
-        db = DBSCAN(
-            eps=self.eps_angstrom,
-            min_samples=self.min_cluster_voxels,
-            n_jobs=-1,
-        ).fit(ang_coords)
-        raw_labels = db.labels_  # -1 = noise
-
-        labeled_array = np.zeros(agfe_array.shape, dtype=int)
-        for i, vox in enumerate(np.argwhere(favorable_mask)):
-            lbl = int(raw_labels[i])
-            if lbl >= 0:
-                labeled_array[tuple(vox)] = lbl + 1  # shift so 0 = background
-
-        n_raw = int(labeled_array.max())
-        site_labels = [
-            lbl for lbl in range(1, n_raw + 1)
-            if int((labeled_array == lbl).sum()) >= self.min_cluster_voxels
-        ]
-        return labeled_array, site_labels
-
-
 def build_clustering_strategy(clustering_cfg, gridsize=None):
     """Build a clustering-strategy instance from a ``ClusteringConfig``.
 
@@ -254,11 +167,14 @@ def build_clustering_strategy(clustering_cfg, gridsize=None):
     ValueError
         If ``clustering_cfg.strategy`` is not a known strategy name.
     """
+    # Two strategies, deliberately. `skimage_watershed` splits merged pockets using an
+    # h_maxima contrast criterion; `connected_components` is the no-splitting baseline.
+    # Removed: `watershed` (seeded by peak_local_max with a grid-dependent `min_distance`
+    # rather than a contrast threshold, so it was strictly worse than skimage_watershed) and
+    # `dbscan` (ignored both voxel adjacency and AGFE intensity). Neither was ever a default.
     registry = {
         "skimage_watershed": SkimageWatershedClustering,
         "connected_components": ConnectedComponentsClustering,
-        "watershed": WatershedClustering,
-        "dbscan": DBSCANClustering,
     }
     strategy = clustering_cfg.strategy
     if strategy not in registry:

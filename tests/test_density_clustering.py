@@ -9,12 +9,10 @@ import pytest
 
 from cosolvkit.analysis.density_clustering import (
     ConnectedComponentsClustering,
-    DBSCANClustering,
     SkimageWatershedClustering,
-    WatershedClustering,
 )
 
-GRIDSIZE = 0.5  # Å per voxel — used by DBSCAN to convert to Angstroms
+GRIDSIZE = 0.5  # Å per voxel
 
 
 # ---------------------------------------------------------------------------
@@ -69,30 +67,6 @@ class TestConnectedComponentsClustering:
 
 
 # ---------------------------------------------------------------------------
-# WatershedClustering
-# ---------------------------------------------------------------------------
-
-class TestWatershedClustering:
-
-    def test_two_separated_blobs_found(self, two_blob_mask, two_blob_agfe):
-        ws = WatershedClustering(min_cluster_voxels=10, min_distance=3)
-        labeled, labels = ws.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
-        assert len(labels) >= 2
-        assert labeled.shape == two_blob_mask.shape
-
-    def test_min_voxels_filtering(self, two_blob_mask, two_blob_agfe):
-        ws = WatershedClustering(min_cluster_voxels=200)
-        _, labels = ws.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
-        assert len(labels) == 0
-
-    def test_empty_mask(self, two_blob_agfe):
-        empty = np.zeros((20, 20, 20), dtype=bool)
-        ws = WatershedClustering(min_cluster_voxels=1)
-        _, labels = ws.cluster(empty, two_blob_agfe, GRIDSIZE)
-        assert len(labels) == 0
-
-
-# ---------------------------------------------------------------------------
 # SkimageWatershedClustering
 # ---------------------------------------------------------------------------
 
@@ -128,30 +102,3 @@ class TestSkimageWatershedClustering:
         sw = SkimageWatershedClustering(min_cluster_voxels=10, h=0.1, smoothing_sigma=1.0)
         labeled, labels = sw.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
         assert labeled.shape == two_blob_mask.shape
-
-
-# ---------------------------------------------------------------------------
-# DBSCANClustering
-# ---------------------------------------------------------------------------
-
-class TestDBSCANClustering:
-
-    def test_two_separated_blobs(self, two_blob_mask, two_blob_agfe):
-        # Blobs A and B are ~3.5 Å apart; eps=1.5 Å keeps them separate
-        db = DBSCANClustering(min_cluster_voxels=10, eps_angstrom=1.5)
-        labeled, labels = db.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
-        assert len(labels) >= 2
-        assert labeled.shape == two_blob_mask.shape
-
-    def test_empty_mask_gives_no_clusters(self, two_blob_agfe):
-        empty = np.zeros((20, 20, 20), dtype=bool)
-        db = DBSCANClustering(min_cluster_voxels=1, eps_angstrom=1.5)
-        labeled, labels = db.cluster(empty, two_blob_agfe, GRIDSIZE)
-        assert len(labels) == 0
-        assert labeled.shape == two_blob_agfe.shape
-
-    def test_background_voxels_are_zero_in_labeled(self, two_blob_mask, two_blob_agfe):
-        db = DBSCANClustering(min_cluster_voxels=5, eps_angstrom=1.5)
-        labeled, _ = db.cluster(two_blob_mask, two_blob_agfe, GRIDSIZE)
-        # Voxels not in the mask must be 0 (background)
-        assert np.all(labeled[~two_blob_mask] == 0)

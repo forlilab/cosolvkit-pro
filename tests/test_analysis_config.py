@@ -106,16 +106,16 @@ class TestFromYamlValid:
         raw = _minimal_raw()
         raw["hotspots"] = {"clustering": {"use_skimage_cleanup": True,
                                           "cleanup_min_size": 5,
-                                          "strategy": "dbscan",
-                                          "strategy_kwargs": {"eps_angstrom": 2.0},
+                                          "strategy": "connected_components",
+                                          "strategy_kwargs": {"connectivity": 6},
                                           "min_cluster_voxels": 15}}
         path = _write_yaml(tmp_path, raw)
         cfg = AnalysisConfig.from_yaml(path)
         assert isinstance(cfg.hotspots.clustering, ClusteringConfig)
         assert cfg.hotspots.clustering.use_skimage_cleanup is True
         assert cfg.hotspots.clustering.cleanup_min_size == 5
-        assert cfg.hotspots.clustering.strategy == "dbscan"
-        assert cfg.hotspots.clustering.strategy_kwargs == {"eps_angstrom": 2.0}
+        assert cfg.hotspots.clustering.strategy == "connected_components"
+        assert cfg.hotspots.clustering.strategy_kwargs == {"connectivity": 6}
         assert cfg.hotspots.clustering.min_cluster_voxels == 15
 
     def test_survival_kwargs_sp_top_n_parsed(self, tmp_path):

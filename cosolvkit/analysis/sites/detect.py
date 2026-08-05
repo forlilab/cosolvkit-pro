@@ -16,9 +16,7 @@ import pandas as pd
 from gridData import Grid
 from scipy.ndimage import center_of_mass
 
-from cosolvkit.analysis.sites.clustering import (
-    SkimageWatershedClustering,
-)
+from cosolvkit.analysis.sites.clustering import build_clustering_strategy
 from cosolvkit.analysis.sites.properties import PocketPropertyCalculator
 from cosolvkit.analysis.core.models import Hotspot
 
@@ -84,13 +82,15 @@ class HotspotDetector:
         self.min_cluster_voxels = min_cluster_voxels
         self.top_percentile = top_percentile
         self.gridsize = gridsize
-        self.clustering_strategy = (
-            clustering_strategy
-            if clustering_strategy is not None
-            # else ConnectedComponentsClustering(min_cluster_voxels=min_cluster_voxels)
-            else SkimageWatershedClustering(min_cluster_voxels=min_cluster_voxels,
-                                            h=0.5)
-        )
+        # One construction path. This used to hand-build the strategy here while
+        # `build_clustering_strategy` built it from config elsewhere, so the two could drift.
+        if clustering_strategy is not None:
+            self.clustering_strategy = clustering_strategy
+        else:
+            from cosolvkit.analysis.config import ClusteringConfig
+            self.clustering_strategy = build_clustering_strategy(
+                ClusteringConfig(min_cluster_voxels=min_cluster_voxels)
+            )
         self.compute_survival_probability = compute_survival_probability
         self.survival_kwargs = survival_kwargs or {}
         self.use_skimage_cleanup = use_skimage_cleanup

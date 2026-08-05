@@ -2,7 +2,5 @@
 from cosolvkit.analysis.sites.clustering import *  # noqa: F401,F403
 from cosolvkit.analysis.sites.clustering import (  # noqa: F401
     ConnectedComponentsClustering,
-    WatershedClustering,
     SkimageWatershedClustering,
-    DBSCANClustering,
 )
