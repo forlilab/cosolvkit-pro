@@ -1,4 +1,4 @@
-"""Tests for density_analysis.py — pure functions.
+"""Tests for analysis/core/grid.py — pure functions.
 
 All tests in this file run without any MD trajectory or real .dx assets.
 """
@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from gridData import Grid
 
-from cosolvkit.analysis.density_analysis import (
+from cosolvkit.analysis.core.grid import (
     BOLTZMANN_CONSTANT_KB,
     _grid_free_energy,
     _smooth_grid_free_energy,

@@ -16,7 +16,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from cosolvkit.analysis.hotspots_detection import HotspotDetector
+from cosolvkit.analysis.sites.detect import HotspotDetector
 from cosolvkit.analysis.multi_report import MultiReport
 
 SP_KEYS = [

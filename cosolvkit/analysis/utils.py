@@ -24,7 +24,6 @@ MD_FORMAT_EXTENSIONS = {
 
 class MutuallyExclusiveParametersError(Exception):
     """Raised when mutually exclusive parameters are supplied together."""
-    pass
 
 def setup_logging(level:str="INFO", filepath:str=None):
 

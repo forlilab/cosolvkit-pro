@@ -1,7 +1,7 @@
 """Tests for HotspotDetector — uses synthetic .dx files, no real trajectory.
 
 Key insight: self.universe is only accessed inside survival_probability()
-(line ~891 of hotspots_detection.py). All other methods are pure grid-math.
+(in sites/detect.py). All other methods are pure grid-math.
 We pass compute_survival_probability=False so survival_probability is never
 called, making universe=None safe for all tests in this file.
 """
@@ -14,7 +14,8 @@ import pandas as pd
 import pytest
 from gridData import Grid
 
-from cosolvkit.analysis.hotspots_detection import Hotspot, HotspotDetector
+from cosolvkit.analysis.core.models import Hotspot
+from cosolvkit.analysis.sites.detect import HotspotDetector
 
 
 # ---------------------------------------------------------------------------

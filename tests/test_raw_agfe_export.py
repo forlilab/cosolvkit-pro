@@ -111,8 +111,7 @@ def test_subset_grid_is_gone():
     """It was dead code wrapping a RegularGridInterpolator, with a FIXME doubting itself."""
     import cosolvkit.analysis.core.grid as g
     assert not hasattr(g, "_subset_grid")
-    import cosolvkit.analysis.density_analysis as da  # back-compat shim must still import
-    assert hasattr(da, "_export")
+    assert hasattr(g, "_export")
 
 
 def test_export_preserves_grid_geometry_exactly(tmp_path):

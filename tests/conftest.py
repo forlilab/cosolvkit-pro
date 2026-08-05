@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from gridData import Grid
 
-from cosolvkit.analysis.hotspots_detection import Hotspot
+from cosolvkit.analysis.core.models import Hotspot
 
 
 # ---------------------------------------------------------------------------

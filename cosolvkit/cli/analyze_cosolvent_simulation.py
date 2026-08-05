@@ -69,7 +69,7 @@ Examples:
 
 
 def _run_from_yaml(config_path: str, logger):
-    from cosolvkit.analysis.analysis_config import AnalysisConfig
+    from cosolvkit.analysis.config import AnalysisConfig
     from cosolvkit.analysis.multi_report import MultiReport
 
     cfg = AnalysisConfig.from_yaml(config_path)
@@ -130,7 +130,7 @@ def main():
 
     # --generate-config: write template and exit
     if args.generate_config is not None:
-        from cosolvkit.analysis.analysis_config import AnalysisConfig
+        from cosolvkit.analysis.config import AnalysisConfig
         AnalysisConfig.generate_template(args.generate_config)
         print(f"Template written to: {args.generate_config}")
         sys.exit(0)

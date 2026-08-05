@@ -561,12 +561,12 @@ class HotspotDetector:
         )
 
     # ------------------------------------------------------------------
-    # Visualisation — thin wrappers; implementation in hotspot_visualization.py
+    # Visualisation — thin wrappers; implementation in viz/{plotly,pymol}.py
     # ------------------------------------------------------------------
 
     def plot_hotspot_clustering_3d(self, cosolvent, sites, output_path=None,
                                    max_voxels_per_cluster=3000, top_n=10):
-        """See :func:`hotspot_visualization.plot_hotspot_clustering_3d`.
+        """See :func:`cosolvkit.analysis.viz.plotly.plot_hotspot_clustering_3d`.
 
         Requires a prior :meth:`detect` call for *cosolvent* to populate the
         labeled-array and grid caches.
@@ -588,7 +588,7 @@ class HotspotDetector:
                 f"No cached clustering for '{cosolvent}'. "
                 "Call detect() first."
             )
-        from cosolvkit.analysis import hotspot_visualization as viz
+        from cosolvkit.analysis.viz import plotly as viz
         return viz.plot_hotspot_clustering_3d(
             labeled_array=self._labeled_arrays[cosolvent],
             agfe_array=self._combined_grids[cosolvent].grid,
@@ -602,10 +602,10 @@ class HotspotDetector:
         )
 
     def visualise_clustering(self, cosolvent, results=None, reference_pdb=None):
-        """See :func:`hotspot_visualization.visualise_clustering`."""
+        """See :func:`cosolvkit.analysis.viz.pymol.visualise_clustering`."""
         if cosolvent not in self._labeled_arrays or results is None:
             results = self.detect(cosolvent)
-        from cosolvkit.analysis import hotspot_visualization as viz
+        from cosolvkit.analysis.viz import pymol as viz
         return viz.visualise_clustering(
             cosolvent=cosolvent,
             labeled_array=self._labeled_arrays[cosolvent],
@@ -617,8 +617,8 @@ class HotspotDetector:
         )
 
     def add_hotspots_to_pymol_session(self, results, pse_path, top_n=10):
-        """See :func:`hotspot_visualization.add_hotspots_to_pymol_session`."""
-        from cosolvkit.analysis import hotspot_visualization as viz
+        """See :func:`cosolvkit.analysis.viz.pymol.add_hotspots_to_pymol_session`."""
+        from cosolvkit.analysis.viz import pymol as viz
         viz.add_hotspots_to_pymol_session(results, pse_path, self.out_path, top_n=top_n)
 
     # ------------------------------------------------------------------

@@ -415,7 +415,7 @@ class PocketPropertyCalculator:
             it), corrupting ``max_tau`` lag windows and biasing residence times down.
             Averaging replicas is also the only version that yields an uncertainty.
         """
-        import cosolvkit.analysis.hotspot_visualization as viz
+        from cosolvkit.analysis.viz import plotly as viz
         try:
             from waterdynamics import SurvivalProbability as SP
         except ImportError:
@@ -532,7 +532,7 @@ class PocketPropertyCalculator:
             Maps zone index (``Group`` column in CSV) to site rank.
             If ``None``, zone i → rank i + 1.
         """
-        import cosolvkit.analysis.hotspot_visualization as viz
+        from cosolvkit.analysis.viz import plotly as viz
         for cosolvent, sites in results.items():
             csv_path = os.path.join(
                 self.out_path, f"survival_probability_{cosolvent}.csv"

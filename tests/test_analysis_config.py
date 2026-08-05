@@ -1,10 +1,10 @@
-"""Tests for analysis_config.py — YAML loading, validation, path resolution."""
+"""Tests for analysis/config.py — YAML loading, validation, path resolution."""
 
 import os
 import pytest
 import yaml
 
-from cosolvkit.analysis.analysis_config import (
+from cosolvkit.analysis.config import (
     AnalysisConfig,
     ClusteringConfig,
     DensityMapsConfig,

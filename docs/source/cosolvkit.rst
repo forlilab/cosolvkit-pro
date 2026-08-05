@@ -36,18 +36,18 @@ cosolvkit.analysis subpackage
    :undoc-members:
    :show-inheritance:
 
-cosolvkit.analysis.analysis module
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+cosolvkit.analysis.report module
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: cosolvkit.analysis.analysis
+.. automodule:: cosolvkit.analysis.report
    :members:
    :undoc-members:
    :show-inheritance:
 
-cosolvkit.analysis.analysis\_config module
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+cosolvkit.analysis.config module
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: cosolvkit.analysis.analysis_config
+.. automodule:: cosolvkit.analysis.config
    :members:
    :undoc-members:
    :show-inheritance:
@@ -60,50 +60,58 @@ cosolvkit.analysis.multi\_report module
    :undoc-members:
    :show-inheritance:
 
-cosolvkit.analysis.density\_analysis module
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+cosolvkit.analysis.core.grid module
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: cosolvkit.analysis.density_analysis
+.. automodule:: cosolvkit.analysis.core.grid
    :members:
    :undoc-members:
    :show-inheritance:
 
-cosolvkit.analysis.density\_clustering module
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+cosolvkit.analysis.core.models module
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: cosolvkit.analysis.density_clustering
+.. automodule:: cosolvkit.analysis.core.models
    :members:
    :undoc-members:
    :show-inheritance:
 
-cosolvkit.analysis.hotspots\_detection module
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+cosolvkit.analysis.sites.clustering module
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: cosolvkit.analysis.hotspots_detection
+.. automodule:: cosolvkit.analysis.sites.clustering
    :members:
    :undoc-members:
    :show-inheritance:
 
-cosolvkit.analysis.pocket\_properties module
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+cosolvkit.analysis.sites.detect module
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: cosolvkit.analysis.pocket_properties
+.. automodule:: cosolvkit.analysis.sites.detect
    :members:
    :undoc-members:
    :show-inheritance:
 
-cosolvkit.analysis.consensus\_detection module
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+cosolvkit.analysis.viz.plotly module
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: cosolvkit.analysis.consensus_detection
+.. automodule:: cosolvkit.analysis.viz.plotly
    :members:
    :undoc-members:
    :show-inheritance:
 
-cosolvkit.analysis.hotspot\_visualization module
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+cosolvkit.analysis.viz.pymol module
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: cosolvkit.analysis.hotspot_visualization
+.. automodule:: cosolvkit.analysis.viz.pymol
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+cosolvkit.analysis.viz.vmd module
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. automodule:: cosolvkit.analysis.viz.vmd
    :members:
    :undoc-members:
    :show-inheritance:

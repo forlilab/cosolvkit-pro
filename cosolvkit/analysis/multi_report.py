@@ -15,10 +15,12 @@ from typing import Dict, List, Optional
 from cosolvkit.analysis.report import Report
 from cosolvkit.analysis.config import resolve_agfe_cutoff
 from cosolvkit.analysis.sites.clustering import build_clustering_strategy
-from .analysis_config import AnalysisConfig, SimulationEntry
-from .density_analysis import combine_dx_maps_with_resampling
-from cosolvkit.analysis.core.grid import combine_accessible_masks
-from .hotspots_detection import HotspotDetector
+from cosolvkit.analysis.config import AnalysisConfig, SimulationEntry
+from cosolvkit.analysis.core.grid import (
+    combine_accessible_masks,
+    combine_dx_maps_with_resampling,
+)
+from cosolvkit.analysis.sites.detect import HotspotDetector
 
 
 DEFAULT_PLOT_TOP_N = 10

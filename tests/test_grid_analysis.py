@@ -95,7 +95,7 @@ def synthetic_universe():
 class TestGridAnalysisNonAtomtype:
 
     def test_run_completes_and_builds_a_3d_histogram(self, synthetic_universe, tmp_cwd):
-        from cosolvkit.analysis.density_analysis import GridAnalysis
+        from cosolvkit.analysis.core.grid import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
@@ -104,7 +104,7 @@ class TestGridAnalysisNonAtomtype:
         assert analysis._histogram.grid.ndim == 3
 
     def test_agfe_computed(self, synthetic_universe, tmp_cwd):
-        from cosolvkit.analysis.density_analysis import GridAnalysis
+        from cosolvkit.analysis.core.grid import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
@@ -114,7 +114,7 @@ class TestGridAnalysisNonAtomtype:
 
     def test_agfe_smoothed_all_nonpositive(self, synthetic_universe, tmp_cwd):
         """Load-bearing invariant: smoothed AGFE <= 0 everywhere (PyMol relies on this)."""
-        from cosolvkit.analysis.density_analysis import GridAnalysis
+        from cosolvkit.analysis.core.grid import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
@@ -123,7 +123,7 @@ class TestGridAnalysisNonAtomtype:
 
     def test_hotspot_region_more_favorable_than_background(self, synthetic_universe, tmp_cwd):
         """BEN atoms piled near (2,2,2) → that region should have lower AGFE."""
-        from cosolvkit.analysis.density_analysis import GridAnalysis
+        from cosolvkit.analysis.core.grid import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
@@ -149,7 +149,7 @@ class TestGridAnalysisNonAtomtype:
         )
 
     def test_export_agfe_writes_dx(self, synthetic_universe, tmp_cwd):
-        from cosolvkit.analysis.density_analysis import GridAnalysis
+        from cosolvkit.analysis.core.grid import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         analysis = GridAnalysis(ag, gridsize=1.0, use_atomtypes=False)
         analysis.run()
@@ -166,7 +166,7 @@ class TestGridAnalysisNonAtomtype:
 
     def test_use_atomtypes_without_definitions_exits(self, synthetic_universe, tmp_cwd):
         """use_atomtypes=True with atomtypes_definitions=None → SystemExit."""
-        from cosolvkit.analysis.density_analysis import GridAnalysis
+        from cosolvkit.analysis.core.grid import GridAnalysis
         ag = synthetic_universe.select_atoms("resname BEN")
         with pytest.raises(SystemExit):
             GridAnalysis(ag, gridsize=1.0, use_atomtypes=True, atomtypes_definitions=None)
