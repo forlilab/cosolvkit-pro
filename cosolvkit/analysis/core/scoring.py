@@ -45,36 +45,69 @@ def _minmax(arr):
 # Binding-site scoring (signed weighted sum over global min-max, higher=better)
 # ---------------------------------------------------------------------------
 
-DEFAULT_BINDING_SITE_WEIGHTS = {
-    # Most-negative AGFE at the site (lower is better). See _affinity_values.
+# The weight set shipped through 2026-07. Kept addressable so earlier runs reproduce without
+# editing the library; it is NOT the default any more because three of its entries were
+# incoherent -- see DEFAULT_BINDING_SITE_WEIGHTS below.
+LEGACY_BINDING_SITE_WEIGHTS_2026_07 = {
     "affinity": 3.0,
-    # How many PROBES hit the site. Effectively a member count, so biased toward
-    # large sites.
     "probe_coverage": 2.0,
     "volume": 1.0,
     "kinetics": 1.0,
     "shape": 1.0,
-    # Number of favourable pharmacophoric ATOM TYPES (HBD/HBA/Car/Cal/Hal) at the site.
-    # Needs atom-type-split density maps (``density_maps.use_atomtypes: true``);
-    # without them it is zero everywhere and contributes nothing. Not probe diversity:
-    # that is ``probe_coverage`` (how many probes) and ``probe_chemotype_coverage``.
     "chemotype_diversity": 1.0,
-    # Fraction of probe chemotype classes represented among the probes hitting the
-    # site. Opt-in (0.0).
     "probe_chemotype_coverage": 0.0,
-    # Read from the AGFE map as a FIELD at member-hotspot centroids (see core/field.py),
-    # not from the thresholded blob. Opt-in (0.0).
     "field_contrast": 0.0,
     "field_sharpness": 0.0,
-    # Normalised enclosure: fraction of a ball around the site that solvent can reach, averaged
-    # over member hotspots. Prefer this over `buriedness`, which is an unbounded atom count whose
-    # AUC rises monotonically with its radius (0.524 -> 0.806 over 4-20 A on FosAKP) and therefore
-    # reports centrality rather than enclosure. This one is bounded in [0,1], plateaus with radius,
-    # is nearly volume-independent (|rho| <= 0.13 vs volume), and retains AUC 0.685 after
-    # residualising on buriedness AND volume. Inverted: LOWER accessible fraction = more enclosed.
-    # Requires the accessible-volume mask, so it is only populated when the detector can find
-    # `solvent_accessible_map.dx`. Opt-in (0.0) pending validation on a second target.
     "accessible_fraction": 0.0,
+}
+
+# Derived from a leave-one-probe-out fit on the 13 FosAKP probes carrying >=3 true sites
+# (`scripts/fit_weights_loo.py`, candidate `tier_b_2026_08` in `scripts/sweep_weights.py`).
+#
+# ONE TARGET, 6 POCKETS. The SIGNS are the durable part; the MAGNITUDES are provisional and a
+# second target may move them. This is still shipped as the default because the previous set was
+# not merely untuned but self-contradictory: it put +1.0 on `kinetics`, whose fit came out
+# NEGATIVE in 13/13 folds, and +1.0 on `chemotype_diversity`, which is identically zero in the
+# default configuration, while leaving at 0.0 the one feature that survived residualising on both
+# buriedness and volume. Shipping a weight that contradicts its own fit is worse than shipping a
+# provisional magnitude.
+DEFAULT_BINDING_SITE_WEIGHTS = {
+    # Most-negative AGFE at the site (lower is better). See _affinity_values.
+    "affinity": 3.0,
+    # Solidity, inverted: real pockets are irregular clefts, i.e. LESS convex. Fitted 3.47 vs
+    # affinity's 3.00 after rescaling, with 13/13 folds agreeing on the sign, so shape outranks
+    # affinity. Rounded to 3.5.
+    "shape": 3.5,
+    # Normalised enclosure: fraction of a ball around the site that solvent can reach, averaged
+    # over member hotspots. Replaces the removed `buriedness`, an unbounded atom count whose AUC
+    # rose monotonically with radius (0.524 -> 0.806 over 4-20 A on FosAKP) and therefore reported
+    # centrality rather than enclosure. This one is bounded in [0,1], plateaus with radius, is
+    # nearly volume-independent (|rho| <= 0.13), retains AUC 0.685 after residualising on
+    # buriedness AND volume, and scored 0.724 vs buriedness 0.667 on matched 250 ns data.
+    # Inverted: LOWER accessible fraction = more enclosed.
+    # Populated only when the detector can find `solvent_accessible_map.dx`; the dead-weight guard
+    # in `score_binding_sites` warns if it is weighted but absent.
+    "accessible_fraction": 2.0,
+    # How many PROBES hit the site. Effectively a member count, so biased toward large sites.
+    "probe_coverage": 2.0,
+    # Fitted ~0 with the sign flipping in 3/13 folds -- redundant once shape and enclosure are in,
+    # since both already carry size information.
+    "volume": 0.0,
+    # Fitted NEGATIVE in 13/13 folds, i.e. the legacy +1.0 was backwards. Zeroed rather than
+    # flipped: flipping would assert a direction from a single target. Also inert unless
+    # `survival_kwargs.sp_top_n > 0`.
+    "kinetics": 0.0,
+    # Number of favourable pharmacophoric ATOM TYPES (HBD/HBA/Car/Cal/Hal) at the site. Needs
+    # atom-type-split density maps (``density_maps.use_atomtypes: true``); without them it is zero
+    # everywhere, which is why weighting it by default was a no-op. Not probe diversity: that is
+    # ``probe_coverage`` and ``probe_chemotype_coverage``.
+    "chemotype_diversity": 0.0,
+    # Fraction of probe chemotype classes represented among the probes hitting the site. Opt-in.
+    "probe_chemotype_coverage": 0.0,
+    # Read from the AGFE map as a FIELD at member-hotspot centroids (see core/field.py), not from
+    # the thresholded blob. Opt-in.
+    "field_contrast": 0.0,
+    "field_sharpness": 0.0,
 }
 
 # Features whose raw value is "lower is better" -> inverted min-max (most-negative -> 1).
@@ -128,13 +161,25 @@ USE_FUSED_AFFINITY = False
 
 def _mean_member_property(site, name):
     """Mean of *name* over member hotspots, or None. Mean, not max: a best-of-members
-    summary is inflated by member count."""
+    summary is inflated by member count.
+
+    Falls back to a same-named attribute on *site* itself when there are no member hotspots to
+    average. That is the case for row adapters reconstructed from ``binding_sites.csv`` (the
+    dashboard's ``_BindingSiteRow``), which hold the already-averaged site-level value and no
+    members -- without the fallback such a caller silently scored 0 for this feature even with a
+    non-zero weight.
+    """
     vals = []
     for hs in getattr(site, "member_hotspots", None) or []:
         v = (getattr(hs, "properties", None) or {}).get(name)
         if v is not None and np.isfinite(v):
             vals.append(float(v))
-    return float(np.mean(vals)) if vals else None
+    if vals:
+        return float(np.mean(vals))
+    direct = getattr(site, name, None)
+    if direct is not None and np.isfinite(direct):
+        return float(direct)
+    return None
 
 
 def _affinity_values(binding_sites):

@@ -15,6 +15,8 @@ from typing import Optional, List, Dict
 import numpy as np
 import pandas as pd
 
+from cosolvkit.analysis.core.scoring import DEFAULT_BINDING_SITE_WEIGHTS
+
 try:
     import plotly.graph_objects as go
     _PLOTLY_AVAILABLE = True
@@ -35,10 +37,11 @@ logger = logging.getLogger(__name__)
 # Load and re-rank binding_sites.csv by a signed weighted score; delegates to
 # core.scoring.score_binding_sites.
 
-DEFAULT_DASHBOARD_WEIGHTS = {
-    "affinity": 3.0, "probe_coverage": 2.0, "volume": 1.0,
-    "kinetics": 1.0, "shape": 1.0, "diversity": 1.0,
-}
+# One source of truth. This used to be a hand-maintained second copy and had already drifted from
+# the library defaults: it kept +1.0 on `kinetics` (fitted NEGATIVE in 13/13 leave-one-probe-out
+# folds) and +1.0 on `diversity` -- itself a deprecated alias for `chemotype_diversity`, so every
+# dashboard rerank raised the legacy-alias warning -- while the enclosure term stayed unweighted.
+DEFAULT_DASHBOARD_WEIGHTS = dict(DEFAULT_BINDING_SITE_WEIGHTS)
 
 
 def _load_binding_sites_csv(search_dir):
@@ -63,6 +66,13 @@ class _BindingSiteRow:
         self.solidity = float(row["solidity"])
         res = row.get("residence", None)
         self.residence = None if res is None or (isinstance(res, float) and not np.isfinite(res)) else float(res)
+        # Carries a non-zero default weight, so the reranker must be able to read it. Absent from
+        # binding_sites.csv files written before the column existed -> None, and the dead-weight
+        # guard in score_binding_sites warns rather than silently scoring without it.
+        af = row.get("accessible_fraction", None)
+        self.accessible_fraction = (
+            None if af is None or (isinstance(af, float) and not np.isfinite(af))
+            else float(af))
         fa = row.get("favorable_atomtypes", "")
         self.favorable_atomtypes = [a for a in str(fa).split(",") if a] if pd.notna(fa) else []
 

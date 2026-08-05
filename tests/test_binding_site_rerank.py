@@ -14,40 +14,55 @@ def _bs_df():
              centroid_x=0.0, centroid_y=0.0, centroid_z=0.0, agfe_min=-3.0,
              agfe_mean_top_pct=-2.5, volume=100.0, solidity=0.9, extent=0.5,
              axis_major_length=3.0, axis_minor_length=2.0, favorable_atomtypes="Car,HBA",
-             n_chemotypes=2, residence=20.0),
+             n_chemotypes=2, residence=20.0, accessible_fraction=0.30),
         dict(site_id=2, rank=1, combined=0.0, cosolvents="BEN", n_cosolvents=1,
              probe_coverage=0.5, n_hotspots=1, member_hotspot_ids="3",
              centroid_x=5.0, centroid_y=5.0, centroid_z=5.0, agfe_min=-1.0,
              agfe_mean_top_pct=-0.8, volume=50.0, solidity=0.6, extent=0.4,
              axis_major_length=2.0, axis_minor_length=1.0, favorable_atomtypes="Car",
-             n_chemotypes=1, residence=10.0),
+             n_chemotypes=1, residence=10.0, accessible_fraction=0.70),
     ])
 
 
+def _only(**kw):
+    """Weight set with every default zeroed except the named terms.
+
+    Listing a few keys by hand is fragile: `score_binding_sites` merges a partial dict over the
+    defaults, so any term the test forgot stays at its default weight and quietly contributes.
+    That is exactly what broke these two tests when `accessible_fraction` gained a non-zero
+    default.
+    """
+    from cosolvkit.analysis.core.scoring import DEFAULT_BINDING_SITE_WEIGHTS
+    return {**{k: 0.0 for k in DEFAULT_BINDING_SITE_WEIGHTS}, **kw}
+
+
 def test_default_weights_constant():
-    assert DEFAULT_DASHBOARD_WEIGHTS == {
-        "affinity": 3.0, "probe_coverage": 2.0, "volume": 1.0,
-        "kinetics": 1.0, "shape": 1.0, "diversity": 1.0,
-    }
+    """The dashboard must not keep its own copy of the weights; see
+    tests/test_default_weight_coherence.py for why the previous copy was wrong."""
+    from cosolvkit.analysis.core.scoring import DEFAULT_BINDING_SITE_WEIGHTS
+    assert DEFAULT_DASHBOARD_WEIGHTS == DEFAULT_BINDING_SITE_WEIGHTS
 
 
 def test_rerank_default_weights_ranks_best_site_first():
     out = rerank_binding_sites(_bs_df(), DEFAULT_DASHBOARD_WEIGHTS)
-    # Site 1 wins affinity (3.0) + probe_coverage (2.0) + volume + kinetics + diversity = 8.0.
-    # It deliberately LOSES `shape` (1.0): shape is scored lower-is-better, and site 1 has the
-    # higher solidity/extent/axis lengths. So the best-on-most site takes rank 1 with 8.0 of the
-    # 9.0 available, and site 2 keeps the single shape point rather than scoring 0.0.
+    # Under the fitted defaults the non-zero weights are affinity 3.0, shape 3.5,
+    # accessible_fraction 2.0 and probe_coverage 2.0 (volume/kinetics/chemotype_diversity are 0.0).
+    # Site 1 wins affinity + probe_coverage + accessible_fraction = 7.0. It deliberately LOSES
+    # `shape` (3.5), which is scored lower-is-better and site 1 has the higher solidity, so site 2
+    # keeps that term rather than scoring 0.0. Shape now outranking affinity is the fitted result
+    # (3.47 vs 3.00, 13/13 folds agree on the sign), so a site can lose shape and still rank first
+    # only because it wins three other terms.
     r = out.set_index("site_id")
     assert r.loc[1, "rank"] == 1
     assert r.loc[2, "rank"] == 2
-    assert r.loc[1, "combined"] == pytest.approx(8.0, abs=1e-9)
-    assert r.loc[2, "combined"] == pytest.approx(1.0, abs=1e-9)
+    assert r.loc[1, "combined"] == pytest.approx(7.0, abs=1e-9)
+    assert r.loc[2, "combined"] == pytest.approx(3.5, abs=1e-9)
     # output is sorted by rank ascending
     assert list(out["rank"]) == [1, 2]
 
 
 def test_rerank_negative_volume_weight_flips_toward_smaller():
-    w = {"affinity": 0, "probe_coverage": 0, "kinetics": 0, "shape": 0, "diversity": 0, "volume": -1}
+    w = _only(volume=-1)
     out = rerank_binding_sites(_bs_df(), w).set_index("site_id")
     # smaller-volume site (2) preferred
     assert out.loc[2, "rank"] == 1 and out.loc[1, "rank"] == 2
@@ -56,7 +71,7 @@ def test_rerank_negative_volume_weight_flips_toward_smaller():
 def test_rerank_handles_blank_residence():
     df = _bs_df()
     df.loc[df["site_id"] == 1, "residence"] = np.nan  # missing kinetics
-    w = {"affinity": 0, "probe_coverage": 0, "volume": 0, "shape": 0, "diversity": 0, "kinetics": 1}
+    w = _only(kinetics=1)
     out = rerank_binding_sites(df, w).set_index("site_id")
     # site 2 has the only finite residence -> flat minmax -> 1.0; site 1 (NaN) -> 0.0
     assert out.loc[2, "rank"] == 1

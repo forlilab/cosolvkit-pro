@@ -431,9 +431,26 @@ class BindingSite:
             "n_chemotypes": len(self.favorable_atomtypes),
             "residence": _round_or_none(self.residence),
             "residence_metric": self.residence_metric,
+            # Mean over member hotspots, matching how `score_binding_sites` reads it. Exported
+            # because it carries a non-zero DEFAULT weight: without this column the feature was
+            # scored but invisible in binding_sites.csv, so nothing downstream (the dashboard
+            # reranker, any external analysis) could see or re-weight it. None when the
+            # accessible-volume mask was unavailable.
+            "accessible_fraction": _round_or_none(self._mean_member_property(
+                "accessible_fraction"), 4),
         }
         d.update(self.properties)
         return d
+
+    def _mean_member_property(self, name):
+        """Mean of *name* over member hotspots that carry it, or None if none do.
+
+        The MEAN rather than the max: a best-of-members summary is inflated by member count
+        (rho -0.82 on the FosAKP benchmark).
+        """
+        vals = [h.properties[name] for h in (self.member_hotspots or [])
+                if h.properties is not None and h.properties.get(name) is not None]
+        return float(np.mean(vals)) if vals else None
 
     def __repr__(self):
         agfe = "n/a" if self.agfe_min is None else f"{float(self.agfe_min):.3f}"
