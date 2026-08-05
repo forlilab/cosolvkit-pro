@@ -44,8 +44,10 @@ class HotspotDetector:
         not. Default 20 A^3 = one heavy atom's van der Waals volume; see ClusteringConfig for
         the measured ground-truth-coverage tradeoff behind that number.
     min_cluster_voxels : int, optional
-        Literal voxel count, overriding *min_cluster_volume_ang3* when given. For reproducing
-        older runs; prefer the volume.
+        Low-level override in raw voxels, for callers that need an exact count on a synthetic or
+        non-standard grid (tests, sweeps). Deliberately NOT a ClusteringConfig field: at the
+        config level a grid-dependent count is a foot-gun, and having both invites a precedence
+        rule to get wrong.
     top_percentile : float
         Percentage of most-favorable voxels averaged for favorability scoring.
     gridsize : float
@@ -93,10 +95,11 @@ class HotspotDetector:
         else:
             from cosolvkit.analysis.config import ClusteringConfig
             self.clustering_strategy = build_clustering_strategy(
-                ClusteringConfig(min_cluster_volume_ang3=min_cluster_volume_ang3,
-                                 min_cluster_voxels=min_cluster_voxels),
+                ClusteringConfig(min_cluster_volume_ang3=min_cluster_volume_ang3),
                 gridsize=self.gridsize,
             )
+            if min_cluster_voxels is not None:
+                self.clustering_strategy.min_cluster_voxels = int(min_cluster_voxels)
         # Read the threshold back off the strategy that will actually apply it. Keeping a separate
         # copy let the detector report one number while a supplied strategy filtered on another.
         self.min_cluster_voxels = getattr(self.clustering_strategy, "min_cluster_voxels", None)
@@ -310,7 +313,7 @@ class HotspotDetector:
         if not site_labels:
             self.logger.warning(
                 f"No clusters survived size filtering for '{cosolvent}'. "
-                "Try reducing min_cluster_voxels or adjusting the clustering strategy."
+                "Try lowering min_cluster_volume_ang3 or adjusting the clustering strategy."
             )
             return []
 

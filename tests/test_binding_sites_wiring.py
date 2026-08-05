@@ -7,9 +7,9 @@ def test_config_defaults():
     assert BindingSitesConfig().merge_tolerance_ang == 0.0
     assert HotspotsConfig().n_kt == 1.0
     assert HotspotsConfig().clustering.strategy == "skimage_watershed"
-    # The size threshold is a VOLUME now; the voxel count is a derived escape hatch.
-    assert HotspotsConfig().clustering.min_cluster_voxels is None
+    # The size threshold is a VOLUME; there is no voxel-count knob any more.
     assert HotspotsConfig().clustering.min_cluster_volume_ang3 == 20.0
+    assert not hasattr(HotspotsConfig().clustering, "min_cluster_voxels")
     assert HotspotsConfig().survival_kwargs == {}
 
 

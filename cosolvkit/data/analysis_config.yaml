@@ -79,14 +79,13 @@ hotspots:
     max_tau:       100           # maximum lag time
     intermittency: 2             # allowed gaps in occupancy (frames)
   clustering:
-    strategy:            "skimage_watershed"  # skimage_watershed | connected_components | watershed | dbscan
+    strategy:            "skimage_watershed"  # skimage_watershed | connected_components
     strategy_kwargs:     {}       # extra kwargs for the chosen strategy
                                   # e.g. skimage_watershed: {h: 0.5, watershed_mode: score}
-                                  #      dbscan:            {eps_angstrom: 1.5}
-    min_cluster_voxels:  20       # discard clusters smaller than this (VOXELS - meaning
-                                  # depends on gridsize)
-    min_cluster_volume_ang3: null  # preferred: same threshold in A^3, invariant to gridsize.
-                                  # When set it overrides min_cluster_voxels.
+                                  #      connected_components: {connectivity: 6}
+    min_cluster_volume_ang3: 20.0 # discard clusters below this volume. In A^3, so it is
+                                  # invariant to gridsize; 20 A^3 = one heavy atom, and the
+                                  # largest value that still recovers every FosAKP pocket.
     use_skimage_cleanup: false    # apply scikit-image morphology cleanup before clustering
     cleanup_min_size:    1        # remove objects smaller than this (voxels)
     cleanup_hole_size:   2        # fill holes smaller than this (voxels)

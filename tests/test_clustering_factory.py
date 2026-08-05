@@ -34,9 +34,9 @@ def test_the_same_volume_gives_a_different_count_per_gridsize():
 ])
 def test_each_strategy_builds(name, cls):
     strat = build_clustering_strategy(
-        ClusteringConfig(strategy=name, min_cluster_voxels=7), gridsize=0.8)
+        ClusteringConfig(strategy=name, min_cluster_volume_ang3=3.584), gridsize=0.8)
     assert isinstance(strat, cls)
-    assert strat.min_cluster_voxels == 7
+    assert strat.min_cluster_voxels == 7  # 3.584 / 0.8**3
 
 
 def test_strategy_kwargs_applied():

@@ -70,17 +70,12 @@ class ClusteringConfig:
     # Measured on FosAKP (18 probes, scripts/sweep_min_cluster_volume.py).
     # 20 A^3 is the largest threshold that still recovers every pocket
     min_cluster_volume_ang3: float = 20.0
-    # Escape hatch: a literal voxel count that WINS over the volume when set. Leave None unless you
-    # need grid-dependent behaviour, e.g. reproducing an older run.
-    min_cluster_voxels:  Optional[int] = None
     use_skimage_cleanup: bool = False
     cleanup_min_size:    int  = 1
     cleanup_hole_size:   int  = 2
 
     def resolve_min_cluster_voxels(self, gridsize):
-        """Voxel threshold: the explicit count if one was given, else derived from the volume."""
-        if self.min_cluster_voxels is not None:
-            return int(self.min_cluster_voxels)
+        """Voxel count for this gridsize. The volume is the only knob; nothing overrides it."""
         from cosolvkit.analysis.sites.clustering import min_cluster_voxels_for_volume
         return min_cluster_voxels_for_volume(self.min_cluster_volume_ang3, gridsize)
 
