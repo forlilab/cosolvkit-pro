@@ -108,9 +108,26 @@ class HotspotsConfig:
 @dataclass
 class BindingSitesConfig:
     enabled:             bool          = True
-    connectivity:        int           = 26
+    # Voxel adjacency for grouping hotspots into sites: 6 = face-sharing only, 26 also links
+    # corner-touching voxels. And the max surface gap (A) that still merges two hotspots.
+    #
+    # Both were 26 / 2.0, which is the worst corner of the grid. Re-measured on FosAKP with the
+    # current library (18 probes, 205 hotspots at 20 A^3, one-to-one credit,
+    # scripts/sweep_grouping_v2.py):
+    #     conn  tol   sites  recovered  max_claims  biggest site
+    #        6  0.0      30       6/7            1      1182 A^3   <- default
+    #        6  1.0      22       4/7            3      2396
+    #        6  2.0      22       4/7            3      2396
+    #       26  0.0      25       6/7            2      1479
+    #       26  1.0      19       4/7            3      2396
+    #       26  2.0      19       4/7            3      2396       <- the old default
+    # Any tolerance above 0 fuses distinct pockets: recovery falls 6/7 -> 4/7 and max_claims goes
+    # to 3, i.e. one sprawling site sits within the cutoff of three separate pockets. 6/0.0 is the
+    # only setting where no site claims more than one pocket, and it also keeps the largest site
+    # smallest. Raise the tolerance only with a measurement in hand.
+    connectivity:        int           = 6
     weights:             Optional[Dict] = None
-    merge_tolerance_ang: float         = 2.0  # Angstrom
+    merge_tolerance_ang: float         = 0.0  # Angstrom
     # ``{resname: [chemotype_class, ...]}`` overriding
     # cosolvkit.analysis.core.chemotypes.DEFAULT_PROBE_CHEMOTYPES; null = built-in table only.
     probe_chemotypes:    Optional[Dict] = None

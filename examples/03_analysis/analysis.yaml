@@ -79,7 +79,10 @@ hotspots:
 # -----------------------------------------------------------------
 binding_sites:
   enabled:      true
-  connectivity: 26      # 6 (face-sharing) or 26 (also diagonal-touching voxels)
+  connectivity: 6       # 6 (face-sharing) or 26 (also diagonal-touching voxels)
+  merge_tolerance_ang: 0.0   # max surface gap (A) that still merges two hotspots.
+                             # >0 fused distinct pockets on FosAKP: recovery 6/7 ->
+                             # 4/7 and one site claimed 3 pockets. See BindingSitesConfig.
   weights:      null    # null → default binding-site weights. 
 
 # -----------------------------------------------------------------

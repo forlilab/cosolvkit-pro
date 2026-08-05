@@ -29,7 +29,7 @@ def _connectivity_structure(connectivity):
     return np.ones((3, 3, 3), dtype=int)  # 26-connectivity
 
 
-def group_hotspots(probe_results, connectivity=26, merge_tolerance_ang=0.0):
+def group_hotspots(probe_results, connectivity=6, merge_tolerance_ang=0.0):
     """Group hotspots across cosolvents into binding sites by mask connectivity.
 
     probe_results : dict[str, list[Hotspot]]
@@ -217,8 +217,8 @@ def build_binding_site(site_id, group, n_total_cosolvents,
 class BindingSiteDetector:
     """Detect binding sites by grouping hotspots (mask connectivity) and scoring them."""
 
-    def __init__(self, probe_results, connectivity=26, weights=None,
-                 merge_tolerance_ang=2.0, probe_chemotype_overrides=None,
+    def __init__(self, probe_results, connectivity=6, weights=None,
+                 merge_tolerance_ang=0.0, probe_chemotype_overrides=None,
                  field_maps=None):
         from cosolvkit.analysis.core.chemotypes import (
             n_available_chemotypes,
@@ -258,8 +258,8 @@ class BindingSiteDetector:
         return sites
 
 
-def identify_binding_sites(probe_results, connectivity=26, weights=None,
-                           merge_tolerance_ang=2.0, probe_chemotype_overrides=None,
+def identify_binding_sites(probe_results, connectivity=6, weights=None,
+                           merge_tolerance_ang=0.0, probe_chemotype_overrides=None,
                            field_maps=None):
     """Group per-cosolvent hotspots into ranked cross-cosolvent binding sites.
 

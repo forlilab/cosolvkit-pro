@@ -59,3 +59,23 @@ def test_merge_tolerance_union_mask_is_undilated():
     g = group_hotspots({"BEN": [a], "IMI": [b]}, merge_tolerance_ang=2.0)[0]
     expected = a.voxel_mask | b.voxel_mask
     assert g["union_mask"].sum() == int(expected.sum())   # 2 * 3^3 = 54, not dilated
+
+
+def test_config_defaults_match_the_grouping_function_defaults():
+    """These drifted apart once already and nobody noticed.
+
+    `group_hotspots` defaulted to merge_tolerance_ang=0.0 while BindingSitesConfig and
+    identify_binding_sites both said 2.0, so what you got depended on which layer you entered
+    through. Measured on FosAKP, 26/2.0 was the worst corner available: 19 sites, 4/7 pockets
+    recovered, and one site within the cutoff of 3 separate pockets (max_claims=3). See the table
+    in BindingSitesConfig.
+    """
+    import inspect
+    from cosolvkit.analysis.config import BindingSitesConfig
+    from cosolvkit.analysis.sites.binding_sites import group_hotspots, identify_binding_sites
+    cfg = BindingSitesConfig()
+    assert (cfg.connectivity, cfg.merge_tolerance_ang) == (6, 0.0)
+    for fn in (group_hotspots, identify_binding_sites):
+        d = inspect.signature(fn).parameters
+        assert d["connectivity"].default == cfg.connectivity, fn.__name__
+        assert d["merge_tolerance_ang"].default == cfg.merge_tolerance_ang, fn.__name__
