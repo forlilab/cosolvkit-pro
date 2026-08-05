@@ -37,10 +37,7 @@ logger = logging.getLogger(__name__)
 # Load and re-rank binding_sites.csv by a signed weighted score; delegates to
 # core.scoring.score_binding_sites.
 
-# One source of truth. This used to be a hand-maintained second copy and had already drifted from
-# the library defaults: it kept +1.0 on `kinetics` (fitted NEGATIVE in 13/13 leave-one-probe-out
-# folds) and +1.0 on `diversity` -- itself a deprecated alias for `chemotype_diversity`, so every
-# dashboard rerank raised the legacy-alias warning -- while the enclosure term stayed unweighted.
+# One source of truth
 DEFAULT_DASHBOARD_WEIGHTS = dict(DEFAULT_BINDING_SITE_WEIGHTS)
 
 

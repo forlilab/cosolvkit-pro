@@ -12,7 +12,7 @@ class Config(object):
     def __init__(self,
                  cosolvents=None,
                  md_engine=None,
-                 small_molecule_ff="espaloma-0.3.2",
+                 small_molecule_ff="openff-2.3.0",
                  protein_path=None,
                  clean_protein=True,
                  keep_heterogens=False,

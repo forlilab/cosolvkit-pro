@@ -65,24 +65,10 @@ class ClusteringConfig:
     strategy_kwargs:     Dict = field(default_factory=dict)
     # THE size threshold, and the only default for it. Expressed as a volume because a voxel count
     # means different physical things at different gridsizes: 10 voxels is 1.25 A^3 at 0.5 A but
-    # 5.12 A^3 at 0.8 A, and that silent 4x change once dropped a real hotspot (see
-    # tests/test_min_cluster_volume.py).
-    #
+    # 5.12 A^3 at 0.8 A
     # 20 A^3 is the van der Waals volume of one heavy atom (C ~ 20.4 A^3) = ~39 voxels at 0.8 A:
-    # the smallest blob that can plausibly hold an atom rather than being shot noise.
-    #
-    # Measured on FosAKP (18 probes, scripts/sweep_min_cluster_volume.py). Coverage is counted in
-    # DISTINCT POCKETS (symmetry groups): the target has 7 ground-truth site records but only 6
-    # pockets, because sites 5 and 7 are symmetry copies of one another. Counting site records
-    # instead makes a lost copy look like a lost pocket.
-    #     1.25 A^3 (deployed)  6/6 pockets   325 novel hotspots  (100%)
-    #     5.0                  6/6           247                 ( 76%)
-    #    10.0                  6/6           200                 ( 62%)
-    #    20.0  <- default      6/6           148                 ( 46%)
-    #    40.0                  5/6 (!)        96                 ( 30%)
-    # 20 A^3 is the largest threshold that still recovers every pocket, and it removes more than
-    # half the spurious hotspots. 40 A^3 is defensible on atom volume alone but drops a real
-    # pocket -- verified against symmetry groups, so it is not merely a lost duplicate.
+    # Measured on FosAKP (18 probes, scripts/sweep_min_cluster_volume.py).
+    # 20 A^3 is the largest threshold that still recovers every pocket
     min_cluster_volume_ang3: float = 20.0
     # Escape hatch: a literal voxel count that WINS over the volume when set. Leave None unless you
     # need grid-dependent behaviour, e.g. reproducing an older run.
@@ -112,22 +98,8 @@ class BindingSitesConfig:
     enabled:             bool          = True
     # Voxel adjacency for grouping hotspots into sites: 6 = face-sharing only, 26 also links
     # corner-touching voxels. And the max surface gap (A) that still merges two hotspots.
-    #
-    # Both were 26 / 2.0, which is the worst corner of the grid. Re-measured on FosAKP with the
-    # current library (18 probes, 205 hotspots at 20 A^3, one-to-one credit,
-    # scripts/sweep_grouping_v2.py):
-    # Recovery is in DISTINCT POCKETS (symmetry groups) -- 6 of them, not the 7 site records.
-    #     conn  tol   sites  recovered  max_claims  biggest site
-    #        6  0.0      30       6/6            1      1182 A^3   <- default, complete recovery
-    #        6  1.0      22       4/6            3      2396
-    #        6  2.0      22       4/6            3      2396
-    #       26  0.0      25       6/6            2      1479
-    #       26  1.0      19       4/6            3      2396
-    #       26  2.0      19       4/6            3      2396       <- the old default
-    # 6/0.0 recovers every pocket AND is the only setting where no site claims more than one, and
-    # it keeps the largest site smallest. Any tolerance above 0 fuses distinct pockets: recovery
+    # Any tolerance above 0 fuses distinct pockets: recovery
     # falls to 4/6 and one sprawling site lands within the cutoff of three separate pockets.
-    # Raise the tolerance only with a measurement in hand.
     connectivity:        int           = 6
     weights:             Optional[Dict] = None
     merge_tolerance_ang: float         = 0.0  # Angstrom
