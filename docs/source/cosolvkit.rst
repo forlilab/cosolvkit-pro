@@ -124,10 +124,10 @@ cosolvkit.analysis.hotspot\_dashboard module
    :undoc-members:
    :show-inheritance:
 
-cosolvkit.analysis.utils module
+cosolvkit.utils module
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-.. automodule:: cosolvkit.analysis.utils
+.. automodule:: cosolvkit.utils
    :members:
    :undoc-members:
    :show-inheritance:

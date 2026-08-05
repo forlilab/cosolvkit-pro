@@ -1,7 +1,7 @@
 import sys
 import os
 import argparse
-from cosolvkit.analysis.utils import setup_logging
+from cosolvkit.utils import setup_logging
 
 
 def cmd_lineparser():

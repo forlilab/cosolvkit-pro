@@ -1,4 +1,4 @@
-"""Tests for analysis/sites/clustering.py — all four clustering strategies.
+"""Tests for analysis/sites/clustering.py — both clustering strategies.
 
 Fixtures provide a 20×20×20 boolean mask with two clearly separated 5×5×5
 blobs (125 voxels each) and one tiny 2×2×2 blob (8 voxels).
