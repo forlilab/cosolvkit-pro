@@ -125,11 +125,14 @@ def test_probe_coverage_and_chemotype_coverage_can_disagree():
 # Weight handling
 # ---------------------------------------------------------------------------
 
-def test_legacy_diversity_alias_warns_and_maps():
-    with pytest.warns(DeprecationWarning, match="chemotype_diversity"):
-        w = normalize_weights({"diversity": 7.0})
-    assert w["chemotype_diversity"] == 7.0
-    assert "diversity" not in w
+def test_legacy_diversity_alias_is_rejected():
+    """The `diversity` -> `chemotype_diversity` alias was removed, so the old name now raises.
+
+    Rejecting beats silently remapping: the two names scored different things (atom types vs
+    probes), and a weight that is quietly renamed changes a score without saying so.
+    """
+    with pytest.raises(ValueError, match="diversity"):
+        normalize_weights({"diversity": 7.0})
 
 
 def test_unknown_weight_key_raises():

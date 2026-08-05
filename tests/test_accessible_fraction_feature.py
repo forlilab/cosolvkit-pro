@@ -96,12 +96,16 @@ class TestScoringIntegration:
         score_binding_sites([s1, s2], weights={"accessible_fraction": 5.0})
         assert s1.rank == 1
 
-    def test_retired_buriedness_weight_warns_and_is_dropped(self, make_hotspot):
-        """Old configs naming `buriedness` must not hard-fail."""
+    def test_retired_buriedness_weight_is_rejected(self, make_hotspot):
+        """`buriedness` was removed; naming it now raises rather than being dropped silently.
+
+        It is deliberately NOT aliased to `accessible_fraction`: the replacement measures a
+        different quantity, on a different scale, with the opposite sign, so a config carrying the
+        old name has to be ported deliberately rather than reinterpreted.
+        """
         from cosolvkit.analysis.core.models import BindingSite
         from cosolvkit.analysis.core.scoring import score_binding_sites
         site = BindingSite(site_id=1, member_hotspots=[make_hotspot()],
                            volume=100.0, agfe_min=-1.0)
-        with pytest.warns(DeprecationWarning, match="buriedness"):
+        with pytest.raises(ValueError, match="buriedness"):
             score_binding_sites([site], weights={"buriedness": 5.0})
-        assert site.rank == 1

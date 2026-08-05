@@ -24,14 +24,6 @@ def _inverted_minmax(arr):
         return np.ones_like(arr)
     return (hi - arr) / (hi - lo)
 
-
-def _divide_by_max(arr):
-    """Divide by max; returns zeros when max <= 0."""
-    arr = np.asarray(arr, dtype=float)
-    m = arr.max()
-    return arr / m if m > 0 else np.zeros_like(arr)
-
-
 def _minmax(arr):
     """Standard min-max normalization. Flat -> all ones."""
     arr = np.asarray(arr, dtype=float)
@@ -45,32 +37,12 @@ def _minmax(arr):
 # Binding-site scoring (signed weighted sum over global min-max, higher=better)
 # ---------------------------------------------------------------------------
 
-# The weight set shipped through 2026-07. Kept addressable so earlier runs reproduce without
-# editing the library; it is NOT the default any more because three of its entries were
-# incoherent -- see DEFAULT_BINDING_SITE_WEIGHTS below.
-LEGACY_BINDING_SITE_WEIGHTS_2026_07 = {
-    "affinity": 3.0,
-    "probe_coverage": 2.0,
-    "volume": 1.0,
-    "kinetics": 1.0,
-    "shape": 1.0,
-    "chemotype_diversity": 1.0,
-    "probe_chemotype_coverage": 0.0,
-    "field_contrast": 0.0,
-    "field_sharpness": 0.0,
-    "accessible_fraction": 0.0,
-}
-
 # Derived from a leave-one-probe-out fit on the 13 FosAKP probes carrying >=3 true sites
 # (`scripts/fit_weights_loo.py`, candidate `tier_b_2026_08` in `scripts/sweep_weights.py`).
 #
 # ONE TARGET, 6 POCKETS. The SIGNS are the durable part; the MAGNITUDES are provisional and a
-# second target may move them. This is still shipped as the default because the previous set was
-# not merely untuned but self-contradictory: it put +1.0 on `kinetics`, whose fit came out
-# NEGATIVE in 13/13 folds, and +1.0 on `chemotype_diversity`, which is identically zero in the
-# default configuration, while leaving at 0.0 the one feature that survived residualising on both
-# buriedness and volume. Shipping a weight that contradicts its own fit is worse than shipping a
-# provisional magnitude.
+# second target may move them.
+
 DEFAULT_BINDING_SITE_WEIGHTS = {
     # Most-negative AGFE at the site (lower is better). See _affinity_values.
     "affinity": 3.0,
@@ -79,12 +51,9 @@ DEFAULT_BINDING_SITE_WEIGHTS = {
     # affinity. Rounded to 3.5.
     "shape": 3.5,
     # Normalised enclosure: fraction of a ball around the site that solvent can reach, averaged
-    # over member hotspots. Replaces the removed `buriedness`, an unbounded atom count whose AUC
-    # rose monotonically with radius (0.524 -> 0.806 over 4-20 A on FosAKP) and therefore reported
-    # centrality rather than enclosure. This one is bounded in [0,1], plateaus with radius, is
+    # over member hotspots. This one is bounded in [0,1], plateaus with radius, is
     # nearly volume-independent (|rho| <= 0.13), retains AUC 0.685 after residualising on
-    # buriedness AND volume, and scored 0.724 vs buriedness 0.667 on matched 250 ns data.
-    # Inverted: LOWER accessible fraction = more enclosed.
+    # buriedness AND volume. # Inverted: LOWER accessible fraction = more enclosed.
     # Populated only when the detector can find `solvent_accessible_map.dx`; the dead-weight guard
     # in `score_binding_sites` warns if it is weighted but absent.
     "accessible_fraction": 2.0,
@@ -93,14 +62,12 @@ DEFAULT_BINDING_SITE_WEIGHTS = {
     # Fitted ~0 with the sign flipping in 3/13 folds -- redundant once shape and enclosure are in,
     # since both already carry size information.
     "volume": 0.0,
-    # Fitted NEGATIVE in 13/13 folds, i.e. the legacy +1.0 was backwards. Zeroed rather than
-    # flipped: flipping would assert a direction from a single target. Also inert unless
-    # `survival_kwargs.sp_top_n > 0`.
+    # Fitted NEGATIVE in 13/13 folds. Zeroed rather than flipped: flipping would assert a direction from a single target. Also inert unless
+    # `survival_kwargs.sp_top_n > 0`. This is for now, I have some faith in this
     "kinetics": 0.0,
     # Number of favourable pharmacophoric ATOM TYPES (HBD/HBA/Car/Cal/Hal) at the site. Needs
     # atom-type-split density maps (``density_maps.use_atomtypes: true``); without them it is zero
-    # everywhere, which is why weighting it by default was a no-op. Not probe diversity: that is
-    # ``probe_coverage`` and ``probe_chemotype_coverage``.
+    # everywhere. May need single-feture probes like Pietro's.
     "chemotype_diversity": 0.0,
     # Fraction of probe chemotype classes represented among the probes hitting the site. Opt-in.
     "probe_chemotype_coverage": 0.0,
@@ -114,23 +81,6 @@ DEFAULT_BINDING_SITE_WEIGHTS = {
 # `shape` (solidity) is inverted because real pockets are irregular clefts, i.e. less convex.
 _BS_INVERTED_FEATURES = {"affinity", "field_contrast", "shape",
                          "accessible_fraction"}   # lower = more enclosed
-
-# ``diversity`` scored atom types, not probes, and was renamed. Accepted with a warning
-# rather than rejected so saved weight sets keep working.
-_LEGACY_WEIGHT_ALIASES = {"diversity": "chemotype_diversity"}
-
-# Weights that have been REMOVED. Accepted-with-warning and dropped rather than raising, so a
-# saved weight set keeps loading; deliberately NOT aliased to a replacement, because the
-# replacement measures a different quantity on a different scale with the opposite sign, and
-# silently remapping would change a score without telling anyone.
-#   buriedness -> superseded by `accessible_fraction`. It was a raw, unbounded count of protein
-#   heavy atoms in an 8 A ball whose AUC rose monotonically with its radius (0.524 at 4 A to
-#   0.806 at 20 A, counting a quarter of the protein at the top), so it reported centrality
-#   rather than enclosure.
-_RETIRED_WEIGHTS = {
-    "buriedness": "accessible_fraction",
-}
-
 
 def _site_property(site, name):
     """A property attached to the site itself (fused features), or None."""
@@ -232,8 +182,9 @@ def _binding_site_feature_values(binding_sites):
 def normalize_weights(weights):
     """Resolve a user weights dict against the defaults.
 
-    Applies legacy aliases (with a ``DeprecationWarning``) and raises on any unknown key,
-    since a silently-ignored weight would look like a working knob.
+    Raises on any unknown key, since a silently-ignored weight would look like a working knob.
+    There are no aliases or accepted-but-dropped names: a renamed or removed feature has to be
+    ported deliberately, because quietly remapping one would change a score without saying so.
 
     :param weights: partial ``{feature: weight}`` dict, or None/empty for the defaults.
     :return: full weights dict.
@@ -242,28 +193,12 @@ def normalize_weights(weights):
         return dict(DEFAULT_BINDING_SITE_WEIGHTS)
     resolved = {}
     for key, value in weights.items():
-        if key in _RETIRED_WEIGHTS:
-            warnings.warn(
-                f"Binding-site weight {key!r} has been REMOVED and is ignored; use "
-                f"{_RETIRED_WEIGHTS[key]!r} instead. It is not an alias -- the replacement is "
-                "normalised, bounded and inverted, so port the weight deliberately rather than "
-                "copying its value across.",
-                DeprecationWarning, stacklevel=3,
-            )
-            continue
-        canonical = _LEGACY_WEIGHT_ALIASES.get(key, key)
-        if canonical != key:
-            warnings.warn(
-                f"Binding-site weight {key!r} is deprecated; use {canonical!r} "
-                "(it scores favourable ATOM TYPES, not probes).",
-                DeprecationWarning, stacklevel=3,
-            )
-        if canonical not in DEFAULT_BINDING_SITE_WEIGHTS:
+        if key not in DEFAULT_BINDING_SITE_WEIGHTS:
             raise ValueError(
                 f"Unknown binding-site weight {key!r}. Valid weights: "
                 f"{sorted(DEFAULT_BINDING_SITE_WEIGHTS)}"
             )
-        resolved[canonical] = value
+        resolved[key] = value
     return {**DEFAULT_BINDING_SITE_WEIGHTS, **resolved}
 
 
