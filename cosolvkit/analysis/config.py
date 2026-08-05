@@ -71,16 +71,18 @@ class ClusteringConfig:
     # 20 A^3 is the van der Waals volume of one heavy atom (C ~ 20.4 A^3) = ~39 voxels at 0.8 A:
     # the smallest blob that can plausibly hold an atom rather than being shot noise.
     #
-    # Measured on FosAKP (18 probes, scripts/sweep_min_cluster_volume.py). Ground-truth site
-    # coverage and spurious-hotspot count vs this threshold:
-    #     1.25 A^3 (deployed)  7/7 sites   325 novel hotspots  (100%)
-    #     5.0                  7/7         247                 ( 76%)
-    #    10.0                  7/7         200                 ( 62%)
-    #    20.0  <- default      7/7         148                 ( 46%)
-    #    40.0                  6/7 (!)      96                 ( 30%)
-    # 20 A^3 is the largest threshold that still recovers every ground-truth site, and it removes
-    # more than half the spurious hotspots. 40 A^3 looks defensible on atom volume alone but loses
-    # a real site, so it is not.
+    # Measured on FosAKP (18 probes, scripts/sweep_min_cluster_volume.py). Coverage is counted in
+    # DISTINCT POCKETS (symmetry groups): the target has 7 ground-truth site records but only 6
+    # pockets, because sites 5 and 7 are symmetry copies of one another. Counting site records
+    # instead makes a lost copy look like a lost pocket.
+    #     1.25 A^3 (deployed)  6/6 pockets   325 novel hotspots  (100%)
+    #     5.0                  6/6           247                 ( 76%)
+    #    10.0                  6/6           200                 ( 62%)
+    #    20.0  <- default      6/6           148                 ( 46%)
+    #    40.0                  5/6 (!)        96                 ( 30%)
+    # 20 A^3 is the largest threshold that still recovers every pocket, and it removes more than
+    # half the spurious hotspots. 40 A^3 is defensible on atom volume alone but drops a real
+    # pocket -- verified against symmetry groups, so it is not merely a lost duplicate.
     min_cluster_volume_ang3: float = 20.0
     # Escape hatch: a literal voxel count that WINS over the volume when set. Leave None unless you
     # need grid-dependent behaviour, e.g. reproducing an older run.
@@ -114,17 +116,18 @@ class BindingSitesConfig:
     # Both were 26 / 2.0, which is the worst corner of the grid. Re-measured on FosAKP with the
     # current library (18 probes, 205 hotspots at 20 A^3, one-to-one credit,
     # scripts/sweep_grouping_v2.py):
+    # Recovery is in DISTINCT POCKETS (symmetry groups) -- 6 of them, not the 7 site records.
     #     conn  tol   sites  recovered  max_claims  biggest site
-    #        6  0.0      30       6/7            1      1182 A^3   <- default
-    #        6  1.0      22       4/7            3      2396
-    #        6  2.0      22       4/7            3      2396
-    #       26  0.0      25       6/7            2      1479
-    #       26  1.0      19       4/7            3      2396
-    #       26  2.0      19       4/7            3      2396       <- the old default
-    # Any tolerance above 0 fuses distinct pockets: recovery falls 6/7 -> 4/7 and max_claims goes
-    # to 3, i.e. one sprawling site sits within the cutoff of three separate pockets. 6/0.0 is the
-    # only setting where no site claims more than one pocket, and it also keeps the largest site
-    # smallest. Raise the tolerance only with a measurement in hand.
+    #        6  0.0      30       6/6            1      1182 A^3   <- default, complete recovery
+    #        6  1.0      22       4/6            3      2396
+    #        6  2.0      22       4/6            3      2396
+    #       26  0.0      25       6/6            2      1479
+    #       26  1.0      19       4/6            3      2396
+    #       26  2.0      19       4/6            3      2396       <- the old default
+    # 6/0.0 recovers every pocket AND is the only setting where no site claims more than one, and
+    # it keeps the largest site smallest. Any tolerance above 0 fuses distinct pockets: recovery
+    # falls to 4/6 and one sprawling site lands within the cutoff of three separate pockets.
+    # Raise the tolerance only with a measurement in hand.
     connectivity:        int           = 6
     weights:             Optional[Dict] = None
     merge_tolerance_ang: float         = 0.0  # Angstrom
