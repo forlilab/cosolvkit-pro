@@ -1,7 +1,7 @@
 """Count-normalised binding-site features: sample the field, fuse across a fixed probe set.
 
 A binding site is a union of hotspots from several probes, so any feature summarised as the *best
-member* is inflated by how many members it has — that is extreme-value statistics, not quality.
+member* is inflated by how many members it has.
 Instead the AGFE field is sampled at the site's representative point for **every probe in the
 panel**, not just the members, so the per-site denominator is constant.
 

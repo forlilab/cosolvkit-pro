@@ -1,11 +1,9 @@
-"""Is an AGFE map better sampled than its own counting noise?
-
+"""
+Sampling adequacy of an AGFE map.
 AGFE is ``-kT * ln(c / b)`` with ``c`` the counts in a voxel and ``b`` the expected counts if
 occupancy were uniform. For a dilute cosolvent ``b`` is a small fraction of one count, so a
 single visit is already a deep-looking well and the map's precision is set by Poisson statistics
 rather than by trajectory length. :func:`sampling_report` makes that comparison explicit.
-
-Nothing here changes a map; it only measures one.
 """
 
 import math

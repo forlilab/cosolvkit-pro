@@ -121,7 +121,6 @@ def _union_shape_features(union_mask):
 # Survival-probability metric feeding BindingSite.residence (the ``kinetics`` score
 # feature): the lag at which survival falls to 0.5. Higher = longer residence = better.
 # sp_mrt and sp_tau_single perform equivalently; half-life is the most interpretable.
-# sp_plateau is a poor discriminator and should not be substituted here.
 KINETICS_METRIC = "sp_half_life"
 
 
