@@ -273,6 +273,49 @@ def combine_dx_maps_with_resampling(
     return combined_grid
 
 
+def combine_accessible_masks(filepaths: List[str], out_fname: str = None,
+                             min_fraction: float = 0.5) -> np.ndarray:
+    """Combine per-replica solvent-accessible masks by MAJORITY VOTE.
+
+    A voxel counts as accessible when more than *min_fraction* of the replicas that cover it saw
+    solvent there. Union was the obvious alternative and is wrong for this purpose: the accessible
+    volume would grow with the number of replicas, so ``accessible_fraction`` would not be
+    comparable between runs that merged different numbers of them. Majority is count-stable (1 of 3
+    and 3 of 9 agree) and discards single-visit noise, which is consistent with the rest of the
+    pipeline treating one visit as noise rather than signal.
+
+    Voxels are compared on the shared ``k * gridsize`` lattice by integer index shift, so no
+    interpolation is involved; a replica whose grid does not reach a voxel simply does not vote on
+    it. Returns the boolean mask; also writes it as a float .dx when *out_fname* is given.
+    """
+    if not filepaths:
+        raise ValueError("no accessible-mask files supplied")
+    grids = [_read_dx(p) for p in filepaths]
+    # Reference to the widest extent so no covered voxel is dropped.
+    ref = max(grids, key=lambda g: g.grid.size)
+    if _lattice_commensurate(grids):
+        placed = [_place_on_reference(g, ref) for g in grids]
+    else:
+        warnings.warn(
+            "accessible masks are not on a shared lattice (maps written before the lattice fix); "
+            "falling back to nearest-neighbour resampling, which shifts mask edges by up to half "
+            "a voxel.", RuntimeWarning)
+        placed = [_resample_grid(g, ref, fill_value=np.nan, order=0) for g in grids]
+
+    stack = np.stack(placed)
+    seen = np.asarray(stack > 0.5, dtype=float)
+    covered = np.isfinite(stack)
+    n_cov = covered.sum(axis=0)
+    votes = np.where(covered, seen, 0.0).sum(axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        frac = np.where(n_cov > 0, votes / np.maximum(n_cov, 1), 0.0)
+    mask = frac >= float(min_fraction)
+
+    if out_fname:
+        Grid(mask.astype(float), edges=ref.edges).export(out_fname)
+    return mask
+
+
 def _grid_free_energy(hist, n_atoms, n_frames, n_accessible_voxels, temperature=300):
     """
     Compute the atomic grid free energy (GFE) from a given histogram.
@@ -380,7 +423,17 @@ class GridAnalysis(AnalysisBase):
                         gridsize: float = 0.5,
                         use_atomtypes: bool = True,
                         atomtypes_definitions: dict = None,
+                        out_dir: str = None,
                         **kwargs):
+        """*out_dir* is where the solvent-accessible mask is written.
+
+        It used to be read as ``getattr(self, "_out_dir", None) or os.getcwd()`` with nothing in
+        the package ever setting it, so the mask landed in the current working directory under one
+        shared filename and every probe of every replica overwrote the previous one -- while
+        ``HotspotDetector`` looked for it in its own output directory and never found one. That
+        silently disabled ``accessible_fraction``, which carries a non-zero default weight.
+        Pass the directory the maps go to.
+        """
         super(GridAnalysis, self).__init__(atomgroup.universe.trajectory, **kwargs)
 
         # Setup logging
@@ -388,6 +441,7 @@ class GridAnalysis(AnalysisBase):
 
         self._u = atomgroup.universe
         self._ag = atomgroup
+        self._out_dir = out_dir
         self._gridsize = gridsize
         self._nframes = 0
         self._n_atoms = atomgroup.n_atoms
@@ -631,14 +685,24 @@ class GridAnalysis(AnalysisBase):
         if export:
             mask_grid = mask.astype(float)
             grid = Grid(mask_grid, edges=self._edges)
-            # Write beside the other maps, not into whatever the current working directory
-            # happens to be. The previous hardcoded relative filename scattered multi-hundred-MB
-            # copies of this map into unrelated directories.
-            out_dir = getattr(self, "_out_dir", None) or os.getcwd()
+            # Write beside the other maps, not into whatever the current working directory happens
+            # to be, and tag the filename with the probe. The mask is the union of water oxygens
+            # and THIS probe's heavy atoms, so it is probe-specific; a single shared filename in
+            # the cwd meant every probe of every replica overwrote the previous one and the
+            # detector found nothing in its own output directory.
+            out_dir = self._out_dir or os.getcwd()
             os.makedirs(out_dir, exist_ok=True)
-            grid.export(os.path.join(out_dir, "solvent_accessible_map.dx"))
+            grid.export(os.path.join(out_dir, f"solvent_accessible_map{self._probe_tag()}.dx"))
 
         return
+
+    def _probe_tag(self):
+        """``_BEN`` for a single-residue probe selection, ``""`` if it cannot be determined."""
+        try:
+            names = sorted({str(r) for r in self._ag.residues.resnames})
+        except AttributeError:
+            return ""
+        return "_" + "_".join(names) if names else ""
 
     def _map_atomtypes(self, atomtypes_definitions: list = None) -> np.ndarray:
         """Maps atom types to their respective categories based on SMARTS patterns.

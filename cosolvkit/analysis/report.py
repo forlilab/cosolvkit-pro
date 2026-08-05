@@ -230,6 +230,11 @@ class Report:
                                 gridsize=gridsize,
                                 use_atomtypes=use_atomtypes,
                                 atomtypes_definitions=atomtypes_definitions,
+                                # so solvent_accessible_map_<RES>.dx lands beside the AGFE maps,
+                                # where HotspotDetector looks for it. Without this it went to the
+                                # cwd under one shared name and accessible_fraction was never
+                                # populated despite carrying a non-zero default weight.
+                                out_dir=self.out_path,
                                 verbose=True)
             analysis.run()
             # analysis.export_density(os.path.join(self.out_path, f"map_rawdensity_{cosolvent}.dx"))

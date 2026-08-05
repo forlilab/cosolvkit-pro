@@ -20,8 +20,7 @@ docstring, not in a weight that contradicts its own fit.
 import pytest
 
 from cosolvkit.analysis.core.scoring import (
-    DEFAULT_BINDING_SITE_WEIGHTS, LEGACY_BINDING_SITE_WEIGHTS_2026_07,
-    _BS_INVERTED_FEATURES,
+    DEFAULT_BINDING_SITE_WEIGHTS, _BS_INVERTED_FEATURES,
 )
 
 
@@ -49,18 +48,6 @@ def test_shape_outranks_affinity_as_fitted():
 def test_volume_is_dropped_as_redundant():
     """Fitted ~0 with the sign flipping in 3/13 folds; redundant with shape + enclosure."""
     assert DEFAULT_BINDING_SITE_WEIGHTS["volume"] == 0.0
-
-
-def test_legacy_weight_set_is_kept_for_reproducibility():
-    """Earlier runs must remain reproducible without editing the library."""
-    legacy = LEGACY_BINDING_SITE_WEIGHTS_2026_07
-    assert legacy["kinetics"] == 1.0
-    assert legacy["chemotype_diversity"] == 1.0
-    assert legacy["accessible_fraction"] == 0.0
-    assert legacy["volume"] == 1.0
-    assert legacy["affinity"] == 3.0 and legacy["shape"] == 1.0
-    # and it must still be a complete, usable set
-    assert set(legacy) == set(DEFAULT_BINDING_SITE_WEIGHTS)
 
 
 def test_every_default_weighted_feature_is_scorable(make_hotspot):

@@ -17,6 +17,7 @@ from cosolvkit.analysis.config import resolve_agfe_cutoff
 from cosolvkit.analysis.sites.clustering import build_clustering_strategy
 from .analysis_config import AnalysisConfig, SimulationEntry
 from .density_analysis import combine_dx_maps_with_resampling
+from cosolvkit.analysis.core.grid import combine_accessible_masks
 from .hotspots_detection import HotspotDetector
 
 
@@ -213,6 +214,44 @@ class MultiReport:
                         resample_to=merge_cfg.merge_resampling_to,
                         out_fname=out_fname,
                     )
+
+        # The accessible-volume mask belongs in the merged directory too: the detector reads it
+        # from there to attach `accessible_fraction`.
+        self._merge_accessible_masks()
+
+    def _merge_accessible_masks(self):
+        """Combine the per-replica solvent-accessible masks into the merged directory.
+
+        `HotspotDetector` reads the mask from its own output directory to attach
+        `accessible_fraction`, but the masks are written per replica beside each replica's maps, so
+        without this step the merged directory has none and the feature is silently skipped even
+        though it carries a non-zero default weight.
+
+        Combined by MAJORITY VOTE rather than union: union would make the accessible volume grow
+        with the number of replicas merged, so the feature would not be comparable across runs.
+        See :func:`combine_accessible_masks`.
+        """
+        paths = []
+        for rep in self._reports:
+            out = getattr(rep, "out_path", None)
+            if out:
+                paths.extend(sorted(glob(os.path.join(out, "solvent_accessible_map*.dx"))))
+        if not paths:
+            self.logger.warning(
+                "No solvent_accessible_map*.dx found in any replica output directory; "
+                "`accessible_fraction` will not be available for binding-site scoring."
+            )
+            return None
+        out_fname = os.path.join(self._merged_dir, "solvent_accessible_map.dx")
+        self.logger.info(
+            f"Combining {len(paths)} solvent-accessible masks by majority vote -> {out_fname}"
+        )
+        try:
+            combine_accessible_masks(paths, out_fname=out_fname)
+        except Exception as exc:
+            self.logger.warning(f"Could not combine accessible masks: {exc}")
+            return None
+        return out_fname
 
     # ------------------------------------------------------------------
     # Step 3 — joint hotspot detection

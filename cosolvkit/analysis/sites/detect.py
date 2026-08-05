@@ -381,16 +381,40 @@ class HotspotDetector:
         # mask that GridAnalysis writes next to the AGFE maps. Attach it when that map is
         # present; stay silent when it is not, so a run that never generated one behaves
         # exactly as before.
-        mask_path = os.path.join(self.out_path, "solvent_accessible_map.dx")
-        if os.path.isfile(mask_path):
+        # `solvent_accessible_map.dx` is the replica-merged mask written by
+        # MultiReport._merge_accessible_masks. A single-simulation run has no merged mask, only the
+        # per-probe `solvent_accessible_map_<RES>.dx` that GridAnalysis wrote; combine those by the
+        # same majority vote so both layouts behave identically.
+        merged_mask = os.path.join(self.out_path, "solvent_accessible_map.dx")
+        mask_paths = ([merged_mask] if os.path.isfile(merged_mask)
+                      else sorted(glob_module.glob(os.path.join(self.out_path,
+                                                    "solvent_accessible_map_*.dx"))))
+        if mask_paths:
             try:
-                mg = self._load_dx(mask_path)
-                attach_accessible_fraction(sites, np.asarray(mg.grid) > 0.5,
-                                           np.asarray(mg.origin, dtype=float),
-                                           np.asarray(mg.delta, dtype=float))
+                from cosolvkit.analysis.core.grid import combine_accessible_masks
+                if len(mask_paths) == 1:
+                    mg = self._load_dx(mask_paths[0])
+                    mask = np.asarray(mg.grid) > 0.5
+                    origin = np.asarray(mg.origin, dtype=float)
+                    delta = np.asarray(mg.delta, dtype=float)
+                else:
+                    mask = combine_accessible_masks(mask_paths)
+                    ref = self._load_dx(max(mask_paths,
+                                            key=lambda p: self._load_dx(p).grid.size))
+                    origin = np.asarray(ref.origin, dtype=float)
+                    delta = np.asarray(ref.delta, dtype=float)
+                attach_accessible_fraction(sites, mask, origin, delta)
             except Exception as exc:
-                warnings.warn(f"could not attach accessible_fraction from {mask_path}: {exc}",
-                              RuntimeWarning)
+                warnings.warn(
+                    f"could not attach accessible_fraction from {mask_paths}: {exc}",
+                    RuntimeWarning)
+        else:
+            # Loud, because `accessible_fraction` carries a non-zero default weight: a run without
+            # the mask scores every site as if the enclosure term did not exist.
+            warnings.warn(
+                f"no solvent_accessible_map*.dx in {self.out_path}; `accessible_fraction` will be "
+                "absent and its default weight will have no effect. It is written by GridAnalysis "
+                "when constructed with out_dir=<map directory>.", RuntimeWarning)
 
         if self.compute_regionprops:
             score_image = np.clip(-agfe_array, 0, None)
