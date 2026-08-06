@@ -196,7 +196,7 @@ def plot_sp_raw(cosolvent_name, df_sp, out_path):
         rank = int(zone_idx) + 1
         ax.plot(group_df["Time"], group_df["SP"],
                 label=f"Rank {rank}", color=palette[int(zone_idx)])
-    ax.set_xlabel("Lag time (frames)")
+    ax.set_xlabel("Lag time (ps)")
     ax.set_ylabel("Survival Probability")
     ax.set_title(f"{cosolvent_name} — Survival Probability")
     ax.legend(title="Hotspot")
@@ -274,7 +274,7 @@ def plot_sp_fits(cosolvent, sites, df, out_path):
                 else:
                     ax.plot([], [], color=color, label=f"Rank {rank} (fit failed)")
 
-        ax.set_xlabel("Lag time (frames)")
+        ax.set_xlabel("Lag time (ps)")
         ax.set_ylabel("Survival Probability")
         ax.set_title(f"{cosolvent} — {model_title} fit")
         ax.legend(title="Hotspot", fontsize="small")

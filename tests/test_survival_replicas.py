@@ -60,8 +60,18 @@ def _calculator(tmp_path, universe):
     return calc
 
 
+class _FakeTrajectory:
+    """Minimal stand-in carrying the one attribute the SP code reads: dt in ps."""
+    def __init__(self, dt=100.0):
+        self.dt = dt
+
+
 class _FakeUniverse:
-    pass
+    """These trajectories are written every 100 ps, which is what makes the frames-vs-ps
+    distinction matter: SurvivalProbability returns lags in FRAMES, so an unconverted
+    `sp_mrt` of 3.0 would silently mean 300 ps."""
+    def __init__(self, dt=100.0):
+        self.trajectory = _FakeTrajectory(dt)
 
 
 def test_single_universe_keeps_the_old_output_shape(tmp_path, stub_sp):
@@ -90,11 +100,15 @@ def test_multiple_replicas_average_the_curves(tmp_path, stub_sp):
     assert {"SP", "SP_sd", "n_replicas"} <= set(df.columns)
     assert (df["n_replicas"] == 2).all()
 
-    expected = [(np.exp(-0.1 * t) + np.exp(-1.0 * t)) / 2 for t in df["Time"]]
+    # SP decays per FRAME, while `Time` is now reported in ps, so convert back before
+    # comparing. dt = 100 ps, matching _FakeUniverse.
+    frames = df["Time"] / 100.0
+    expected = [(np.exp(-0.1 * t) + np.exp(-1.0 * t)) / 2 for t in frames]
     np.testing.assert_allclose(df["SP"].values, expected, atol=1e-9)
     # The averaged curve must sit between the two replicas, not equal either.
-    assert df.loc[df.Time == 4, "SP"].iloc[0] > np.exp(-1.0 * 4)
-    assert df.loc[df.Time == 4, "SP"].iloc[0] < np.exp(-0.1 * 4)
+    last = df.loc[df.Time == 400, "SP"].iloc[0]      # 400 ps = frame 4
+    assert last > np.exp(-1.0 * 4)
+    assert last < np.exp(-0.1 * 4)
 
 
 def test_per_replica_curves_are_kept_for_every_zone(tmp_path, stub_sp):
@@ -236,3 +250,31 @@ def test_run_sp_adaptive_raises_when_probe_missing(tmp_path, stub_sp):
     with pytest.raises(ValueError, match="not found in the trajectory topology"):
         calc.run_survival_probability(["ZZZ"], [[0.0, 0.0, 0.0]], radius="adaptive",
                                      max_tau=3, universes=[u])
+
+
+def test_lag_times_are_reported_in_picoseconds_not_frames(tmp_path, stub_sp):
+    """The `Time` column used to be SurvivalProbability's raw frame index.
+
+    At 100 ps/frame that made every sp_* property wrong by 100x for anyone reading the
+    column name literally.
+    """
+    u = _FakeUniverse(dt=100.0)
+    stub_sp.registry[id(u)] = 0.5
+    calc = _calculator(tmp_path, u)
+    calc.run_survival_probability(["BEN"], [[0.0, 0.0, 0.0]], max_tau=4)
+
+    df = pd.read_csv(tmp_path / "survival_probability_BEN.csv")
+    times = sorted(df["Time"].unique())
+    assert times == [0.0, 100.0, 200.0, 300.0, 400.0], (
+        f"expected frame lags 0-4 scaled by dt=100 ps, got {times}")
+
+
+def test_missing_dt_falls_back_to_frames_rather_than_crashing(tmp_path, stub_sp):
+    """A universe stub without a usable dt should still produce a curve, in frames."""
+    u = _FakeUniverse(dt=0.0)
+    stub_sp.registry[id(u)] = 0.5
+    calc = _calculator(tmp_path, u)
+    calc.run_survival_probability(["BEN"], [[0.0, 0.0, 0.0]], max_tau=4)
+
+    df = pd.read_csv(tmp_path / "survival_probability_BEN.csv")
+    assert sorted(df["Time"].unique()) == [0.0, 1.0, 2.0, 3.0, 4.0]

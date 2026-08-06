@@ -76,8 +76,12 @@ hotspots:
     sp_top_n:      5             # per cosolvent: how many top hotspots get SP analysis
                                   # (0 disables survival probability entirely)
     radius:        6.0           # sphere radius around hotspot centroid (Angstroms)
-    max_tau:       100           # maximum lag time
-    intermittency: 2             # allowed gaps in occupancy (frames)
+    max_tau:       100           # maximum lag, in FRAMES (100 frames = 10 ns at
+                                 # 100 ps/frame). Reported sp_* times are in ps.
+    intermittency: 0             # absent FRAMES bridged as continuous occupancy.
+                                 # At 100 ps/frame even 1 lets a probe diffuse
+                                 # ~7.7 A, beyond the 6 A zone; raise above 0 only
+                                 # when frames are written every 1-2 ps.
   clustering:
     strategy:            "skimage_watershed"  # skimage_watershed | connected_components
     strategy_kwargs:     {}       # extra kwargs for the chosen strategy

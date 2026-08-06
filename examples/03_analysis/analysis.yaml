@@ -62,7 +62,9 @@ hotspots:
     sp_top_n:      10              # 0 = disable survival probability for this example
     radius:        6.0
     max_tau:       100
-    intermittency: 2
+    intermittency: 0   # FRAMES bridged as continuous occupancy. At 100 ps/frame even
+                       # 1 lets a probe diffuse ~7.7 A > the 6 A zone; use >0 only if
+                       # frames are written every 1-2 ps.
   clustering:
     strategy:            "skimage_watershed"
     strategy_kwargs:     {}
