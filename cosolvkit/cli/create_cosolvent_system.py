@@ -5,7 +5,8 @@ import sys
 import argparse
 from collections import defaultdict
 from cosolvkit.config import Config
-from cosolvkit.utils import setup_logging, fix_pdb, add_variants, MD_FORMAT_EXTENSIONS
+from cosolvkit.utils import setup_logging, add_variants, MD_FORMAT_EXTENSIONS
+from autopath.pdb_preprocessor import PDBPreprocessor
 from cosolvkit.cosolvent_system import CosolventSystem, CosolventMembraneSystem
 from openmm.app import *
 from openmm import *
@@ -66,9 +67,17 @@ def main():
             else:
                 pdbxfile = pdb_string
             logger.info("Cleaning protein structure")
-            protein_topology, protein_positions = fix_pdb(pdbfile=pdbfile,
-                                                        pdbxfile=pdbxfile,
-                                                        keep_heterogens=config.keep_heterogens)
+            # autopath's PDBPreprocessor replaces the local fix_pdb: same PDBFixer steps, but it
+            # also replaces non-standard residues (which fix_pdb's docstring claimed and its code
+            # never did) and is exercised by autopath's own tests.
+            # ignore_terminal_missing_residues=True keeps fix_pdb's behaviour of not modelling in
+            # unresolved terminal gaps; pH 7.0 is the value fix_pdb hardcoded.
+            fixer = PDBPreprocessor(pdbfile=pdbfile, pdbxfile=pdbxfile).fix(
+                keep_heterogens=config.keep_heterogens,
+                ignore_terminal_missing_residues=True,
+                pH=7.0,
+            )
+            protein_topology, protein_positions = fixer.topology, fixer.positions
         else:
             if not config.protein_path.endswith(".pdb"):
                 pdb = PDBxFile(pdb_string)

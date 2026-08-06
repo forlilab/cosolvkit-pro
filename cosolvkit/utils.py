@@ -11,7 +11,6 @@ import os
 import logging
 from openmm.app import *
 from openmm import *
-import pdbfixer
 from openff.toolkit import Topology
 
 
@@ -56,38 +55,6 @@ def setup_logging(level:str="INFO", filepath:str=None):
 
     return logger
 
-def fix_pdb(pdbfile: str, pdbxfile: str, keep_heterogens: bool=False) -> Tuple[Topology, List]:
-    """Add missing atoms/residues/hydrogens and drop nonstandard residues.
-
-    Terminal missing-residue gaps are not built back in.
-
-    :param pdbfile: pdb string old format
-    :type pdbfile: str
-    :param pdbxfile: pdb string new format
-    :type pdbxfile: str
-    :param keep_heterogens: if False all heterogen atoms but waters are deleted, defaults to False
-    :type keep_heterogens: bool, optional
-    :return: new topology and positions
-    :rtype: tuple[Topology, list]
-    """
-    fixer = pdbfixer.PDBFixer(pdbfile=pdbfile, pdbxfile=pdbxfile)
-    fixer.findMissingResidues()
-    
-    chains = list(fixer.topology.chains())
-    keys = fixer.missingResidues.keys()
-    for key in list(keys):
-        chain = chains[key[0]]
-        if key[1] == 0 or key[1] == len(list(chain.residues())):
-            del fixer.missingResidues[key]
-
-    if not keep_heterogens:
-        fixer.removeHeterogens(keepWater=True)
-
-    fixer.findMissingAtoms() 
-    fixer.addMissingAtoms()
-    fixer.addMissingHydrogens(7)
-    return fixer.topology, fixer.positions
-    
 def add_variants(topology: Topology, positions: list, variants: list=list()) -> Tuple[Topology, List]:
     """Adds variants for specific protonation states.
 

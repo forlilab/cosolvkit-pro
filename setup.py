@@ -35,6 +35,12 @@ setup(name="cosolvkit",
                    "Topic :: Scientific/Engineering"],
       install_requires=[
           "PyYAML>=6.0",
+          # Protein cleaning is delegated to autopath's PDBPreprocessor rather than duplicated.
+          # NOT declared as a bare "autopath": that name on PyPI is an unrelated 0.0.0 placeholder,
+          # and PyPI normalises "AutoPath" to it, so either spelling would install a stranger's
+          # package. AutoPath is an internal ForliLab project -- install it directly:
+          #     pip install "AutoPath @ git+ssh://git@github.com/forlilab/autopath.git"
+          # or, for development,  pip install -e /path/to/autopath
       ],
       entry_points={
           'console_scripts': [
