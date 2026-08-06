@@ -518,3 +518,193 @@ def generate_binding_site_session(binding_sites, reference_pdb, density_dir,
     logger.info(f"Binding-site PyMol session saved to {pse_path}")
     return pse_path
 
+
+
+# ---------------------------------------------------------------------------
+# Combined hotspot + binding-site session
+# ---------------------------------------------------------------------------
+
+def _fmt_props(pairs):
+    """``k=v`` label text, skipping missing values and rounding floats."""
+    out = []
+    for k, v in pairs:
+        if v is None:
+            continue
+        if isinstance(v, float):
+            if not np.isfinite(v):
+                continue
+            out.append(f"{k}={v:.3g}")
+        else:
+            out.append(f"{k}={v}")
+    return " ".join(out)
+
+
+def _hotspot_label(hs):
+    p = hs.properties or {}
+    return _fmt_props([
+        ("rank", hs.rank),
+        ("agfe", getattr(hs, "agfe_min", None)),
+        ("vol", (hs.n_voxels * float(np.prod(hs.grid_delta)))
+         if getattr(hs, "n_voxels", None) is not None and hs.grid_delta is not None else None),
+        ("solidity", p.get("geom_solidity")),
+        ("sharpness", p.get("field_sharpness")),
+        ("contrast", p.get("field_contrast")),
+    ])
+
+
+def _site_label(site):
+    return _fmt_props([
+        ("rank", site.rank),
+        ("score", getattr(site, "combined", None)),
+        ("probes", ",".join(getattr(site, "cosolvents", []) or []) or None),
+        ("nprobe", getattr(site, "n_cosolvents", None)),
+        ("vol", getattr(site, "volume", None)),
+        ("coverage", getattr(site, "probe_coverage", None)),
+        ("residence", getattr(site, "residence", None)),
+        ("accessible", (getattr(site, "properties", None) or {}).get("accessible_fraction")),
+    ])
+
+
+def write_full_session_script(probe_results, binding_sites, pml_path,
+                              density_dir, reference_pdb=None, labels_on=True,
+                              top_n_sites=0, keep_maps=True):
+    """Emit a .pml building one session with a `hotspots` and a `bindingSites` group.
+
+    hotspots/       one subgroup per probe, holding every hotspot's carved density
+                    UNFILTERED -- the shape filter is a scoring decision, and a session for
+                    inspecting what it would remove must not have removed it already.
+    bindingSites/   one subgroup per ranked site, holding the site's union-mask pocket plus
+                    the per-probe hotspot densities that were merged into it.
+
+    Every label object is named ``*_lab`` so the set toggles with ``disable *_lab`` /
+    ``enable *_lab``. PyMol puts an object in only one group, so a dedicated "labels" group
+    would have to take them out of their probe/site groups.
+
+    keep_maps : bool
+        Keep the full AGFE volumes in the session. They are what makes it re-contourable, and
+        also what makes it enormous: 18 probe maps put the FosAKP .pse at 2.4 GB, which most
+        machines will not open. With ``keep_maps=False`` the maps are deleted once every
+        isomesh has been built -- the meshes are standalone geometry and survive -- which
+        trades interactive re-contouring for a session that loads.
+
+    Returns *pml_path*. Writing the script does not require PyMol.
+    """
+    dens = {}
+    L = ["# Combined hotspot + binding-site session\n",
+         "# Groups: hotspots/<probe>/<hotspot>, bindingSites/<rank>/<pocket + member probes>\n",
+         "# Toggle every label with:  disable *_lab   /   enable *_lab\n\n"]
+
+    if reference_pdb:
+        struct = os.path.splitext(os.path.basename(reference_pdb))[0]
+        L.append(f"load {reference_pdb}, {struct}\n")
+        L.append(f"hide everything, {struct}\nshow cartoon, {struct}\n")
+        L.append(f"color grey70, {struct}\n\n")
+
+    # ---------------- hotspots ----------------
+    probe_groups = []
+    for res, hotspots in probe_results.items():
+        dx = os.path.join(density_dir, f"map_agfe_{res}.dx")
+        mapobj = f"map_{res}"
+        dens[res] = mapobj
+        L.append(f"# --- probe {res} ---\n")
+        L.append(f"load {dx}, {mapobj}\n")
+        members = [mapobj]
+        for hs in hotspots:
+            base = f"hs_{res}_r{hs.rank}"
+            cx, cy, cz = (float(hs.centroid[0]), float(hs.centroid[1]), float(hs.centroid[2]))
+            carve = _site_carve_radius(hs.voxel_mask, hs.grid_delta) if hs.voxel_mask is not None else 5.0
+            L.append(f"pseudoatom {base}_anchor, pos=[{cx:.3f}, {cy:.3f}, {cz:.3f}]\n")
+            L.append(f"isomesh {base}_dens, {mapobj}, -1.0, {base}_anchor, carve={carve:.2f}\n")
+            L.append(f"pseudoatom {base}_lab, pos=[{cx:.3f}, {cy:.3f}, {cz:.3f}], "
+                     f"label=\"{_hotspot_label(hs)}\"\n")
+            members += [f"{base}_anchor", f"{base}_dens", f"{base}_lab"]
+        L.append(f"group hs_{res}, {' '.join(members)}\n")
+        L.append(f"disable {mapobj}\n\n")
+        probe_groups.append(f"hs_{res}")
+    if probe_groups:
+        L.append(f"group hotspots, {' '.join(probe_groups)}\n\n")
+
+    # ---------------- binding sites ----------------
+    sites = sorted(binding_sites, key=lambda s: (s.rank if s.rank is not None else 10**6))
+    if top_n_sites and top_n_sites > 0:
+        sites = sites[:top_n_sites]
+    site_groups = []
+    for site in sites:
+        rank = site.rank
+        base = f"bs_{rank}"
+        members = []
+        pocket_dx = os.path.join(density_dir, f"{base}_pocket.dx")
+        if site.voxel_mask is not None and site.grid_origin is not None:
+            _write_mask_dx(site.voxel_mask, site.grid_origin, site.grid_delta, pocket_dx)
+            L.append(f"load {pocket_dx}, {base}_pocket_map\n")
+            L.append(f"isomesh {base}_pocket, {base}_pocket_map, 0.5\n")
+            L.append(f"color grey50, {base}_pocket\n")
+            members += [f"{base}_pocket_map", f"{base}_pocket"]
+        cx, cy, cz = (float(site.centroid[0]), float(site.centroid[1]), float(site.centroid[2]))
+        L.append(f"pseudoatom {base}_anchor, pos=[{cx:.3f}, {cy:.3f}, {cz:.3f}]\n")
+        members.append(f"{base}_anchor")
+        # the per-probe densities that were merged into this site
+        for hs in (site.member_hotspots or []):
+            res = getattr(hs, "cosolvent", None) or _probe_of(hs, probe_results)
+            if res is None or res not in dens:
+                continue
+            name = f"{base}_{res}"
+            if name in members:
+                continue
+            carve = _site_carve_radius(site.voxel_mask, site.grid_delta) \
+                if site.voxel_mask is not None else 6.0
+            L.append(f"isomesh {name}, {dens[res]}, -1.0, {base}_anchor, carve={carve:.2f}\n")
+            members.append(name)
+        L.append(f"pseudoatom {base}_lab, pos=[{cx:.3f}, {cy:.3f}, {cz:.3f}], "
+                 f"label=\"{_site_label(site)}\"\n")
+        members.append(f"{base}_lab")
+        L.append(f"group {base}, {' '.join(members)}\n\n")
+        site_groups.append(base)
+    if site_groups:
+        L.append(f"group bindingSites, {' '.join(site_groups)}\n\n")
+
+    if not keep_maps:
+        L.append("# Maps deleted: the isomeshes above are standalone geometry and remain.\n")
+        L.append("# Re-run with keep_maps=True if you need to change contour levels here.\n")
+        for res in dens:
+            L.append(f"delete {dens[res]}\n")
+        L.append("\n")
+
+    L.append("# --- final state ---\n")
+    L.append("hide everything, *_anchor\n")
+    L.append("set label_size, 14\nset label_color, yellow\n")
+    L.append(("enable *_lab\n" if labels_on else "disable *_lab\n"))
+    if not labels_on:
+        L.append("# labels are off; turn them on with:  enable *_lab\n")
+    L.append("# disable *_lab   # hide every label\n")
+    with open(pml_path, "w") as fh:
+        fh.writelines(L)
+    return pml_path
+
+
+def _probe_of(hs, probe_results):
+    """Which probe a hotspot belongs to (hotspots do not always carry the resname)."""
+    for res, hotspots in probe_results.items():
+        if any(h is hs for h in hotspots):
+            return res
+    return None
+
+
+def generate_full_session(probe_results, binding_sites, out_path, density_dir,
+                          reference_pdb=None, labels_on=True, top_n_sites=0,
+                          keep_maps=True):
+    """Write the combined session .pml and, when PyMol is importable, the .pse beside it."""
+    pml = os.path.join(out_path, "full_session.pml")
+    os.makedirs(out_path, exist_ok=True)
+    write_full_session_script(probe_results, binding_sites, pml, density_dir,
+                              reference_pdb=reference_pdb, labels_on=labels_on,
+                              top_n_sites=top_n_sites, keep_maps=keep_maps)
+    if not _PYMOL_AVAILABLE:
+        logger.warning("PyMol unavailable - wrote %s but no .pse", pml)
+        return pml
+    cmd = _pymol_cmd
+    cmd.reinitialize()
+    cmd.do(f"@{pml}")
+    pse = os.path.join(out_path, "full_session.pse")
+    cmd.save(pse)
+    return pse
