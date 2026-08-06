@@ -372,7 +372,7 @@ class PocketPropertyCalculator:
 
     def run_survival_probability(self, cosolvent_names, candidate_zones,
                                  radius=6.0, max_tau=100, intermittency=0,
-                                 universes=None, radius_tolerance=1.7):
+                                 universes=None, radius_tolerance=1.7, dt_ps=None):
         """Compute the survival probability of cosolvents inside spherical zones.
 
         **Zone formats** — each element of ``candidate_zones`` is one zone, and the
@@ -458,18 +458,28 @@ class PocketPropertyCalculator:
             # SurvivalProbability returns lags in FRAMES. Convert to ps here so the
             # reported sp_* properties are physical times: with 100 ps frames an
             # unconverted `sp_mrt` of 3.0 silently means 300 ps.
-            dts = [float(getattr(getattr(un, "trajectory", None), "dt", 0.0) or 0.0)
-                   for un in replicas]
-            dt_ps = dts[0] if dts else 0.0
-            if dt_ps <= 0:
-                self.logger.warning(
-                    "Trajectory dt is unavailable or zero; survival-probability lags will "
-                    "be reported in FRAMES, not ps.")
-                dt_ps = 1.0
-            elif len({round(d, 6) for d in dts}) > 1:
-                self.logger.warning(
-                    f"Replicas disagree on dt ({sorted(set(dts))} ps); using {dt_ps} ps for "
-                    "all of them. Curves averaged across differing dt are not comparable.")
+            _AKMA_PS = 0.04888821   # one AKMA time unit = the DCD default when dt was not set
+            if dt_ps is not None:
+                dt_ps = float(dt_ps)
+            else:
+                dts = [float(getattr(getattr(un, "trajectory", None), "dt", 0.0) or 0.0)
+                       for un in replicas]
+                dt_ps = dts[0] if dts else 0.0
+                if dt_ps <= 0:
+                    self.logger.warning(
+                        "Trajectory dt is unavailable or zero; survival-probability lags will "
+                        "be reported in FRAMES, not ps.")
+                    dt_ps = 1.0
+                elif abs(dt_ps - _AKMA_PS) < 1e-6:
+                    self.logger.warning(
+                        f"Trajectory reports dt = {dt_ps:.8f} ps, which is exactly one AKMA time "
+                        "unit -- the value a DCD carries when the writer never set a timestep "
+                        "(e.g. a re-written/aligned copy). Lag times are almost certainly wrong "
+                        "by orders of magnitude. Pass dt_ps=<real spacing> explicitly.")
+                elif len({round(d, 6) for d in dts}) > 1:
+                    self.logger.warning(
+                        f"Replicas disagree on dt ({sorted(set(dts))} ps); using {dt_ps} ps for "
+                        "all of them. Curves averaged across differing dt are not comparable.")
 
             for rep_idx, universe in enumerate(replicas):
                 for zone_idx, zone in enumerate(candidate_zones):

@@ -278,3 +278,16 @@ def test_missing_dt_falls_back_to_frames_rather_than_crashing(tmp_path, stub_sp)
 
     df = pd.read_csv(tmp_path / "survival_probability_BEN.csv")
     assert sorted(df["Time"].unique()) == [0.0, 1.0, 2.0, 3.0, 4.0]
+
+
+def test_explicit_dt_overrides_a_bogus_trajectory_dt(tmp_path, stub_sp):
+    """Aligned/re-written DCDs report one AKMA time unit (0.04888821 ps) when the writer
+    never set a timestep. That is nonzero, so it passes a naive check and would scale every
+    lag by ~1/2000. The caller must be able to state the real spacing."""
+    u = _FakeUniverse(dt=0.04888821)
+    stub_sp.registry[id(u)] = 0.5
+    calc = _calculator(tmp_path, u)
+    calc.run_survival_probability(["BEN"], [[0.0, 0.0, 0.0]], max_tau=4, dt_ps=100.0)
+
+    df = pd.read_csv(tmp_path / "survival_probability_BEN.csv")
+    assert sorted(df["Time"].unique()) == [0.0, 100.0, 200.0, 300.0, 400.0]
