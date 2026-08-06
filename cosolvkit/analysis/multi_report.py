@@ -327,6 +327,9 @@ class MultiReport:
             gridsize=self.config.density_maps.gridsize,
             clustering_strategy=build_clustering_strategy(
                 cl, gridsize=self.config.density_maps.gridsize),
+            # SP is NOT run inside detect_all: it needs the hotspots to exist first so it
+            # can place zones on them. It runs as a separate step below, gated on
+            # survival_kwargs.sp_top_n > 0. This False is deliberate, not a disabled feature.
             compute_survival_probability=False,
             use_skimage_cleanup=cl.use_skimage_cleanup,
             cleanup_min_size=cl.cleanup_min_size,
