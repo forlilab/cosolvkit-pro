@@ -138,3 +138,15 @@ def test_missing_properties_do_not_break_the_label(tmp_path, scene):
 def test_labels_start_hidden_when_asked(tmp_path, scene):
     s = _pml(tmp_path, scene, labels_on=False)
     assert "disable *_lab" in s.split("# --- final state")[-1]
+
+
+def test_paths_are_absolute_so_the_script_replays_from_anywhere(tmp_path, scene):
+    """A .pml with relative paths silently loads nothing unless PyMol's cwd happens to match
+    the directory it was generated in. That is also the version-independent way to view the
+    session: a .pse written by PyMol 3.x may not restore mesh objects in an older PyMol."""
+    import os
+    s = _pml(tmp_path, scene)
+    for line in s.splitlines():
+        if line.startswith("load "):
+            path = line.split(" ", 1)[1].split(",")[0].strip()
+            assert os.path.isabs(path), f"relative path in .pml: {path}"

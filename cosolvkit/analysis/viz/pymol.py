@@ -589,8 +589,17 @@ def write_full_session_script(probe_results, binding_sites, pml_path,
 
     Returns *pml_path*. Writing the script does not require PyMol.
     """
+    # Absolute paths: a .pml is meant to be replayable from anywhere, and relative ones
+    # silently load nothing when PyMol's cwd is not the directory the script was generated in.
+    density_dir = os.path.abspath(density_dir)
+    if reference_pdb:
+        reference_pdb = os.path.abspath(reference_pdb)
+
     dens = {}
     L = ["# Combined hotspot + binding-site session\n",
+         "# Replay in ANY PyMol with:  @<this file>\n",
+         "# Prefer this over the .pse: a .pse written by PyMol 3.x may not restore mesh\n",
+         "# objects in an older PyMol, whereas this script rebuilds them from the .dx files.\n",
          "# Groups: hotspots/<probe>/<hotspot>, bindingSites/<rank>/<pocket + member probes>\n",
          "# Toggle every label with:  disable *_lab   /   enable *_lab\n\n"]
 
