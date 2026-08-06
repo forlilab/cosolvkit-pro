@@ -331,6 +331,8 @@ class MultiReport:
             # can place zones on them. It runs as a separate step below, gated on
             # survival_kwargs.sp_top_n > 0. This False is deliberate, not a disabled feature.
             compute_survival_probability=False,
+            max_solidity=cl.max_solidity,
+            min_field_sharpness=cl.min_field_sharpness,
             use_skimage_cleanup=cl.use_skimage_cleanup,
             cleanup_min_size=cl.cleanup_min_size,
             cleanup_hole_size=cl.cleanup_hole_size,

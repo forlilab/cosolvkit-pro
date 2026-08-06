@@ -90,6 +90,12 @@ hotspots:
     min_cluster_volume_ang3: 20.0 # discard clusters below this volume. In A^3, so it is
                                   # invariant to gridsize; 20 A^3 = one heavy atom, and the
                                   # largest value that still recovers every FosAKP pocket.
+    # Drop implausibly convex / diffuse hotspots BEFORE binding-site grouping. Off by
+    # default. Measured on FosAKP: max_solidity 0.910 cuts 13% of spurious hotspots and
+    # keeps all 6 pockets; 0.851 cuts 47% but is one step from losing one. Needs
+    # regionprops for solidity. min_field_sharpness is available but bought nothing there.
+    max_solidity:        null    # keep hotspots with geom_solidity <= this
+    min_field_sharpness: null    # keep hotspots with field_sharpness >= this
     use_skimage_cleanup: false    # apply scikit-image morphology cleanup before clustering
     cleanup_min_size:    1        # remove objects smaller than this (voxels)
     cleanup_hole_size:   2        # fill holes smaller than this (voxels)

@@ -70,6 +70,12 @@ class ClusteringConfig:
     # Measured on FosAKP (18 probes, scripts/sweep_min_cluster_volume.py).
     # 20 A^3 is the largest threshold that still recovers every pocket
     min_cluster_volume_ang3: float = 20.0
+    # Discard implausibly convex / diffuse hotspots BEFORE binding-site grouping; see
+    # `filter_hotspots_by_shape`. Both off by default. On FosAKP, max_solidity=0.910 cuts 13% of
+    # novel hotspots keeping all 6 pockets, and 0.851 cuts 47% but sits one step from losing one.
+    # min_field_sharpness is exposed but did not earn its place on that data.
+    max_solidity:        Optional[float] = None
+    min_field_sharpness: Optional[float] = None
     use_skimage_cleanup: bool = False
     cleanup_min_size:    int  = 1
     cleanup_hole_size:   int  = 2

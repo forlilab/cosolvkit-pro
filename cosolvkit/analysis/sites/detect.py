@@ -21,6 +21,63 @@ from cosolvkit.analysis.sites.properties import PocketPropertyCalculator
 from cosolvkit.analysis.core.models import Hotspot
 
 
+
+def filter_hotspots_by_shape(sites, max_solidity=None, min_field_sharpness=None, logger=None):
+    """Drop hotspots that are implausibly convex or diffuse, BEFORE binding-site grouping.
+
+    Spurious hotspots are what drag spurious binding sites into existence, and hotspot-level
+    features discriminate better than binding-site ones here, so filtering before the merge is
+    worth more than re-weighting after it.
+
+    max_solidity : float, optional
+        Keep hotspots with ``geom_solidity <= max_solidity``. Real pockets are irregular clefts,
+        so HIGH solidity (near-spherical) is the suspect end. Needs ``compute_regionprops=True``.
+        Measured on FosAKP (205 hotspots, 18 probes, scripts/sweep_hotspot_filter.py):
+
+            0.910 -> cuts 13% of novel hotspots, keeps 6/6 pockets   (conservative)
+            0.886 -> 24%, 6/6
+            0.869 -> 36%, 6/6
+            0.851 -> 47%, 6/6   <- last safe step
+            0.815 -> 58%, 5/6   <- loses a pocket
+
+    min_field_sharpness : float, optional
+        Keep hotspots with ``field_sharpness >= min_field_sharpness``. Evaluated alongside
+        solidity and it does NOT earn its place on that data: known vs novel medians are 0.411
+        vs 0.387, only 0.2931 is safe at all (cutting 16), and solidity 0.869 + sharpness 0.2931
+        cuts 67 novels versus 69 for solidity alone at 0.851. Exposed so it can be enabled
+        deliberately, not because it helped.
+
+    Both default to None (off). 0.851 sits one grid step from losing a pocket, and a threshold
+    tuned to the edge of six pockets on one target is not a default.
+
+    A hotspot MISSING the relevant property is always kept: absence means the property was never
+    computed (e.g. regionprops disabled), not that the hotspot is bad, and discarding it would
+    make this filter's effect depend on an unrelated setting.
+    """
+    if max_solidity is None and min_field_sharpness is None:
+        return list(sites)
+
+    def _keep(site):
+        props = getattr(site, "properties", None) or {}
+        if max_solidity is not None:
+            v = props.get("geom_solidity")
+            if v is not None and np.isfinite(v) and float(v) > float(max_solidity):
+                return False
+        if min_field_sharpness is not None:
+            v = props.get("field_sharpness")
+            if v is not None and np.isfinite(v) and float(v) < float(min_field_sharpness):
+                return False
+        return True
+
+    kept = [s for s in sites if _keep(s)]
+    if logger is not None and len(kept) != len(sites):
+        logger.info(
+            f"Shape filter removed {len(sites) - len(kept)} of {len(sites)} hotspots "
+            f"(max_solidity={max_solidity}, min_field_sharpness={min_field_sharpness})."
+        )
+    return kept
+
+
 class HotspotDetector:
     """Detect and rank binding hotspots from cosolvent AGFE density maps.
 
@@ -78,6 +135,8 @@ class HotspotDetector:
                  cleanup_opening_radius=None,
                  cleanup_closing_radius=None,
                  compute_regionprops=True,
+                 max_solidity=None,
+                 min_field_sharpness=None,
                  regionprops_properties=None,
                  regionprops_extra_properties=None,
                  ):
@@ -112,6 +171,8 @@ class HotspotDetector:
         self.cleanup_opening_radius = cleanup_opening_radius
         self.cleanup_closing_radius = cleanup_closing_radius
         self.compute_regionprops = compute_regionprops
+        self.max_solidity = max_solidity
+        self.min_field_sharpness = min_field_sharpness
         self.regionprops_properties = regionprops_properties
         self.regionprops_extra_properties = regionprops_extra_properties
 
@@ -434,6 +495,17 @@ class HotspotDetector:
             self.property_calculator.compute_regionprops(
                 sites, labeled_array, score_image
             )
+
+        # Applied here, after regionprops and the field descriptors exist, and before the
+        # hotspots are handed to binding-site grouping.
+        sites = filter_hotspots_by_shape(
+            sites, max_solidity=self.max_solidity,
+            min_field_sharpness=self.min_field_sharpness, logger=self.logger)
+        if not sites:
+            self.logger.warning(
+                f"Shape filter removed every hotspot for '{cosolvent}'. "
+                "Relax max_solidity / min_field_sharpness.")
+            return []
 
         # Grid metadata lets downstream grouping compute overlap in Angstrom
         # space, which is required when probes live on different-shaped grids.
