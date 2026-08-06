@@ -64,6 +64,14 @@ DEFAULT_BINDING_SITE_WEIGHTS = {
     "volume": 0.0,
     # Fitted NEGATIVE in 13/13 folds. Zeroed rather than flipped: flipping would assert a direction from a single target. Also inert unless
     # `survival_kwargs.sp_top_n > 0`. This is for now, I have some faith in this
+    #
+    # Re-verified 2026-08-05 after fixing the survival-probability measurement underneath it.
+    # The original fit used `intermittency: 2`, which at 100 ps/frame bridges 300 ps gaps and
+    # inflated residence by 2.7-3.0x (median over 241 hotspots). The concern was that the
+    # inflation concentrates at enclosed sites -- correlated with the property being predicted --
+    # and had manufactured the negative sign. It had NOT: refitting on intermittency=0 data
+    # gives -0.345 (was -0.392), still 13/13 sign agreement, held-out AUC 0.861 vs 0.863.
+    # So the sign is a property of the data, not an artefact of the measurement.
     "kinetics": 0.0,
     # Number of favourable pharmacophoric ATOM TYPES (HBD/HBA/Car/Cal/Hal) at the site. Needs
     # atom-type-split density maps (``density_maps.use_atomtypes: true``); without them it is zero
