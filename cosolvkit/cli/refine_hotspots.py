@@ -58,8 +58,21 @@ def build_parser():
                         "on its PocketResidues), instead of annotating or generating "
                         "jobs. Safe to re-run: re-collecting replaces rather than "
                         "duplicates each result.")
-    p.add_argument("--mode", choices=["mmgbsa", "smd", "both"], default="both",
-                   help="Which refinement legs to generate (default: both).")
+    p.add_argument("--mode", choices=["mmgbsa", "smd", "lie", "both"], default="both",
+                   help="Which refinement leg to run (default: both = mmgbsa+smd). "
+                        "'lie' runs inline and needs no SLURM job and no --collect.")
+    p.add_argument("--lie-n-frames", type=int, default=0,
+                   help="Frames per LIE calculation; 0 (default) uses every frame the "
+                        "molecule occupied the site, since LIE costs about a second.")
+    p.add_argument("--lie-cutoff", type=float, default=6.0,
+                   help="Angstrom shell around the ligand forming the LIE environment "
+                        "(default: 6.0). Water is kept: LIE scores the ligand against "
+                        "its whole surroundings.")
+    p.add_argument("--lie-exclude-probes", action="store_true",
+                   help="Also exclude the other cosolvent copies from the LIE "
+                        "environment. A measured no-op on boxes built with cosolvent "
+                        "repulsive forces, which keep probes apart; matters when they "
+                        "can aggregate.")
     p.add_argument("--submit", action="store_true",
                    help="sbatch the generated qfiles instead of only writing them.")
     p.add_argument("--slurm-template", default=None,
@@ -428,6 +441,115 @@ def collect_results(config, checkpoint_dir, out_dir):
     return results
 
 
+def lie_rows(results):
+    """One row per LieResult across every hotspot in *results*."""
+    rows = []
+    for cosolvent, hotspots in results.items():
+        for h in hotspots:
+            for r in h.lie:
+                rows.append({
+                    "site_id": h.site_id,
+                    "cosolvent": cosolvent,
+                    "probe_resname": r.probe_resname,
+                    "probe_resid": r.probe_resid,
+                    "source_label": r.source_label,
+                    "eelec": round(r.eelec, 4),
+                    "vdw": round(r.vdw, 4),
+                    "total": round(r.total, 4),
+                    "std_dev": round(r.std_dev, 4),
+                    "std_err": round(r.std_err, 4),
+                    "n_frames": r.n_frames,
+                    "cutoff": r.cutoff,
+                    "exclude_probes": r.exclude_probes,
+                    "results_path": r.results_path,
+                })
+    return rows
+
+
+def run_lie(config, results, checkpoint_dir, out_dir, args):
+    """Compute LIE for the top targets INLINE and attach it to the checkpoint.
+
+    Unlike the MMGBSA leg there is no qfile and no second stage: ``compute_LIE`` runs
+    pytraj in-process in about a second per molecule, so queueing it would cost more
+    than running it. Re-running replaces the records for a molecule rather than
+    appending, matching how annotation behaves.
+    """
+    import MDAnalysis as mda
+
+    from cosolvkit.analysis.sites.lie import compute_lie, probe_exclude_mask
+    from cosolvkit.analysis.sites.mmgbsa import write_frame_trajectory
+    from cosolvkit.cli.refine_hotspots_jobs import (
+        _rank_targets, select_mmgbsa_jobs, target_tag,
+    )
+
+    targets = _rank_targets(config, results, args)
+    n_done = 0
+    for target, is_bs in targets:
+        tag = target_tag(target, is_bs)
+        jobs = select_mmgbsa_jobs(target, args, n_frames=args.lie_n_frames)
+        if not jobs:
+            logger.warning("Target %s has no occupancy record; skipping LIE.", tag)
+            continue
+
+        members = target.member_hotspots if is_bs else [target]
+        for occ, selections in jobs:
+            lie_dir = os.path.join(out_dir, tag, "lie",
+                                   f"{occ.probe_resname}{occ.probe_resid}")
+            os.makedirs(lie_dir, exist_ok=True)
+            traj = os.path.join(lie_dir, "frames.dcd")
+            write_frame_trajectory(selections, traj)
+
+            exclude = None
+            if args.lie_exclude_probes:
+                universe = mda.Universe(occ.topology)
+                species = [c for sim in config.simulations
+                           if sim.label == occ.source_label for c in sim.cosolvents]
+                exclude = probe_exclude_mask(universe, species or [occ.probe_resname],
+                                             keep_resid=occ.probe_resid)
+
+            result = compute_lie(occ, traj, lie_dir, cutoff=args.lie_cutoff,
+                                 exclude_mask=exclude)
+            if result is None:
+                continue
+            # Attach only to the member hotspot(s) that actually recorded this
+            # molecule. A BindingSite's probe_occupancy is the concatenation over its
+            # members, so writing to every member would duplicate one result across
+            # blobs the molecule never entered and double-count any aggregate.
+            key = (result.source_label, result.probe_resname, result.probe_resid)
+            owners = [h for h in members
+                      if any((o.source_label, o.probe_resname, o.probe_resid) == key
+                             for o in h.probe_occupancy)]
+            if not owners:
+                logger.warning("No member hotspot of %s owns %s %d; attaching to all "
+                               "%d members.", tag, result.probe_resname,
+                               result.probe_resid, len(members))
+                owners = members
+            # Purge this molecule from EVERY hotspot before re-attaching, not just from
+            # the owners. Otherwise a record written by an earlier pass — with a
+            # different stride, or before the ownership rule narrowed — survives on a
+            # hotspot the molecule never occupied, and the pass is not idempotent.
+            for hs_list in results.values():
+                for h in hs_list:
+                    if h.lie:
+                        h.lie = [r for r in h.lie
+                                 if (r.source_label, r.probe_resname,
+                                     r.probe_resid) != key]
+            for h in owners:
+                h.lie.append(result)
+            n_done += 1
+            logger.info("%s: LIE %s %d = %.2f +/- %.2f kcal/mol over %d frames "
+                        "(EELEC %.2f, VDW %.2f).", tag, result.probe_resname,
+                        result.probe_resid, result.total, result.std_err,
+                        result.n_frames, result.eelec, result.vdw)
+
+    HotspotDetector.save_checkpoint(results, checkpoint_dir)
+    rows = lie_rows(results)
+    csv_path = os.path.join(out_dir, "lie_results.csv")
+    pd.DataFrame(rows).to_csv(csv_path, index=False)
+    logger.info("Computed %d LIE result(s); wrote %d row(s) to %s.",
+                n_done, len(rows), csv_path)
+
+
 def main(argv=None):
     logging.basicConfig(level=logging.INFO,
                         format="%(asctime)s %(levelname)s %(message)s")
@@ -458,6 +580,10 @@ def main(argv=None):
     logger.info("Wrote %d occupancy records to %s.", len(rows), csv_path)
 
     if args.annotate_only:
+        return 0
+
+    if args.mode == "lie":
+        run_lie(config, results, checkpoint_dir, out_dir, args)
         return 0
 
     from cosolvkit.cli.refine_hotspots_jobs import generate_jobs

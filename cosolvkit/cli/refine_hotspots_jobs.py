@@ -118,7 +118,7 @@ def target_tag(target, is_binding_site):
     return f"hs_{target.cosolvent}_{target.site_id}"
 
 
-def select_mmgbsa_jobs(hotspot, args):
+def select_mmgbsa_jobs(hotspot, args, n_frames=None):
     """Pick (representative, selections) pairs for MMGBSA, best-occupied molecule first.
 
     A job is keyed by molecule because MMPBSA takes a single ligand mask: at a frame
@@ -150,13 +150,13 @@ def select_mmgbsa_jobs(hotspot, args):
     for (_resname, _resid), occs in ranked[:args.mmgbsa_n_molecules]:
         check_single_topology(occs)
         representative = max(occs, key=lambda o: (o.n_frames_bound, o.source_label))
-        selections = _select_selections(occs, args, strategy)
+        selections = _select_selections(occs, args, strategy, n_frames)
         if selections:
             jobs.append((representative, selections))
     return jobs
 
 
-def _select_selections(occs, args, strategy):
+def _select_selections(occs, args, strategy, n_frames=None):
     """Split the frame budget across records, then let ``select_frames`` do the choosing.
 
     Frame indices are trajectory-local, so the budget is allocated per record and the
@@ -168,7 +168,9 @@ def _select_selections(occs, args, strategy):
     """
     counts = [len(occ.frames) for occ in occs]
     total = sum(counts)
-    n = min(args.mmgbsa_n_frames, total)
+    # n_frames=0 means every occupied frame — LIE is cheap enough to want them all.
+    budget = args.mmgbsa_n_frames if n_frames is None else n_frames
+    n = total if not budget else min(budget, total)
     if n <= 0:
         return []
 
