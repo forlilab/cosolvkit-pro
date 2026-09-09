@@ -5,6 +5,8 @@ of them: *which probe molecule actually sat in this pocket, and what is its inte
 energy?* CosolvKit records the occupancy, builds a trajectory from the frames where that
 molecule was bound, hands it to AutoPath's MMPBSA wrapper, and folds the answer — total
 plus per-residue decomposition — back onto the `Hotspot` and its `PocketResidue`s.
+The same occupancy also feeds a cheaper **LIE** leg (see below), which runs inline in
+about a second per molecule.
 
 This stage is **CPU-only** and runs in the **`autopath`** env, which is where both
 CosolvKit and the `autopath` package live.
@@ -142,6 +144,9 @@ for h in sites["BEN"]:
 | `--radii` | from `--igb` | Override only deliberately; a mismatched pair changes the energies without erroring. |
 | `--no-decomp` | off | Skip per-residue decomposition — required to keep a transition metal (see below). |
 | `--mmgbsa-source` | all | Restrict to one replica instead of pooling. |
+| `--lie-n-frames` | 0 = all | Frames per LIE. LIE costs ~1 s, so the default uses every occupied frame. |
+| `--lie-cutoff` | 6.0 | Angstrom shell forming the LIE environment. |
+| `--lie-exclude-probes` | off | Also drop the other cosolvent copies from the LIE environment. |
 | `--submit` | off | `sbatch` stage 1 immediately instead of only writing the qfiles. |
 
 ## Things that will bite you
@@ -162,6 +167,66 @@ silently wrong row.
 **Frame indices are per-trajectory.** A frame number is meaningless without its file,
 which is why `frames.json` records both and why frames pooled from several replicas are
 each read from their own trajectory.
+
+## LIE instead — cheaper, and it survives metals
+
+`--mode lie` scores the same bound molecule with Linear Interaction Energy via
+`ProteinLigandAnalyzer.compute_LIE` (pytraj) instead of MMPBSA. It runs **inline**: no
+qfile, no `submit_all.sh`, no second stage, no `--collect`. One command, and the numbers
+are on the hotspot when it returns.
+
+```bash
+python -m cosolvkit.cli.refine_hotspots --config ../03_analysis/analysis.yaml \
+                --out results_lie \
+                --stride 5 \
+                --target binding_sites --top-n 3 \
+                --mode lie
+```
+
+Measured on this example: ~1 s per molecule against ~40 s plus a two-stage SLURM
+handoff for MMGBSA. Because it is that cheap, `--lie-n-frames` defaults to **every**
+frame the molecule occupied the site rather than a 20-frame sample.
+
+Outputs `results_lie/lie_results.csv` (one row per refined molecule) plus, per target,
+`<tag>/lie/<PROBE><resid>/{frames.dcd, LIE_results.csv, LIE_components.png}`. On the
+objects it lands as `hotspot.lie` (a list of `LieResult`) and `lie_total` in the flat
+row.
+
+### What LIE is, and is not here
+
+**It is not a ΔG.** `compute_LIE` returns the raw ligand–environment EELEC and VDW terms
+in kcal/mol, with **no α/β coefficients applied** and no explicit desolvation leg. The
+field is `total`, not `delta_total`, to keep that straight. Use it to rank, not to
+predict affinity.
+
+**Water stays in the environment.** The environment is every residue within
+`--lie-cutoff` of the ligand, solvent included — that is how the protocol is normally
+used, and the solvent term is what makes the α/β form approximate binding rather than a
+bare contact energy. Only counter-ions are excluded by default.
+
+**So LIE and MMGBSA are not interchangeable.** LIE scores a cutoff shell including
+water; MMGBSA scores the whole receptor and subtracts a solvation leg. On this example
+the same three molecules gave:
+
+| target | molecule | MMGBSA ΔTOTAL | LIE total |
+|--------|----------|---------------|-----------|
+| bs_16  | IMI 807  | −8.04 | −19.19 ± 3.13 |
+| bs_14  | BEN 810  | −6.88 | −10.32 ± 1.36 |
+| bs_28  | BEN 806  | −5.91 | −10.09 ± 1.41 |
+
+LIE is roughly twice as negative, and the ranking happened to agree on all three — three
+points is weak evidence, but it is the right sign for using LIE as a pre-screen and
+MMGBSA on the survivors.
+
+**LIE works where decomposition refuses.** It needs no `ante-MMPBSA`, no sander and no
+ICOSA surface area, so the transition-metal problem above simply does not arise: LIE runs
+on a metalloprotein with the metal in place.
+
+**Other probe copies are kept by default.** `--lie-exclude-probes` drops them. On both
+systems tested this was a *measured no-op* — no second probe was ever inside the 6 Å
+shell — but that is a property of how the box was built, not physics: `build_config_BEN.yaml`
+applies a BEN–BEN repulsive force at σ = 4 Å (`CosolventSystem.add_repulsive_forces`).
+Without that repulsion probes can aggregate, and then the flag matters.
 
 # TODO this is to be fully implemented 
 
