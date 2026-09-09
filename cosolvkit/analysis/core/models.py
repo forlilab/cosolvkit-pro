@@ -170,6 +170,71 @@ class MmgbsaResult:
 
 
 @dataclass
+class LieResult:
+    """A Linear Interaction Energy for one probe molecule in one hotspot.
+
+    NOT a binding free energy. These are the raw ligand-environment interaction terms
+    that ``ProteinLigandAnalyzer.compute_LIE`` returns, in kcal/mol, with no alpha/beta
+    coefficients applied and no explicit desolvation term. The field is ``total``, not
+    ``delta_total``, to keep that distinct from :class:`MmgbsaResult`.
+
+    The environment is the residues within ``cutoff`` of the ligand INCLUDING WATER —
+    solvent is what makes the alpha/beta form approximate binding rather than a bare
+    contact energy — so these numbers are not comparable to an MMGBSA total, which
+    scores the whole receptor and subtracts a solvation leg.
+    """
+
+    probe_resname:  str
+    probe_resid:    int       # resid in the ORIGINAL prmtop numbering
+    source_label:   str
+    eelec:          float     # kcal/mol, mean over frames
+    vdw:            float     # kcal/mol, mean over frames
+    total:          float     # eelec + vdw
+    std_dev:        float
+    std_err:        float
+    n_frames:       int
+    cutoff:         float = 6.0
+    n_env_residues: int = 0
+    exclude_probes: bool = False
+    results_path:   Optional[str] = None
+
+    def to_dict(self) -> dict:
+        return {
+            "probe_resname": self.probe_resname,
+            "probe_resid": int(self.probe_resid),
+            "source_label": self.source_label,
+            "eelec": float(self.eelec),
+            "vdw": float(self.vdw),
+            "total": float(self.total),
+            "std_dev": float(self.std_dev),
+            "std_err": float(self.std_err),
+            "n_frames": int(self.n_frames),
+            "cutoff": float(self.cutoff),
+            "n_env_residues": int(self.n_env_residues),
+            "exclude_probes": bool(self.exclude_probes),
+            "results_path": self.results_path,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "LieResult":
+        return cls(
+            probe_resname=str(d["probe_resname"]),
+            probe_resid=int(d["probe_resid"]),
+            source_label=str(d["source_label"]),
+            eelec=float(d["eelec"]),
+            vdw=float(d["vdw"]),
+            total=float(d["total"]),
+            std_dev=float(d["std_dev"]),
+            std_err=float(d["std_err"]),
+            n_frames=int(d["n_frames"]),
+            cutoff=float(d.get("cutoff", 6.0)),
+            n_env_residues=int(d.get("n_env_residues", 0)),
+            exclude_probes=bool(d.get("exclude_probes", False)),
+            results_path=d.get("results_path"),
+        )
+
+
+@dataclass
 class PoseRef:
     """A single frame identifying one probe molecule bound in one hotspot."""
 
@@ -395,6 +460,7 @@ class Hotspot:
         self.pocket_residues = []                     # populated on demand
         self.probe_occupancy = []                     # List[ProbeOccupancy]
         self.mmgbsa = []                               # List[MmgbsaResult]
+        self.lie = []                                  # List[LieResult]
         # Grid metadata, set by HotspotDetector.detect() after construction; required to
         # combine voxel masks across grids (e.g. binding-site grouping).
         self.grid_origin = None                       # np.ndarray (3,), Angstroms
@@ -478,6 +544,11 @@ class Hotspot:
                 min((r.delta_total for r in self.mmgbsa), default=None)
             ),
             "mmgbsa_n_results": len(self.mmgbsa),
+            # LIE is an interaction energy, not a dG: reported as "total" so it is
+            # not mistaken for the MMGBSA column beside it.
+            "lie_total": _round_or_none(
+                min((r.total for r in self.lie), default=None)),
+            "lie_n_results": len(self.lie),
         }
         d.update({f"agfe_{k}": _round_or_none(v) for k, v in self.per_type_agfe.items()})
         d.update({k: v for k, v in self.properties.items()
@@ -498,6 +569,7 @@ class Hotspot:
         rec["pocket_residues"] = [r.to_dict() for r in self.pocket_residues]
         rec["probe_occupancy"] = [o.to_dict() for o in self.probe_occupancy]
         rec["mmgbsa"] = [m.to_dict() for m in self.mmgbsa]
+        rec["lie"] = [r.to_dict() for r in self.lie]
         return rec
 
     @classmethod
@@ -547,6 +619,7 @@ class Hotspot:
             ProbeOccupancy.from_dict(o) for o in d.get("probe_occupancy", [])
         ]
         site.mmgbsa = [MmgbsaResult.from_dict(m) for m in d.get("mmgbsa", [])]
+        site.lie = [LieResult.from_dict(r) for r in d.get("lie", [])]
         site.grid_origin = np.asarray(grid_origin, dtype=float)
         site.grid_delta = np.asarray(grid_delta, dtype=float)
         return site
