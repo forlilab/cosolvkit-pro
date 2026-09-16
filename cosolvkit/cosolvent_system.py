@@ -28,6 +28,10 @@ proteinResidues = ['ALA', 'ASN', 'CYS', 'GLU', 'HIS', 'LEU', 'MET', 'PRO', 'THR'
 rnaResidues = ['A', 'G', 'C', 'U', 'I']
 dnaResidues = ['DA', 'DG', 'DC', 'DT', 'DI']
 
+# Fallbacks for add_repulsive_forces, in kcal/mol and Angstrom.
+DEFAULT_REPULSIVE_EPSILON = 0.01
+DEFAULT_REPULSIVE_SIGMA = 4.0
+
 class CosolventMolecule(object):
     def __init__(self, name: str, smiles: str=None, mol_save_dir: str = None, mol_filename: str=None, resname: str=None, copies: int=None, concentration: float=None):
         """Creates a Cosolvent object.
@@ -332,18 +336,23 @@ class CosolventSystem(object):
             {"BEN_PRP": {"residueA": "BEN", "residueB": "PRP", "epsilon": 0.01, "sigma": 4.0}}
             epsilon is in kcal/mol (default 0.01), sigma is in Angstrom (default 4.0).
         :type repulsive_forces: dict
+
+        The force acts only between *different* molecules, so it never strains a
+        probe against itself, and residueA == residueB is a valid way to keep one
+        cosolvent from aggregating with copies of itself.
         """
         forces = {force.__class__.__name__: force for force in self.system.getForces()}
         nb_force = forces['NonbondedForce']
         cutoff_distance = nb_force.getCutoffDistance()
 
-        nb_params = [nb_force.getParticleParameters(i) for i in range(nb_force.getNumParticles())]
         exceptions = [(nb_force.getExceptionParameters(i)[0], nb_force.getExceptionParameters(i)[1])
                       for i in range(nb_force.getNumExceptions())]
 
         residue_atom_indices = defaultdict(list)
+        molecule_ids = []
         for i, atom in enumerate(self.modeller.getTopology().atoms()):
             residue_atom_indices[atom.residue.name].append(i)
+            molecule_ids.append(atom.residue.index)
 
         for force_name, params in repulsive_forces.items():
             residue_a = params['residueA']
@@ -355,29 +364,30 @@ class CosolventSystem(object):
                 self.logger.warning(f"Residue {residue_a} or {residue_b} not found in the system! Skipping repulsive force {force_name}.")
                 continue
             
-            epsilon = np.sqrt(params.get('epsilon', None) ** 2) * openmmunit.kilocalories_per_mole
-            sigma = params.get('sigma', None) * openmmunit.angstrom
-            if epsilon is None or sigma is None:
-                self.logger.warning(f"Repulsive force {force_name} is missing epsilon or sigma parameters! Skipping this force.")
-                continue
-            
-            self.logger.info(f"Adding repulsive force {force_name} between residues {residue_a} and {residue_b}")
+            epsilon = abs(params.get('epsilon', DEFAULT_REPULSIVE_EPSILON)) * openmmunit.kilocalories_per_mole
+            sigma = params.get('sigma', DEFAULT_REPULSIVE_SIGMA) * openmmunit.angstrom
 
-            energy_expression = "4*epsilon * (sigma / r)^12;" #Only the repulsive term of the LJ potential
+            self.logger.info(f"Adding repulsive force {force_name} between residues {residue_a} "
+                             f"and {residue_b} (epsilon={epsilon}, sigma={sigma})")
+
+            # Only the repulsive term of the LJ potential, and only between distinct
+            # molecules. Masking in the expression rather than with extra exclusions
+            # keeps this force's exclusions identical to NonbondedForce's, which the
+            # CPU platform requires of every force in the system.
+            energy_expression = "4*epsilon * (sigma / r)^12 * step(abs(molid1 - molid2) - 0.5);"
             energy_expression += f"epsilon = {epsilon.value_in_unit_system(openmmunit.md_unit_system)};"
             energy_expression += f"sigma = {sigma.value_in_unit_system(openmmunit.md_unit_system)};"
 
             repulsive_force = CustomNonbondedForce(energy_expression)
-            repulsive_force.addPerParticleParameter("sigma")
-            repulsive_force.addPerParticleParameter("epsilon")
+            repulsive_force.addPerParticleParameter("molid")
             repulsive_force.setNonbondedMethod(NonbondedForce.CutoffPeriodic)
             repulsive_force.setCutoffDistance(cutoff_distance)
             repulsive_force.setUseLongRangeCorrection(False)
             repulsive_force.setUseSwitchingFunction(True)
             repulsive_force.setSwitchingDistance(cutoff_distance - 0.1 * openmmunit.nanometer)
 
-            for charge, s, e in nb_params:
-                repulsive_force.addParticle([s, e])
+            for molid in molecule_ids:
+                repulsive_force.addParticle([molid])
             for idx, jdx in exceptions:
                 repulsive_force.addExclusion(idx, jdx)
 
