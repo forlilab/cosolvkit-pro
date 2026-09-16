@@ -113,9 +113,11 @@ def main():
 
     engine = list(config.md_engine.keys())[0]
 
-    # Check repulsive forces and md engine consistency
-    if (engine.upper() != "OPENMM") and len(config.repulsive_forces) > 0:
-        logger.warning("Custom repulsive forces will only work if the MD engine is OpenMM!")
+    # Check custom forces and md engine consistency. Saving to anything other than
+    # OpenMM rebuilds the system through forcefield.createSystem, which drops them.
+    if (engine.upper() != "OPENMM") and (len(config.repulsive_forces) > 0
+                                         or len(config.interaction_scaling) > 0):
+        logger.warning("Custom repulsive and scaling forces will only work if the MD engine is OpenMM!")
 
     cosolvents = config.cosolvents
 
@@ -157,6 +159,10 @@ def main():
     # add the repulsive forces if specified in the config file
     if len(config.repulsive_forces) > 0:
         cosolv_system.add_repulsive_forces(config.repulsive_forces)
+
+    # scale existing interactions between residue groups if specified
+    if len(config.interaction_scaling) > 0:
+        cosolv_system.scale_interactions(config.interaction_scaling)
 
     logger.info("Saving topology file")
     cosolv_system.save_topology(topology=cosolv_system.modeller.topology,

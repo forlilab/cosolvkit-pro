@@ -341,34 +341,21 @@ class CosolventSystem(object):
         probe against itself, and residueA == residueB is a valid way to keep one
         cosolvent from aggregating with copies of itself.
         """
-        forces = {force.__class__.__name__: force for force in self.system.getForces()}
-        nb_force = forces['NonbondedForce']
-        cutoff_distance = nb_force.getCutoffDistance()
-
-        exceptions = [(nb_force.getExceptionParameters(i)[0], nb_force.getExceptionParameters(i)[1])
-                      for i in range(nb_force.getNumExceptions())]
-
-        residue_atom_indices = defaultdict(list)
-        molecule_ids = []
-        for i, atom in enumerate(self.modeller.getTopology().atoms()):
-            residue_atom_indices[atom.residue.name].append(i)
-            molecule_ids.append(atom.residue.index)
+        nb_force = self._nonbonded_force()
+        atoms_by_resname, molecule_ids = self._residue_atom_map()
 
         for force_name, params in repulsive_forces.items():
-            residue_a = params['residueA']
-            residue_b = params['residueB']
-            
-            atoms_res_a = set(residue_atom_indices[residue_a])
-            atoms_res_b = set(residue_atom_indices[residue_b])
-            if not atoms_res_a or not atoms_res_b:
-                self.logger.warning(f"Residue {residue_a} or {residue_b} not found in the system! Skipping repulsive force {force_name}.")
+            groups = self._interaction_groups(params, atoms_by_resname, force_name)
+            if groups is None:
                 continue
-            
+            atoms_res_a, atoms_res_b = groups
+
             epsilon = abs(params.get('epsilon', DEFAULT_REPULSIVE_EPSILON)) * openmmunit.kilocalories_per_mole
             sigma = params.get('sigma', DEFAULT_REPULSIVE_SIGMA) * openmmunit.angstrom
 
-            self.logger.info(f"Adding repulsive force {force_name} between residues {residue_a} "
-                             f"and {residue_b} (epsilon={epsilon}, sigma={sigma})")
+            self.logger.info(f"Adding repulsive force {force_name} between residues "
+                             f"{params['residueA']} and {params['residueB']} "
+                             f"(epsilon={epsilon}, sigma={sigma})")
 
             # Only the repulsive term of the LJ potential, and only between distinct
             # molecules. Masking in the expression rather than with extra exclusions
@@ -380,23 +367,140 @@ class CosolventSystem(object):
 
             repulsive_force = CustomNonbondedForce(energy_expression)
             repulsive_force.addPerParticleParameter("molid")
-            repulsive_force.setNonbondedMethod(NonbondedForce.CutoffPeriodic)
-            repulsive_force.setCutoffDistance(cutoff_distance)
-            repulsive_force.setUseLongRangeCorrection(False)
-            repulsive_force.setUseSwitchingFunction(True)
-            repulsive_force.setSwitchingDistance(cutoff_distance - 0.1 * openmmunit.nanometer)
-
-            for molid in molecule_ids:
-                repulsive_force.addParticle([molid])
-            for idx, jdx in exceptions:
-                repulsive_force.addExclusion(idx, jdx)
-
-            repulsive_force.addInteractionGroup(
-                atoms_res_a,
-                atoms_res_b
-                )
-            self.system.addForce(repulsive_force)
+            # A bare r^-12 term has no meaningful dispersion tail to correct.
+            self._attach_group_force(repulsive_force, [[m] for m in molecule_ids],
+                                     atoms_res_a, atoms_res_b, nb_force,
+                                     use_long_range_correction=False)
         return
+
+    def scale_interactions(self, scaling_forces: dict):
+        """Scales the LJ interaction between two residue groups by a factor lambda.
+
+        Unlike :meth:`add_repulsive_forces` this introduces no new repulsion: it
+        adds the difference between the scaled and the original Lennard-Jones
+        energy, so the total becomes ``lambda`` times the original for that pair
+        of groups and nothing else in the system changes. lambda = 1 is an exact
+        no-op, lambda = 0 removes the interaction entirely, and values in between
+        shallow out the well without moving the contact distance. Two probes can
+        therefore still share a pocket while being much less prone to aggregate.
+
+        Only Lennard-Jones is scaled. Coulomb cannot be: under PME the reciprocal
+        sum is a global lattice sum that cannot be restricted to a pair of groups,
+        and at hydrogen-bond distances most of a pair's electrostatic energy lives
+        there. Use this on apolar probes, where aggregation is dispersion-driven.
+
+        :param scaling_forces: dict mapping a force name to its parameters, e.g.
+            {"BEN_BEN": {"residueA": "BEN", "residueB": "BEN", "lambda": 0.8}}
+            lambda is required and must not be negative.
+        :type scaling_forces: dict
+        :raises ValueError: if lambda is missing or negative.
+        """
+        nb_force = self._nonbonded_force()
+        atoms_by_resname, molecule_ids = self._residue_atom_map()
+        nb_params = [nb_force.getParticleParameters(i)
+                     for i in range(nb_force.getNumParticles())]
+
+        for force_name, params in scaling_forces.items():
+            if 'lambda' not in params:
+                raise ValueError(f"Interaction scaling {force_name} has no 'lambda'. "
+                                 "There is no sensible default: 1.0 would build a "
+                                 "force that does nothing.")
+            lambda_value = float(params['lambda'])
+            if lambda_value < 0:
+                raise ValueError(f"Interaction scaling {force_name} has lambda="
+                                 f"{lambda_value}; a negative factor inverts the "
+                                 "potential into an attractive singularity.")
+            if lambda_value > 1:
+                self.logger.warning(f"Interaction scaling {force_name} has lambda="
+                                    f"{lambda_value} > 1, which strengthens the "
+                                    "interaction rather than softening it.")
+            groups = self._interaction_groups(params, atoms_by_resname, force_name)
+            if groups is None:
+                continue
+            atoms_res_a, atoms_res_b = groups
+
+            self.logger.info(f"Scaling LJ interactions {force_name} between residues "
+                             f"{params['residueA']} and {params['residueB']} by "
+                             f"lambda={lambda_value}")
+
+            # (lambda - 1) * original, so the built-in NonbondedForce is left alone
+            # and the two sum to lambda * original. Lorentz-Berthelot combination,
+            # matching NonbondedForce. The molid mask keeps a molecule from scaling
+            # against itself; see add_repulsive_forces for why it is not exclusions.
+            parameter_name = f"lambda_{force_name}"
+            energy_expression = (
+                f"({parameter_name} - 1) * 4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+                " * step(abs(molid1 - molid2) - 0.5);"
+                "sigma = 0.5*(sigma1 + sigma2);"
+                "epsilon = sqrt(epsilon1 * epsilon2);"
+            )
+            scaling_force = CustomNonbondedForce(energy_expression)
+            # A global parameter rather than a literal: it is serialized into
+            # system.xml with its default, so it survives the handoff to
+            # equilibration and production, and a lambda sweep needs no rebuild.
+            scaling_force.addGlobalParameter(parameter_name, lambda_value)
+            for name in ("sigma", "epsilon", "molid"):
+                scaling_force.addPerParticleParameter(name)
+
+            per_particle = [[nb_params[i][1], nb_params[i][2], molecule_ids[i]]
+                            for i in range(len(molecule_ids))]
+            # Match NonbondedForce: the dispersion correction is interaction-group
+            # aware, and on a benzene box it is a third of the whole correction.
+            self._attach_group_force(
+                scaling_force, per_particle, atoms_res_a, atoms_res_b, nb_force,
+                use_long_range_correction=nb_force.getUseDispersionCorrection())
+        return
+
+    def _nonbonded_force(self) -> NonbondedForce:
+        """The system's built-in NonbondedForce."""
+        forces = {force.__class__.__name__: force for force in self.system.getForces()}
+        return forces['NonbondedForce']
+
+    def _residue_atom_map(self) -> tuple[dict, list]:
+        """Atom indices grouped by residue name, and each atom's residue index.
+
+        The residue index doubles as a molecule id for the same-molecule mask.
+        """
+        atoms_by_resname = defaultdict(list)
+        molecule_ids = []
+        for i, atom in enumerate(self.modeller.getTopology().atoms()):
+            atoms_by_resname[atom.residue.name].append(i)
+            molecule_ids.append(atom.residue.index)
+        return atoms_by_resname, molecule_ids
+
+    def _interaction_groups(self, params: dict, atoms_by_resname: dict, force_name: str):
+        """The two atom sets a group force acts between, or None if either is absent."""
+        residue_a, residue_b = params['residueA'], params['residueB']
+        atoms_res_a = set(atoms_by_resname[residue_a])
+        atoms_res_b = set(atoms_by_resname[residue_b])
+        if not atoms_res_a or not atoms_res_b:
+            self.logger.warning(f"Residue {residue_a} or {residue_b} not found in the "
+                                f"system! Skipping force {force_name}.")
+            return None
+        return atoms_res_a, atoms_res_b
+
+    def _attach_group_force(self, force, per_particle: list, atoms_res_a: set,
+                            atoms_res_b: set, nb_force: NonbondedForce,
+                            use_long_range_correction: bool):
+        """Finishes a CustomNonbondedForce acting between two atom groups and adds it.
+
+        Cutoff, switching and the exclusion list are copied from NonbondedForce:
+        the CPU platform rejects a system whose forces disagree on exclusions.
+        """
+        force.setNonbondedMethod(NonbondedForce.CutoffPeriodic)
+        force.setCutoffDistance(nb_force.getCutoffDistance())
+        force.setUseSwitchingFunction(nb_force.getUseSwitchingFunction())
+        if nb_force.getUseSwitchingFunction():
+            force.setSwitchingDistance(nb_force.getSwitchingDistance())
+        force.setUseLongRangeCorrection(use_long_range_correction)
+        for values in per_particle:
+            force.addParticle(values)
+        for i in range(nb_force.getNumExceptions()):
+            idx, jdx = nb_force.getExceptionParameters(i)[:2]
+            force.addExclusion(idx, jdx)
+        force.addInteractionGroup(atoms_res_a, atoms_res_b)
+        self.system.addForce(force)
+        return force
     
     def save_pdb(self, topology: app.Topology, positions: list, out_path: str):
         """Saves the specified topology and position to the out_path file.

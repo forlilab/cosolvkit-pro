@@ -22,10 +22,10 @@ BOX = 4.0  # nm, large enough that no pair is seen through the periodic images
 FORCE_GROUP = 17
 
 
-class _Stub:
-    """The bits of CosolventSystem that add_repulsive_forces actually touches."""
+class _Stub(CosolventSystem):
+    """Only the attributes the group-force methods touch; no system building."""
 
-    def __init__(self, system, topology, logger):
+    def __init__(self, system, topology, logger):  # deliberately not calling super()
         self.system = system
         self.modeller = app.Modeller(topology, [mm.Vec3(0, 0, 0)] * topology.getNumAtoms())
         self.logger = logger
@@ -99,7 +99,7 @@ def _pair_energy(positions, pairs, epsilon=DEFAULT_REPULSIVE_EPSILON,
 def _add(system, topology, spec, logger=None):
     stub = _Stub(system, topology, logger or _Logger())
     n_before = system.getNumForces()
-    CosolventSystem.add_repulsive_forces(stub, spec)
+    stub.add_repulsive_forces(spec)
     return n_before
 
 

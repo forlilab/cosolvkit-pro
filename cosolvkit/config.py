@@ -18,6 +18,7 @@ class Config(object):
                  keep_heterogens=False,
                  variants=dict(),
                  repulsive_forces=dict(),
+                 interaction_scaling=dict(),
                  solvent_smiles=None,
                  solvent_copies=None,
                  positive_ion="Na+",
@@ -40,6 +41,7 @@ class Config(object):
         self.keep_heterogens = keep_heterogens
         self.variants = variants
         self.repulsive_forces = repulsive_forces
+        self.interaction_scaling = interaction_scaling
         self.solvent_smiles = solvent_smiles
         self.solvent_copies = solvent_copies
         self.positive_ion = positive_ion
