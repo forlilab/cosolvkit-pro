@@ -73,11 +73,11 @@ cosolvents:
 
 # -----------------------------------------------------------------
 # Interaction scaling (optional, OpenMM only)
-# Scales the existing Lennard-Jones interaction between two residue
-# groups by lambda instead of adding a new repulsion: lambda = 1 is a
-# no-op, 0 removes it, and values in between shallow out the well
-# without moving the contact distance, so two probes can still share
-# a pocket while being much less prone to aggregate.
+# Scales the Lennard-Jones attraction between two residue groups by
+# lambda instead of adding a new repulsion; the repulsive core is kept,
+# so molecules keep their size. lambda = 1 is a no-op, 0 removes the
+# attraction, and the well depth goes as lambda^2. Two probes can
+# still share a pocket while being much less prone to aggregate.
 #
 # Intended for apolar probe-probe pairs. Electrostatics is NOT scaled,
 # so this only weakens dispersion-driven contacts.

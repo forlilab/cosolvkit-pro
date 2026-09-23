@@ -1,8 +1,8 @@
-"""scale_interactions must multiply a group pair's LJ by lambda and nothing else.
+"""scale_interactions must scale a group pair's LJ attraction by lambda and
+nothing else, leaving the repulsive core at full strength.
 
-It adds (lambda - 1) * original rather than a new potential, so the built-in
-NonbondedForce keeps its own LJ and the two sum to lambda * original. lambda = 1
-therefore has to be exactly zero, not approximately.
+It adds (1 - lambda) * attraction on top of the untouched NonbondedForce, so
+lambda = 1 has to be exactly zero, not approximately.
 """
 
 import numpy as np
@@ -96,21 +96,25 @@ def _scale(system, topology, spec, logger=None, force_group=31):
     return n_before
 
 
-def _reference_lj(positions, pairs):
-    """Sum of the switched LJ energy over `pairs`, computed independently."""
-    total = 0.0
+def _reference_terms(positions, pairs):
+    """(repulsion, attraction) summed over `pairs`, switched as OpenMM does.
+
+    Both are returned positive: LJ = repulsion - attraction.
+    """
+    rep = att = 0.0
     for i, j in pairs:
         r = np.linalg.norm(np.array(positions[i].value_in_unit(u.nanometer))
                            - np.array(positions[j].value_in_unit(u.nanometer)))
         if r >= CUTOFF:
             continue
         sr = (SIGMA / r) ** 6
-        term = 4 * EPSILON * (sr * sr - sr)
+        switch = 1.0
         if r > SWITCH:
             x = (r - SWITCH) / (CUTOFF - SWITCH)
-            term *= 1 - 6 * x**5 + 15 * x**4 - 10 * x**3
-        total += term
-    return total
+            switch = 1 - 6 * x**5 + 15 * x**4 - 10 * x**3
+        rep += 4 * EPSILON * sr * sr * switch
+        att += 4 * EPSILON * sr * switch
+    return rep, att
 
 
 def _two_benzene_like():
@@ -141,17 +145,17 @@ def test_lambda_one_is_an_exact_no_op():
     assert _energy(ctx) == pytest.approx(baseline, rel=1e-9)
 
 
-def test_lambda_zero_removes_exactly_the_group_lj():
-    """The correction must equal minus the group's own LJ, checked against numpy."""
+def test_lambda_zero_removes_exactly_the_group_attraction():
+    """The correction must equal the group's own attraction, checked against numpy."""
     system, topology, positions = _build(_two_benzene_like(),
                                          dispersion_correction=False)
     _scale(system, topology,
            {"BEN_BEN": {"residueA": "BEN", "residueB": "BEN", "lambda": 0.0}})
     ctx = _context(system, positions)
 
-    expected = _reference_lj(positions, BEN_CROSS)
-    assert expected < -0.1, "test geometry must give a measurable attraction"
-    assert _energy(ctx, groups={31}) == pytest.approx(-expected, rel=1e-5)
+    _, attraction = _reference_terms(positions, BEN_CROSS)
+    assert attraction > 0.1, "test geometry must give a measurable attraction"
+    assert _energy(ctx, groups={31}) == pytest.approx(attraction, rel=1e-5)
 
 
 def test_scaling_is_linear_in_lambda():
@@ -160,14 +164,14 @@ def test_scaling_is_linear_in_lambda():
     _scale(system, topology,
            {"BEN_BEN": {"residueA": "BEN", "residueB": "BEN", "lambda": 1.0}})
     ctx = _context(system, positions)
-    original = _reference_lj(positions, BEN_CROSS)
+    repulsion, attraction = _reference_terms(positions, BEN_CROSS)
 
     for lam in (0.0, 0.25, 0.5, 0.75, 1.0):
         ctx.setParameter("lambda_BEN_BEN", lam)
-        scaled = original + _energy(ctx, groups={31})
-        # abs floor: the CPU platform holds positions in single precision and
-        # r^-12 amplifies that, so lambda=0 cancels to ~1e-7 rather than to zero.
-        assert scaled == pytest.approx(lam * original, rel=1e-5, abs=1e-5)
+        scaled = repulsion - attraction + _energy(ctx, groups={31})
+        # abs floor: the CPU platform holds positions in single precision.
+        assert scaled == pytest.approx(repulsion - lam * attraction,
+                                       rel=1e-5, abs=1e-5)
 
 
 def test_other_groups_are_untouched():
@@ -182,9 +186,10 @@ def test_other_groups_are_untouched():
            {"BEN_BEN": {"residueA": "BEN", "residueB": "BEN", "lambda": 0.0}})
     ctx = _context(system, positions)
 
-    # only the BEN-BEN cross term should have disappeared
+    # only the BEN-BEN cross attraction should have disappeared
+    _, attraction = _reference_terms(positions, BEN_CROSS)
     assert _energy(ctx, groups={LJ_GROUP, 31}) == pytest.approx(
-        full - _reference_lj(positions, BEN_CROSS), rel=1e-5)
+        full + attraction, rel=1e-5)
 
 
 def test_a_molecule_is_not_scaled_against_itself():
@@ -196,8 +201,30 @@ def test_a_molecule_is_not_scaled_against_itself():
            {"BEN_BEN": {"residueA": "BEN", "residueB": "BEN", "lambda": 0.0}})
     ctx = _context(system, positions)
 
-    assert _reference_lj(positions, [(0, 1), (0, 2), (1, 2)]) < -0.1
+    assert _reference_terms(positions, [(0, 1), (0, 2), (1, 2)])[1] > 0.1
     assert _energy(ctx, groups={31}) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_repulsive_core_survives_lambda_zero():
+    """Two molecules pushed inside contact stay strongly repulsive at lambda = 0.
+
+    Full LJ scaling would remove the core too and let the pair collapse; here
+    only the attraction goes, so the pair energy is the untouched repulsion.
+    """
+    close = [("BEN", [(1.0, 1.0, 1.0), (1.0, 1.0, 1.35), (1.0, 1.0, 1.70)]),
+             ("BEN", [(1.22, 1.0, 1.0), (1.22, 1.0, 1.35), (1.22, 1.0, 1.70)])]
+    system, topology, positions = _build(close, dispersion_correction=False)
+    _scale(system, topology,
+           {"BEN_BEN": {"residueA": "BEN", "residueB": "BEN", "lambda": 0.0}})
+    ctx = _context(system, positions)
+
+    repulsion, _ = _reference_terms(positions, BEN_CROSS)
+    # the bare test topology has no bonds, so NonbondedForce also counts the
+    # intramolecular pairs; remove them to isolate the pair energy
+    intra_rep, intra_att = _reference_terms(positions, BEN_INTRA)
+    pair_energy = _energy(ctx, groups={LJ_GROUP, 31}) - (intra_rep - intra_att)
+    assert repulsion > 10.0, "test geometry must sit inside the repulsive core"
+    assert pair_energy == pytest.approx(repulsion, rel=1e-5)
 
 
 def test_exclusions_match_the_nonbonded_force():

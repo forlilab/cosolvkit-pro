@@ -374,15 +374,14 @@ class CosolventSystem(object):
         return
 
     def scale_interactions(self, scaling_forces: dict):
-        """Scales the LJ interaction between two residue groups by a factor lambda.
+        """Scales the LJ attraction between two residue groups by a factor lambda.
 
-        Unlike :meth:`add_repulsive_forces` this introduces no new repulsion: it
-        adds the difference between the scaled and the original Lennard-Jones
-        energy, so the total becomes ``lambda`` times the original for that pair
-        of groups and nothing else in the system changes. lambda = 1 is an exact
-        no-op, lambda = 0 removes the interaction entirely, and values in between
-        shallow out the well without moving the contact distance. Two probes can
-        therefore still share a pocket while being much less prone to aggregate.
+        Only the attractive r^-6 term is scaled; the repulsive r^-12 core is left
+        at full strength, so the pair becomes
+        ``4*eps*[(sigma/r)^12 - lambda*(sigma/r)^6]``. The well depth drops to
+        ``eps*lambda^2`` while the molecules keep their size and cannot overlap,
+        so two probes can still share a pocket but are less prone to aggregate.
+        lambda = 1 is an exact no-op; nothing outside the two groups changes.
 
         Only Lennard-Jones is scaled. Coulomb cannot be: under PME the reciprocal
         sum is a global lattice sum that cannot be restricted to a pair of groups,
@@ -391,7 +390,7 @@ class CosolventSystem(object):
 
         :param scaling_forces: dict mapping a force name to its parameters, e.g.
             {"BEN_BEN": {"residueA": "BEN", "residueB": "BEN", "lambda": 0.8}}
-            lambda is required and must not be negative.
+            lambda is required and must be in [0, 1].
         :type scaling_forces: dict
         :raises ValueError: if lambda is missing or negative.
         """
@@ -408,8 +407,8 @@ class CosolventSystem(object):
             lambda_value = float(params['lambda'])
             if lambda_value < 0:
                 raise ValueError(f"Interaction scaling {force_name} has lambda="
-                                 f"{lambda_value}; a negative factor inverts the "
-                                 "potential into an attractive singularity.")
+                                 f"{lambda_value}; a negative factor turns the "
+                                 "attraction into a repulsion.")
             if lambda_value > 1:
                 self.logger.warning(f"Interaction scaling {force_name} has lambda="
                                     f"{lambda_value} > 1, which strengthens the "
@@ -423,29 +422,27 @@ class CosolventSystem(object):
                              f"{params['residueA']} and {params['residueB']} by "
                              f"lambda={lambda_value}")
 
-            # (lambda - 1) * original, so the built-in NonbondedForce is left alone
-            # and the two sum to lambda * original. Lorentz-Berthelot combination,
-            # matching NonbondedForce. The molid mask keeps a molecule from scaling
-            # against itself; see add_repulsive_forces for why it is not exclusions.
+            # Adds back (1 - lambda) of the attraction on top of the untouched
+            # NonbondedForce. Lorentz-Berthelot, matching NonbondedForce; the molid
+            # mask keeps a molecule from scaling against itself.
             parameter_name = f"lambda_{force_name}"
             energy_expression = (
-                f"({parameter_name} - 1) * 4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+                f"(1 - {parameter_name}) * 4*epsilon*(sigma/r)^6"
                 " * step(abs(molid1 - molid2) - 0.5);"
                 "sigma = 0.5*(sigma1 + sigma2);"
                 "epsilon = sqrt(epsilon1 * epsilon2);"
             )
             scaling_force = CustomNonbondedForce(energy_expression)
-            # A global parameter rather than a literal: it is serialized into
-            # system.xml with its default, so it survives the handoff to
-            # equilibration and production, and a lambda sweep needs no rebuild.
+            # Global parameter: serialized into system.xml, so it survives into
+            # production and a lambda sweep needs no rebuild.
             scaling_force.addGlobalParameter(parameter_name, lambda_value)
             for name in ("sigma", "epsilon", "molid"):
                 scaling_force.addPerParticleParameter(name)
 
             per_particle = [[nb_params[i][1], nb_params[i][2], molecule_ids[i]]
                             for i in range(len(molecule_ids))]
-            # Match NonbondedForce: the dispersion correction is interaction-group
-            # aware, and on a benzene box it is a third of the whole correction.
+            # The correction is an r^-6 tail, so match NonbondedForce's dispersion
+            # correction (it is interaction-group aware).
             self._attach_group_force(
                 scaling_force, per_particle, atoms_res_a, atoms_res_b, nb_force,
                 use_long_range_correction=nb_force.getUseDispersionCorrection())
