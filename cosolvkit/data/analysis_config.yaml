@@ -46,7 +46,9 @@ density_maps:
   gridsize:       0.5             # voxel edge length in Angstroms (also used by hotspots)
   temperature:    300.0           # simulation temperature in Kelvin
   export_raw:     true            # also write map_agfe_raw_*.dx (unclamped AGFE); map_agfe_*.dx
-                                  # zeroes voxels >= 0, erasing depletion. ~2x map disk usage.
+                                  # zeroes voxels >= 0, erasing depletion. Both are smoothed.
+  grid_center:    null            # [x, y, z] A; with grid_size, fixes the exported region so every
+  grid_size:      null            # replica gets identical grids. Requires replicas aligned to one frame.
 
 # -----------------------------------------------------------------
 # misc: how per-simulation AGFE maps are combined

@@ -56,7 +56,15 @@ class DensityMapsConfig:
     gridsize:       float         = 0.5    # voxel edge, Angstrom
     temperature:    float         = 300.0  # K
     # Also write unclamped map_agfe_raw_*.dx; map_agfe_*.dx zeroes voxels >= 0, losing depletion.
+    # Both are smoothed.
     export_raw:     bool          = True
+    # Fixed export region (Angstrom), lattice-snapped: identical grids across replicas.
+    grid_center:    Optional[List[float]] = None
+    grid_size:      Optional[List[float]] = None
+
+    def __post_init__(self):
+        from cosolvkit.analysis.core.grid import _validate_fixed_box
+        _validate_fixed_box(self.grid_center, self.grid_size)
 
 
 @dataclass

@@ -140,6 +140,8 @@ class MultiReport:
                 gridsize=cfg.density_maps.gridsize,
                 temperature=cfg.density_maps.temperature,
                 export_raw=cfg.density_maps.export_raw,
+                grid_center=cfg.density_maps.grid_center,
+                grid_size=cfg.density_maps.grid_size,
                 # Sampling verdict must use the cutoff detection will use.
                 n_kt=cfg.hotspots.n_kt,
             )

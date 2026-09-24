@@ -172,8 +172,14 @@ class Report:
                               temperature:float=None,
                               export_raw:bool=True,
                               n_kt:float=1.0,
+                              grid_center:list=None,
+                              grid_size:list=None,
                               ):
         """Write AGFE density maps ``map_agfe_[<atomtype>_]<cosolvent>.dx`` to ``out_path``.
+
+        The raw occupancy counts ``map_counts_[<atomtype>_]<cosolvent>.dx`` are written too, with
+        ``map_counts_<cosolvent>.json`` holding the constants needed to turn them into AGFE, so any
+        other smoothing can start from the data rather than from an already-smoothed map.
 
         Existing maps are skipped rather than recomputed.
 
@@ -188,11 +194,16 @@ class Report:
         :type gridsize: float, optional
         :param temperature: temperature in K; None takes the last value from the statistics file.
         :type temperature: float, optional
-        :param export_raw: also write the unclamped ``map_agfe_raw_*.dx`` maps.
+        :param export_raw: also write the unclamped ``map_agfe_raw_*.dx`` maps (still smoothed).
         :type export_raw: bool, optional
         :param n_kt: cutoff (in kT) the maps will be thresholded at; used only for the
             sampling-adequacy report.
         :type n_kt: float, optional
+        :param grid_center: centre of a fixed export region in Angstrom; with *grid_size*, gives
+            every replica identical, directly mergeable grids.
+        :type grid_center: list[float], optional
+        :param grid_size: edge lengths of the fixed export region in Angstrom.
+        :type grid_size: list[float], optional
         """
         self.logger.info("Generating density maps...")
 
@@ -231,15 +242,19 @@ class Report:
                                 use_atomtypes=use_atomtypes,
                                 atomtypes_definitions=atomtypes_definitions,
                                 out_dir=self.out_path,
+                                grid_center=grid_center,
+                                grid_size=grid_size,
                                 verbose=True)
             analysis.run()
-            # analysis.export_density(os.path.join(self.out_path, f"map_rawdensity_{cosolvent}.dx"))
             analysis.atomic_grid_free_energy(temperature, smoothing=True)
             self._log_sampling_adequacy(analysis, cosolvent, gridsize, temperature,
                                         n_kt=n_kt)
             analysis.export_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_{cosolvent}.dx"))
             if export_raw:
                 analysis.export_raw_atomic_grid_free_energy(os.path.join(self.out_path, f"map_agfe_raw_{cosolvent}.dx"))
+            analysis.export_histogram(os.path.join(self.out_path, f"map_counts_{cosolvent}.dx"))
+            with open(os.path.join(self.out_path, f"map_counts_{cosolvent}.json"), "w") as fh:
+                json.dump(analysis.counts_metadata(), fh, indent=2)
 
         return
 

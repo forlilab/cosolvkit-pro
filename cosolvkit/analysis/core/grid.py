@@ -413,6 +413,22 @@ def _export(fname, grid):
     grid.export(fname)
 
 
+
+def _validate_fixed_box(grid_center, grid_size):
+    """(lo, hi) corners of the requested export region, or None if neither is given."""
+    if grid_center is None and grid_size is None:
+        return None
+    if grid_center is None or grid_size is None:
+        raise ValueError("grid_center and grid_size must be given together")
+    center = np.asarray(grid_center, dtype=float)
+    size = np.asarray(grid_size, dtype=float)
+    if center.shape != (3,) or size.shape != (3,):
+        raise ValueError("grid_center and grid_size need three values each (Angstrom)")
+    if np.any(size <= 0):
+        raise ValueError(f"grid_size must be positive, got {size.tolist()}")
+    return center - size / 2.0, center + size / 2.0
+
+
 class GridAnalysis(AnalysisBase):
     """GridAnalysis class to generate density grids
 
@@ -424,6 +440,8 @@ class GridAnalysis(AnalysisBase):
                         use_atomtypes: bool = True,
                         atomtypes_definitions: dict = None,
                         out_dir: str = None,
+                        grid_center=None,
+                        grid_size=None,
                         **kwargs):
         """*out_dir* is where the solvent-accessible mask is written.
 
@@ -433,6 +451,12 @@ class GridAnalysis(AnalysisBase):
         ``HotspotDetector`` looked for it in its own output directory and never found one. That
         silently disabled ``accessible_fraction``, which carries a non-zero default weight.
         Pass the directory the maps go to.
+
+        *grid_center* and *grid_size* (Angstrom, three values each, both or neither) fix the
+        region the exported maps cover. It is snapped outward onto the ``k * gridsize``
+        lattice, so the same values give identical grids for every replica. Everything is still
+        computed on the full grid and only the written maps are cropped, so the bulk density
+        and the smoothing near the region's faces are unaffected.
         """
         super(GridAnalysis, self).__init__(atomgroup.universe.trajectory, **kwargs)
 
@@ -449,6 +473,9 @@ class GridAnalysis(AnalysisBase):
         self._box_size = None
         self.use_atomtypes = use_atomtypes
         self.atomtypes_definitions = atomtypes_definitions
+        self._fixed_box = _validate_fixed_box(grid_center, grid_size)
+        self._crop = None
+        self._temperature = None
 
         if use_atomtypes and atomtypes_definitions is None:
             self.logger.error("Error: Atom types definitions are required for atom type density analysis.")
@@ -524,6 +551,11 @@ class GridAnalysis(AnalysisBase):
         # combined with fill_value=0.0 under a plain mean, so voxels only some replicas reached
         # were diluted toward bulk (see the coverage-aware branch in
         # `combine_dx_maps_with_resampling`), plus the fragility of never being able to stack maps.
+        if self._fixed_box is not None:
+            fixed_lo, fixed_hi = (np.floor(self._fixed_box[0] / self._delta) * self._delta,
+                                  np.ceil(self._fixed_box[1] / self._delta) * self._delta)
+            need_lo, need_hi = np.minimum(need_lo, fixed_lo), np.maximum(need_hi, fixed_hi)
+
         lo = np.floor(need_lo / self._delta) * self._delta
         hi = np.ceil(need_hi / self._delta) * self._delta
         nbins = np.maximum(1, np.round((hi - lo) / self._delta).astype(int))
@@ -539,6 +571,17 @@ class GridAnalysis(AnalysisBase):
             )
         origin = (self._edges[0][0], self._edges[1][0], self._edges[2][0])
 
+        if self._fixed_box is not None:
+            start = np.round((fixed_lo - lo) / self._delta).astype(int)
+            count = np.round((fixed_hi - fixed_lo) / self._delta).astype(int)
+            self._crop = tuple(slice(int(a), int(a + n)) for a, n in zip(start, count))
+            outside = (np.mean(np.any((flat < fixed_lo) | (flat >= fixed_hi), axis=1))
+                       if flat.size else 0.0)
+            self.logger.info(
+                f"Exported maps cover the fixed region {fixed_lo} to {fixed_hi} "
+                f"({tuple(int(n) for n in count)} voxels); {100 * outside:.2f}% of probe "
+                f"positions fall outside it and still count toward the bulk density.")
+
         # get the mask of accesible voxels that will be used for the free energy calculation
         self._build_accessible_mask()
 
@@ -553,6 +596,7 @@ class GridAnalysis(AnalysisBase):
 
             # Fall back to standard density if SMARTS matching failed completely
             if mapped_atomtypes is None:
+                self.use_atomtypes = False
                 hist, _ = np.histogramdd(positions, bins=self._edges)
                 self._histogram = Grid(hist, origin=origin, delta=self._gridsize)
                 self._density = Grid(_grid_density(hist), origin=origin, delta=self._gridsize)
@@ -585,6 +629,8 @@ class GridAnalysis(AnalysisBase):
                     "No atom type histograms were produced (all types had no matching positions). "
                     "Falling back to standard density estimation."
                 )
+                self.use_atomtypes = False
+                self._type_histograms = {}
                 hist, _ = np.histogramdd(positions, bins=self._edges)
                 self._histogram = Grid(hist, origin=origin, delta=self._gridsize)
                 self._density = Grid(_grid_density(hist), origin=origin, delta=self._gridsize)
@@ -692,7 +738,8 @@ class GridAnalysis(AnalysisBase):
             # detector found nothing in its own output directory.
             out_dir = self._out_dir or os.getcwd()
             os.makedirs(out_dir, exist_ok=True)
-            grid.export(os.path.join(out_dir, f"solvent_accessible_map{self._probe_tag()}.dx"))
+            _export(os.path.join(out_dir, f"solvent_accessible_map{self._probe_tag()}.dx"),
+                    self._output_grid(grid))
 
         return
 
@@ -803,8 +850,10 @@ class GridAnalysis(AnalysisBase):
         # gaussian_filter interprets sigma in VOXELS
         sigma_vox = (atom_radius / 3.0) / self._gridsize
 
+        self._temperature = float(temperature)
         if self.use_atomtypes:
             self._type_agfe_raw = {}
+            self._type_agfe = {}
             for atom_type, grid in self._type_histograms.items():
                 n_atoms_type = self._n_atoms_by_type[atom_type]
                 raw, agfe = self._agfe_from_hist(grid.grid, n_atoms_type, sigma_vox,
@@ -812,7 +861,7 @@ class GridAnalysis(AnalysisBase):
                 self._type_agfe_raw[atom_type] = Grid(raw, edges=grid.edges)
 
                 self.logger.info(f"Free energy for {atom_type}: MIN: {np.min(agfe):.2f} kcal/mol, MAX: {np.max(agfe):.2f} kcal/mol")
-                self._type_histograms[atom_type] = Grid(agfe, edges=grid.edges)
+                self._type_agfe[atom_type] = Grid(agfe, edges=grid.edges)
         else:
             raw, agfe = self._agfe_from_hist(self._histogram.grid, self._n_atoms, sigma_vox,
                                              smoothing, smoothing_space, temperature)
@@ -824,43 +873,84 @@ class GridAnalysis(AnalysisBase):
 
         return
 
-    def export_histogram(self, fname):
-        """ Export histogram maps
+    def _output_grid(self, grid):
+        """*grid* cropped to the fixed export region, or unchanged if none was set.
+
+        Both grids sit on the same lattice, so this is an index slice, not a resample.
         """
-        _export(fname, self._histogram)
+        if self._crop is None:
+            return grid
+        edges = tuple(e[sl.start:sl.stop + 1] for e, sl in zip(grid.edges, self._crop))
+        return Grid(grid.grid[self._crop], edges=edges)
+
+    def _write(self, fname, grid):
+        _export(fname, self._output_grid(grid))
+
+    def _write_per_type(self, fname, token, grids):
+        """Write one map per atom type, inserting the type after *token* in *fname*."""
+        if token not in os.path.basename(fname):
+            raise ValueError(f"{fname!r} must contain {token!r} to name per-type maps")
+        head, base = os.path.split(fname)
+        for atom_type, grid in grids.items():
+            self._write(os.path.join(head, base.replace(token, f"{token}_{atom_type}", 1)), grid)
+
+    def export_histogram(self, fname):
+        """Export raw occupancy counts: the total, plus one map per atom type.
+
+        Counts are what any other smoothing should start from: smooth them, then invert with
+        the constants in :meth:`counts_metadata`. ``fname`` must contain ``map_counts``.
+        """
+        self._write(fname, self._histogram)
+        if self.use_atomtypes and self._type_histograms:
+            self._write_per_type(fname, "map_counts", self._type_histograms)
+
+    def counts_metadata(self):
+        """Everything needed to turn the exported counts into AGFE, as a JSON-able dict."""
+        out = self._output_grid(self._histogram)
+        meta = {
+            "n_frames": int(self._nframes),
+            "n_atoms": int(self._n_atoms),
+            "n_accessible_voxels": int(self._n_accessible_voxels),
+            "gridsize": float(self._gridsize),
+            "temperature_K": self._temperature,
+            "kB_kcal_per_mol_K": BOLTZMANN_CONSTANT_KB,
+            "agfe": "-kB * T * ln((counts / n_frames) / (n_atoms / n_accessible_voxels))",
+            "origin": [float(x) for x in out.origin],
+            "shape": [int(x) for x in out.grid.shape],
+        }
+        if self.use_atomtypes and self._type_histograms:
+            meta["n_atoms_by_type"] = {k: int(self._n_atoms_by_type[k])
+                                       for k in self._type_histograms}
+        return meta
 
     def export_density(self, fname):
-        """ Export density maps, either for the total density or for each atom type
+        """Export the total z-scored density ``(counts - mean) / std``.
+
+        Total only: the mean and std run over the whole grid, so the values depend on the
+        grid extent and are not comparable across replicas. Prefer :meth:`export_histogram`.
         """
-        if self.use_atomtypes:
-            for atom_type, grid in self._type_histograms.items():
-                density_fname = fname.replace('map_rawdensity', f'map_density_{atom_type}')
-                _export(density_fname, grid)
-        else:
-            _export(fname, self._density)
+        self._write(fname, self._density)
 
     def export_atomic_grid_free_energy(self, fname):
         """ Export atomic grid free energy, either for the total free energy or for each atom type
         """
         if self.use_atomtypes:
-            for atom_type, grid in self._type_histograms.items():
-                gfe_fname = fname.replace('map_agfe', f'map_agfe_{atom_type}')
-                _export(gfe_fname, grid)
+            self._write_per_type(fname, "map_agfe", self._type_agfe)
         else:
-            _export(fname, self._agfe)
+            self._write(fname, self._agfe)
 
     def export_raw_atomic_grid_free_energy(self, fname):
-        """Export the raw (unsmoothed) AGFE map in kcal/mol.
+        """Export the unclipped AGFE map in kcal/mol.
 
-        Direct Boltzmann inversion of the occupancy histogram, with no zeroing or
-        rescaling, so values stay comparable across probes, systems, and replicas.
+        The same field as ``map_agfe_*`` before voxels >= 0 are zeroed, so depletion is kept
+        and maps can be differenced. It is still SMOOTHED: in the default density-space path it
+        is the inverted smoothed occupancy. (Only the legacy energy-space path writes an
+        unsmoothed inversion here.) For anything else, start from :meth:`export_histogram`.
         """
         if self.use_atomtypes:
-            for atom_type, grid in self._type_agfe_raw.items():
-                gfe_fname = fname.replace('map_agfe_raw', f'map_agfe_raw_{atom_type}')
-                _export(gfe_fname, grid)
+            self._write_per_type(fname, "map_agfe_raw", self._type_agfe_raw)
         else:
-            _export(fname, self._agfe_raw)
+            self._write(fname, self._agfe_raw)
 
 
 from scipy.ndimage import map_coordinates as _map_coordinates
