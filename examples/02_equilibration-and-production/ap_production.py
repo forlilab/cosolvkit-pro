@@ -18,7 +18,7 @@ import MDAnalysis as mda
 import mdtraj as md
 
 from autopath import VanillaMD
-from autopath.utils import load_system, setup_logging, compute_rmsd
+from autopath.utils import load_system, setup_logging, compute_rmsd, wrap_align_save_traj
 from openmm.app import PDBFile
 
 
@@ -49,6 +49,13 @@ def cmd_lineparser():
         "-r", "--replica", dest="replica", required=False, default=None,
         help="Replica label, to differentiate multiple production runs of the same system.",
     )
+    parser.add_argument(
+        "-a", "--align-reference", dest="align_reference", required=False, default=None,
+        help="Structure every replica is superposed onto, so their density maps share one "
+             "Cartesian frame and can be merged. Default: the --system-dir system.pdb, which "
+             "already serves when all builds come from the same input PDB (the build keeps "
+             "the protein coordinates). Must have the same backbone atoms as the system.",
+    )
     return parser.parse_args()
 
 
@@ -76,6 +83,15 @@ def main():
     # (OpenMM engine emits no prmtop).
     system_pdb_file = os.path.join(system_dir, "system.pdb")
     topology = PDBFile(system_pdb_file).topology
+
+    # Check the alignment reference now, not after the run: a backbone mismatch would
+    # otherwise only warn and leave the trajectory unaligned.
+    if args.align_reference is not None:
+        n_ref = md.load(args.align_reference).topology.select("backbone").size
+        n_sys = md.load_topology(system_pdb_file).select("backbone").size
+        if n_ref != n_sys:
+            raise ValueError(f"--align-reference has {n_ref} backbone atoms but "
+                             f"{system_pdb_file} has {n_sys}; they must match.")
 
     # Handoff from the equilibration phase (written to out_dir by ap_equilibration.py).
     equil_system = os.path.join(out_dir, "equilibration", f"system_equil_{name}.xml")
@@ -110,19 +126,12 @@ def main():
     ########################################################################################
     traj_fname = f"{out_dir}/MD/MD_{run_id}.dcd"
 
-    # Wrap, image and backbone-align the production trajectory (top = system.pdb).
-    traj = md.load(traj_fname, top=system_pdb_file)
-    traj = traj.center_coordinates()
-    traj = traj.image_molecules()
-    try:
-        backbone = traj.topology.select("backbone")
-        traj = traj.superpose(traj[0], atom_indices=backbone)
-    except Exception as e:
-        logger.warning(f"Superposition failed: {e}. Proceeding without superposition.")
-    aligned = traj_fname.replace(".dcd", "_aligned.dcd")
-    traj.save(aligned)
-    os.remove(traj_fname)
-    logger.info(f"Aligned production trajectory saved to {aligned}")
+    # Wrap, image and backbone-align onto a fixed reference rather than the trajectory's own
+    # first frame, which differs per replica and would leave each map in its own frame.
+    align_reference = os.path.abspath(args.align_reference or system_pdb_file)
+    aligned, = wrap_align_save_traj(traj_fname, system_pdb_file,
+                                    reference=align_reference, align_select="backbone")
+    logger.info(f"Aligned production trajectory (reference {align_reference}) saved to {aligned}")
 
     # Protein RMSD (no ligand in a cosolvent box).
     u = mda.Universe(system_pdb_file, aligned, in_memory=True)

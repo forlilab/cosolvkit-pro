@@ -86,6 +86,12 @@ Outputs (in `./6E22_benzene/MD/`):
 The aligned production trajectory + the 01 `system.pdb` are what you feed into CosolvKit's
 analysis (`analyze_cosolvent_simulation`) to compute AGFE density maps and hotspots.
 
+The trajectory is superposed onto the backbone of the 01 `system.pdb`, not onto its own
+first frame. The build keeps the protein at the input PDB's coordinates, so every system
+built from the same PDB, whatever its box, lands in one frame, and density maps from
+different replicas or probes can be merged directly. For builds from different input
+PDBs, pass a shared structure with `--align-reference` (same backbone atoms).
+
 ## Handoff at a glance
 
 ```
