@@ -1385,6 +1385,8 @@ class CosolventMembraneSystem(CosolventSystem):
         width = 2*radius
         self.vectors = self.modeller.topology.getPeriodicBoxVectors().value_in_unit(openmmunit.nanometer)
         box = Vec3(self.vectors[0][0], self.vectors[1][1], self.vectors[2][2])
+        vX, vY, vZ = self.modeller.topology.getUnitCellDimensions().value_in_unit(openmmunit.nanometer)
+        self.box_volume = vX * vY * vZ
         origin = center - (np.ceil(np.array((width, width, width))))
         self._box_origin = origin
         self._box_size = np.ceil(np.array([maxRange[0]-minRange[0],
